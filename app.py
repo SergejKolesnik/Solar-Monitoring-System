@@ -6,9 +6,9 @@ from datetime import datetime, timedelta
 
 st.set_page_config(page_title="СЕС Нікополь 11.4 МВт", layout="wide")
 
-def get_weather_forecast():
-    # Запитуємо прогноз на 3 дні
-    url = "https://api.open-meteo.com/v1/forecast?latitude=47.56&longitude=34.39&hourly=shortwave_radiation,cloud_cover&timezone=auto&forecast_days=3"
+def get_weather_data():
+    # Запитуємо прогноз на 3 дні: радіація, хмарність, температура
+    url = "https://api.open-meteo.com/v1/forecast?latitude=47.56&longitude=34.39&hourly=shortwave_radiation,cloud_cover,temperature_2m&timezone=auto&forecast_days=3"
     try:
         response = requests.get(url)
         data = response.json()
@@ -18,7 +18,8 @@ def get_weather_forecast():
         df = pd.DataFrame({
             'Час': pd.to_datetime(hourly['time']),
             'Радіація': hourly['shortwave_radiation'],
-            'Хмарність': hourly['cloud_cover']
+            'Хмарність': hourly['cloud_cover'],
+            'Температура': hourly['temperature_2m']
         })
         # Модель v2.6 (11.4 МВт)
         df['Прогноз_МВт'] = df['Радіація'] * 11.4 * 0.00092 * (1 - df['Хмарність']/100 * 0.4)
@@ -27,43 +28,54 @@ def get_weather_forecast():
     except:
         return None
 
-# Дати для заголовка
-start_date = datetime.now().strftime("%d.%m")
-end_date = (datetime.now() + timedelta(days=2)).strftime("%d.%m")
+# Формуємо заголовок з датами
+start_d = datetime.now().strftime("%d.%m")
+end_d = (datetime.now() + timedelta(days=2)).strftime("%d.%m")
 
-st.title(f"☀️ Прогноз СЕС Нікополь ({start_date} — {end_date})")
-st.markdown("### Потужність: 11.4 МВт | Режим: Трьохденний моніторинг")
+st.title(f"☀️ Моніторинг СЕС Нікополь ({start_d} — {end_d})")
 
-df_forecast = get_weather_forecast()
+df = get_weather_data()
 
-if df_forecast is not None:
-    # Метрики на сьогодні
-    today_df = df_forecast[df_forecast['Час'].dt.date == datetime.now().date()]
-    col1, col2, col3 = st.columns(3)
-    with col1:
+if df is not None:
+    # Метрики у верхньому рядку
+    today_df = df[df['Час'].dt.date == datetime.now().date()]
+    c1, c2, c3 = st.columns(3)
+    with c1:
         st.metric("Сьогодні (МВт*год)", f"{today_df['Прогноз_МВт'].sum():.1f}")
-    with col2:
-        next_day = df_forecast[df_forecast['Час'].dt.date == (datetime.now() + timedelta(days=1)).date()]
-        st.metric("Завтра (МВт*год)", f"{next_day['Прогноз_МВт'].sum():.1f}")
-    with col3:
-        st.metric("Статус", "Live Update")
+    with c2:
+        st.metric("Пік сьогодні (МВт)", f"{today_df['Прогноз_МВт'].max():.2f}")
+    with c3:
+        curr_temp = today_df.iloc[datetime.now().hour]['Температура']
+        st.metric("Температура зараз", f"{curr_temp}°C")
 
     # Графік
-    st.subheader("📊 Детальний графік генерації")
+    st.subheader("📊 Генерація, Хмарність та Температура")
     
-    # Налаштування розміру, щоб все "влізло"
-    fig, ax = plt.subplots(figsize=(12, 4)) 
-    ax.plot(df_forecast['Час'], df_forecast['Прогноз_МВт'], color='#FFD700', linewidth=2, label='Прогноз v2.6')
-    ax.fill_between(df_forecast['Час'], df_forecast['Прогноз_МВт'], color='#FFD700', alpha=0.15)
+    fig, ax1 = plt.subplots(figsize=(12, 5))
+
+    # 1. Хмарність (сіра заливка на задньому фоні)
+    ax1.fill_between(df['Час'], df['Хмарність'], color='gray', alpha=0.15, label='Хмарність %')
     
-    # Робимо сітку і підписи гарними
-    ax.set_ylabel("МВт")
-    ax.grid(True, linestyle='--', alpha=0.5)
-    plt.xticks(rotation=0) # Горизонтальні підписи дат
+    # 2. Прогноз генерації (золота лінія)
+    ax1.plot(df['Час'], df['Прогноз_МВт'], color='#FFD700', linewidth=3, label='Генерація МВт')
+    ax1.fill_between(df['Час'], df['Прогноз_МВт'], color='#FFD700', alpha=0.2)
+    ax1.set_ylabel("Потужність (МВт) / Хмарність (%)", fontsize=10)
     
-    # Прибираємо зайві поля навколо графіка
+    # 3. Тренд температури (червона пунктирна лінія на другій осі)
+    ax2 = ax1.twinx()
+    ax2.plot(df['Час'], df['Температура'], color='red', linestyle='--', linewidth=1.5, alpha=0.6, label='Температура °C')
+    ax2.set_ylabel("Температура (°C)", color='red', fontsize=10)
+    ax2.tick_params(axis='y', labelcolor='red')
+
+    # Налаштування вигляду
+    ax1.grid(True, linestyle=':', alpha=0.4)
+    fig.legend(loc='upper right', bbox_to_anchor=(0.9, 0.88))
     plt.tight_layout()
     
     st.pyplot(fig)
+    
+    # Додаткова таблиця для перевірки
+    with st.expander("Подивитися таблицю даних"):
+        st.dataframe(df[['Час', 'Прогноз_МВт', 'Хмарність', 'Температура']].tail(10))
 else:
-    st.warning("Оновлюємо дані...")
+    st.error("Помилка отримання даних. Перевірте з'єднання.")
