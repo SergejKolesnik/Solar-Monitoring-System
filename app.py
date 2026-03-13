@@ -7,7 +7,7 @@ import time
 
 st.set_page_config(page_title="Solar AI Nikopol", layout="wide", initial_sidebar_state="collapsed")
 
-# 1. Стилізація
+# 1. Дизайн
 st.markdown("""
     <style>
     .main { background-color: #0e1117; }
@@ -17,90 +17,79 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# 2. Отримання погоди (БЕЗ КЕШУВАННЯ для тесту)
-def get_weather_data():
-    # Явно вказуємо past_days=2, щоб зачепити 12.03 та 11.03
-    url = "https://api.open-meteo.com/v1/forecast?latitude=47.56&longitude=34.39&hourly=shortwave_radiation,cloud_cover,temperature_2m&timezone=auto&past_days=2&forecast_days=3"
+# 2. Отримання даних (Архів за 7 днів + Прогноз на 3 дні)
+def get_solar_data():
+    # past_days=7 дозволяє нам завжди бачити "вчора" для будь-якого звіту АСКОЕ
+    url = "https://api.open-meteo.com/v1/forecast?latitude=47.56&longitude=34.39&hourly=shortwave_radiation,cloud_cover,temperature_2m&timezone=auto&past_days=7&forecast_days=3"
     try:
-        res = requests.get(url)
-        data = res.json()
-        h = data['hourly']
+        res = requests.get(url).json()
+        h = res['hourly']
         df = pd.DataFrame({
             'Time': pd.to_datetime(h['time']),
             'Radiation': h['shortwave_radiation'],
             'Clouds': h['cloud_cover'],
             'Temp': h['temperature_2m']
         })
-        # Модель v2.6
+        # Математична модель v2.6
         df['Power_MW'] = df['Radiation'] * 11.4 * 0.00092 * (1 - df['Clouds']/100 * 0.4)
         df.loc[df['Power_MW'] < 0, 'Power_MW'] = 0
         return df
-    except Exception as e:
-        st.error(f"Помилка API погоди: {e}")
-        return None
+    except: return None
 
 # --- ЗАВАНТАЖЕННЯ ---
-df_forecast = get_weather_data()
+df_all = get_solar_data()
 df_fact = None
-
 try:
-    # Обхід кешу GitHub (міняємо посилання кожну хвилину)
-    v_tag = int(time.time() / 60)
+    v_tag = int(time.time() / 30)
     repo_url = f"https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/solar_ai_base.csv?v={v_tag}"
     df_fact = pd.read_csv(repo_url)
     df_fact['Time'] = pd.to_datetime(df_fact['Time'])
-except Exception as e:
-    pass
+except: pass
 
-# --- БЛОК 1: ОПЕРАТИВНИЙ МОНІТОРИНГ ---
+# --- БЛОК 1: ОПЕРАТИВНИЙ МОНІТОРИНГ (МАЙБУТНЄ) ---
 st.title("☀️ Solar AI Monitor: Оперативне управління")
 
-if df_forecast is not None:
-    now = datetime.now()
-    today_date = now.date()
-    
-    # Метрики
-    df_today = df_forecast[df_forecast['Time'].dt.date == today_date]
+if df_all is not None:
+    today_date = datetime.now().date()
+    df_today = df_all[df_all['Time'].dt.date == today_date]
     
     col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Прогноз на сьогодні", f"{df_today['Power_MW'].sum():.1f} MWh")
-    with col2:
-        curr_hour = now.hour
-        temp_val = df_today.iloc[curr_hour]['Temp'] if not df_today.empty else 0
-        st.metric("Температура Нікополь", f"{temp_val}°C")
-    with col3:
-        st.metric("Статус СЕС", "11.4 MW Online")
+    with col1: st.metric("Прогноз на сьогодні", f"{df_today['Power_MW'].sum():.1f} MWh")
+    with col2: 
+        hour_idx = datetime.now().hour
+        temp_now = df_today.iloc[hour_idx]['Temp'] if not df_today.empty else 0
+        st.metric("Температура Нікополь", f"{temp_now}°C")
+    with col3: st.metric("Статус СЕС", "11.4 MW Online")
 
-    # Графік (тільки майбутнє)
     fig1 = go.Figure()
-    df_future = df_forecast[df_forecast['Time'] >= pd.Timestamp(today_date)]
-    fig1.add_trace(go.Scatter(x=df_future['Time'], y=df_future['Power_MW'], name="Прогноз (MW)", fill='tozeroy', line=dict(color='#f1c40f', width=4)))
-    fig1.update_layout(template="plotly_dark", title="План генерації (сьогодні + 2 дні)", height=400)
+    # Відображаємо тільки сьогоднішній день і майбутнє
+    df_future = df_all[df_all['Time'] >= pd.Timestamp(today_date)]
+    fig1.add_trace(go.Scatter(x=df_future['Time'], y=df_future['Power_MW'], name="План (MW)", fill='tozeroy', line=dict(color='#f1c40f', width=4)))
+    fig1.update_layout(template="plotly_dark", title="Майбутня генерація (сьогодні + 2 дні)", height=400)
     st.plotly_chart(fig1, use_container_width=True)
 
 st.markdown("---")
 
-# --- БЛОК 2: АНАЛІТИКА ШІ ---
-if df_fact is not None and df_forecast is not None:
+# --- БЛОК 2: АНАЛІТИКА ТА КОРЕКЦІЯ ШІ (МИНУЛЕ) ---
+if df_fact is not None and df_all is not None:
     st.header("📉 Ретроспективний аналіз та корекція ШІ")
     
-    # Отримуємо останню дату з факту
+    # Автоматично беремо останню дату, яка з'явилася у звіті АСКОЕ
     last_f_date = df_fact['Time'].dt.date.max()
     
-    # Фільтруємо
-    df_plan_comp = df_forecast[df_forecast['Time'].dt.date == last_f_date]
+    # Знаходимо ПЛАН і ФАКТ саме за цю дату
+    df_plan_comp = df_all[df_all['Time'].dt.date == last_f_date]
     df_fact_comp = df_fact[df_fact['Time'].dt.date == last_f_date]
     
     if not df_plan_comp.empty and not df_fact_comp.empty:
         c1, c2 = st.columns([2, 1])
         with c1:
             fig2 = go.Figure()
-            # План (золота лінія)
-            fig2.add_trace(go.Scatter(x=df_plan_comp['Time'], y=df_plan_comp['Power_MW'], name="План (Модель)", line=dict(color='rgba(241, 196, 15, 0.4)', dash='dot')))
-            # Факт (червона лінія)
-            fig2.add_trace(go.Scatter(x=df_fact_comp['Time'], y=df_fact_comp['Fact_MW'], name="Факт АСКОЕ", line=dict(color='#e74c3c', width=3)))
-            fig2.update_layout(template="plotly_dark", title=f"Порівняння за {last_f_date}", height=400)
+            # План, який давала модель (пунктир)
+            fig2.add_trace(go.Scatter(x=df_plan_comp['Time'], y=df_plan_comp['Power_MW'], name="Очікувано (Модель)", line=dict(color='rgba(241, 196, 15, 0.4)', dash='dot')))
+            # Реальний факт з пошти (суцільна лінія)
+            fig2.add_trace(go.Scatter(x=df_fact_comp['Time'], y=df_fact_comp['Fact_MW'], name="Отримано (АСКОЕ)", line=dict(color='#e74c3c', width=3)))
+            fig2.update_layout(template="plotly_dark", title=f"Точність прогнозу за {last_f_date.strftime('%d.%m')}", height=400)
             st.plotly_chart(fig2, use_container_width=True)
             
         with c2:
@@ -113,11 +102,8 @@ if df_fact is not None and df_forecast is not None:
                 st.write(f"**Точність моделі:** {acc:.1f}%")
                 st.write(f"**Відхилення:** {f_s - p_s:.2f} MWh")
                 st.markdown("---")
-                if acc >= 90: st.success("✅ Модель v2.6 підтверджена.")
-                else: st.warning("⚠️ Потрібна корекція!")
+                if acc >= 90: st.success("✅ Корекція не потрібна. Модель v2.6 стабільна.")
+                else: st.warning("⚠️ Потрібна корекція коефіцієнтів.")
             st.markdown("</div>", unsafe_allow_html=True)
     else:
-        # Цей текст допоможе нам зрозуміти, що бачить програма
-        st.warning(f"Дані за {last_f_date} відсутні в прогнозі. Доступні дати в моделі: {df_forecast['Time'].dt.date.min()} - {df_forecast['Time'].dt.date.max()}")
-else:
-    st.info("Очікуємо звіт АСКОЕ.")
+        st.info(f"Чекаємо синхронізації нового звіту АСКОЕ. Остання доступна аналітика за: {last_f_date}")
