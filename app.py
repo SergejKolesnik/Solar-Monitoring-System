@@ -8,27 +8,54 @@ import time
 import pytz
 
 # 1. КОНФІГУРАЦІЯ
-st.set_page_config(page_title="SkyGrid: Solar AI Nikopol v3.7.6", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="SkyGrid: Solar AI Nikopol v3.7.8", layout="wide", initial_sidebar_state="collapsed")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 
-# 2. СТИЛІЗАЦІЯ
+# 2. НОВИЙ ГІБРИДНИЙ ДИЗАЙН (Data-Driven + Icons)
 st.markdown("""
     <style>
-    .block-container { padding: 1rem 2rem; }
-    .progress-bg { background: rgba(255,255,255,0.1); border-radius: 10px; height: 12px; width: 180px; display: inline-block; vertical-align: middle; overflow: hidden; margin-left: 10px; border: 1px solid rgba(0,255,127,0.3); }
+    .block-container { padding: 1rem 1rem; }
+    
+    /* Прогрес-бар ШІ */
+    .progress-bg { background: rgba(255,255,255,0.1); border-radius: 10px; height: 12px; width: 150px; display: inline-block; vertical-align: middle; overflow: hidden; margin-left: 10px; border: 1px solid rgba(0,255,127,0.3); }
     .progress-fill { background: linear-gradient(90deg, #00ff7f, #00d4ff); height: 100%; border-radius: 10px; }
-    .weather-row { display: flex !important; flex-direction: row !important; justify-content: space-between !important; width: 100%; gap: 6px; margin: 15px 0; }
-    .weather-card-industrial { flex: 1; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(0, 212, 255, 0.3); border-radius: 12px; padding: 12px 5px; text-align: center; min-width: 0; }
-    .day-grid { display: grid; grid-template-columns: repeat(10, 1fr); gap: 10px; margin-top: 10px; }
-    .day-card-industrial { background: rgba(255,255,255,0.05); border: 1px solid rgba(0, 212, 255, 0.4); border-radius: 15px; padding: 15px 10px; text-align: center; }
-    .footer { position: fixed; bottom: 10px; right: 20px; color: gray; font-size: 12px; }
+    
+    /* Почасовий прогноз */
+    .weather-row { display: flex !important; flex-direction: row !important; justify-content: space-between !important; width: 100%; gap: 4px; margin: 10px 0; }
+    .weather-card-industrial { flex: 1; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(0, 212, 255, 0.2); border-radius: 8px; padding: 8px 2px; text-align: center; min-width: 0; }
+    
+    /* 10 ДНІВ: ГІБРИДНИЙ ДИЗАЙН (Data-Driven) */
+    .day-grid-fixed {
+        display: grid;
+        grid-template-columns: repeat(10, 1fr);
+        gap: 8px;
+        width: 100%;
+        margin-top: 10px;
+    }
+    .day-card-hybrid { 
+        background: #1e2124; 
+        border: 1px solid #32383e; 
+        border-radius: 12px; 
+        padding: 12px 5px; 
+        text-align: center;
+        position: relative;
+    }
+    .day-date { color: #5dade2; font-size: 14px; font-weight: bold; margin-bottom: 5px; }
+    .day-temp-max { font-size: 32px; font-weight: 800; color: #ffffff; line-height: 1; }
+    .day-temp-min { font-size: 16px; color: #85929e; margin-bottom: 8px; }
+    .day-icon { font-size: 24px; margin-bottom: 5px; }
+    
+    /* Шкала опадів (Data-Driven style) */
+    .rain-bar-bg { background: #2c3e50; border-radius: 3px; height: 4px; width: 80%; margin: 5px auto; overflow: hidden; }
+    .rain-bar-fill { background: #3498db; height: 100%; }
+    
+    .footer { position: fixed; bottom: 10px; right: 20px; color: gray; font-size: 11px; }
     </style>
     """, unsafe_allow_html=True)
 
-# 3. ФУНКЦІЇ ДАНИХ (Додано past_days=7 для навчання)
+# 3. ФУНКЦІЇ ДАНИХ
 @st.cache_data(ttl=300)
 def get_weather_data():
-    # past_days=7 дозволяє отримати погоду за минулий тиждень для порівняння з АСКОЕ
     url = "https://api.open-meteo.com/v1/forecast?latitude=47.56&longitude=34.39&hourly=shortwave_radiation,cloud_cover,temperature_2m,precipitation&timezone=auto&past_days=7&forecast_days=10"
     try:
         res = requests.get(url).json()
@@ -37,13 +64,19 @@ def get_weather_data():
             'Time': pd.to_datetime(h['time']),
             'Radiation': h['shortwave_radiation'],
             'Clouds': h['cloud_cover'],
-            'Temp': h['temperature_2m']
+            'Temp': h['temperature_2m'],
+            'Rain': h['precipitation']
         })
         df['Time'] = df['Time'].dt.tz_localize('UTC').dt.tz_convert(UA_TZ).dt.tz_localize(None)
-        # Базовий розрахунок
         df['Base_MW'] = df['Radiation'] * 11.4 * 0.00115 * (1 - df['Clouds']/100 * 0.2)
         return df
     except: return None
+
+def get_weather_icon(clouds, rain):
+    if rain > 0.5: return "🌧️"
+    if clouds > 70: return "☁️"
+    if clouds > 30: return "⛅"
+    return "☀️"
 
 # 4. ЛОГІКА ШІ
 df_all = get_weather_data()
@@ -55,19 +88,14 @@ try:
     repo_url = f"https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/solar_ai_base.csv?v={v_tag}"
     df_fact = pd.read_csv(repo_url)
     df_fact['Time'] = pd.to_datetime(df_fact['Time']).dt.floor('H')
-    
     last_date = df_fact['Time'].dt.date.max()
     last_update = last_date.strftime("%d.%m.%Y")
     days_learned = len(df_fact['Time'].dt.date.unique())
     
-    # Розрахунок корекції за останній наявний день у базі
     f_day = df_fact[df_fact['Time'].dt.date == last_date]
     p_day = df_all[df_all['Time'].dt.date == last_date] if df_all is not None else pd.DataFrame()
-    
     if not f_day.empty and not p_day.empty:
-        actual_sum = f_day['Fact_MW'].sum()
-        base_sum = p_day['Base_MW'].sum()
-        if base_sum > 0: ai_bias = actual_sum / base_sum
+        ai_bias = f_day['Fact_MW'].sum() / p_day['Base_MW'].sum() if p_day['Base_MW'].sum() > 0 else 1.0
 except: pass
 
 if df_all is not None:
@@ -75,77 +103,65 @@ if df_all is not None:
 
 # 5. ШАПКА
 col_logo, col_title = st.columns([0.6, 5])
-with col_logo: st.image("https://www.nzf.com.ua/img/logo.gif", width=100)
+with col_logo: st.image("https://www.nzf.com.ua/img/logo.gif", width=80)
 with col_title:
     prog_val = min(days_learned / 365 * 100, 100)
-    st.markdown(f"<div style='display:flex; justify-content:space-between; align-items:center; padding-top:10px;'><h1 style='margin:0; font-size:32px;'>SkyGrid: Solar AI Monitor Nikopol</h1><div style='display:flex; gap:15px; align-items:center;'><span style='font-size:16px;'>📅 АСКОЕ: <b>{last_update}</b></span><span style='font-size:16px;'>🧠 Досвід ШІ: <b>{days_learned} дн.</b> <div class='progress-bg'><div class='progress-fill' style='width:{prog_val}%;'></div></div></span></div></div>", unsafe_allow_html=True)
+    st.markdown(f"<div style='display:flex; justify-content:space-between; align-items:center; padding-top:10px;'><h2 style='margin:0;'>SkyGrid: Solar AI Monitor Nikopol</h2><div style='display:flex; gap:15px; align-items:center;'><span style='font-size:14px;'>📅 АСКОЕ: <b>{last_update}</b></span><span style='font-size:14px;'>🧠 ШІ: <b>{days_learned} дн.</b> <div class='progress-bg'><div class='progress-fill' style='width:{prog_val}%;'></div></div></span></div></div>", unsafe_allow_html=True)
 
 # 6. ВКЛАДКИ
-tab_main, tab_weather = st.tabs(["🚀 МОНІТОРИНГ ТА НАВЧАННЯ", "🌦 ПРОГНОЗ ПОГОДИ"])
+tab_main, tab_weather = st.tabs(["🚀 МОНІТОРИНГ", "🌦 ПРОГНОЗ ПОГОДИ"])
 
 with tab_main:
     if df_all is not None:
         now_ua = datetime.now(UA_TZ).replace(tzinfo=None)
-        # Тільки майбутній прогноз для верхнього графіка
-        df_forecast_only = df_all[df_all['Time'] >= pd.Timestamp(now_ua.date())]
-        df_today = df_forecast_only[df_forecast_only['Time'].dt.date == now_ua.date()]
-        
+        df_today = df_all[df_all['Time'].dt.date == now_ua.date()]
         m1, m2, m3 = st.columns(3)
-        with m1: st.metric("ШІ ПЛАН (СЬОГОДНІ)", f"{df_today['Power_MW'].sum():.1f} MWh", f"Корекція: {ai_bias:.2f}x")
+        with m1: st.metric("ШІ ПЛАН (СЬОГОДНІ)", f"{df_today['Power_MW'].sum():.1f} MWh", f"Bias: {ai_bias:.2f}x")
         with m2: 
-            cur_h = now_ua.hour
-            t_row = df_today[df_today['Time'].dt.hour == cur_h]
-            t_now = t_row['Temp'].values[0] if not t_row.empty else 0
+            t_now = df_today[df_today['Time'].dt.hour == now_ua.hour]['Temp'].values[0] if not df_today.empty else 0
             st.metric("ТЕМПЕРАТУРА", f"{t_now}°C")
         with m3: st.metric("СТАТУС СЕС", "11.4 MW Online")
 
-        # Оперативний графік
-        st.subheader("📈 Оперативний план генерації (72 години)")
-        fig1 = make_subplots(specs=[[{"secondary_y": True}]])
-        df_f = df_forecast_only.head(72).copy()
-        fig1.add_trace(go.Scatter(x=df_f['Time'], y=df_f['Power_MW'], name="ШІ План (МВт)", fill='tozeroy', line=dict(color='#00ff7f', width=4)))
-        fig1.add_trace(go.Scatter(x=df_f['Time'], y=df_f['Temp'], name="Темп (°C)", line=dict(color='#ff4b4b', width=2, dash='dot')), secondary_y=True)
-        fig1.update_layout(height=350, margin=dict(l=10, r=10, t=20, b=10), hovermode="x unified", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', legend=dict(orientation="h", y=1.1, x=1))
+        # Графіки (Стислий формат)
+        fig1 = go.Figure()
+        df_f = df_all[df_all['Time'] >= pd.Timestamp(now_ua.date())].head(72)
+        fig1.add_trace(go.Scatter(x=df_f['Time'], y=df_f['Power_MW'], name="План (МВт)", fill='tozeroy', line=dict(color='#00ff7f', width=3)))
+        fig1.update_layout(height=280, margin=dict(l=10, r=10, t=10, b=10), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
         st.plotly_chart(fig1, use_container_width=True)
 
-        # ГРАФІК НАВЧАННЯ (ПОВЕРНЕННЯ ЗЕЛЕНОЇ ЛІНІЇ)
-        st.markdown("---")
-        st.subheader("📊 Аналіз навчання ШІ: Факт АСКОЕ vs Коректований План")
-        
         if df_fact is not None:
-            # Беремо дані за останні 3 дні, які є в базі
-            df_hist_fact = df_fact.tail(72).copy()
-            # Шукаємо відповідну погоду в df_all (який тепер містить past_days)
-            df_hist_base = df_all[df_all['Time'].isin(df_hist_fact['Time'])].copy()
-            
+            df_hist_fact = df_fact.tail(72)
             fig_learn = go.Figure()
-            
-            # 1. Факт АСКОЕ (Червона)
             fig_learn.add_trace(go.Scatter(x=df_hist_fact['Time'], y=df_hist_fact['Fact_MW'], name="Факт АСКОЕ", line=dict(color='#ff4b4b', width=3)))
-            
-            # 2. Коректований План (Зелена) - ТЕПЕР ВОНА БУДЕ ТУТ
-            if not df_hist_base.empty:
-                df_hist_base['AI_Corrected'] = df_hist_base['Base_MW'] * ai_bias
-                fig_learn.add_trace(go.Scatter(x=df_hist_base['Time'], y=df_hist_base['AI_Corrected'], name="Коректований План (ШІ)", line=dict(color='#00ff7f', width=3)))
-
-            fig_learn.update_layout(height=380, margin=dict(l=10, r=10, t=20, b=10), hovermode="x unified", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', legend=dict(orientation="h", y=1.1, x=1))
+            fig_learn.update_layout(height=280, margin=dict(l=10, r=10, t=10, b=10), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
             st.plotly_chart(fig_learn, use_container_width=True)
 
 with tab_weather:
-    st.markdown("### 🕒 ПОГОДИННИЙ ПРОГНОЗ (24 ГОДИНИ)")
-    df_w_today = df_all[df_all['Time'].dt.date == now_ua.date()]
+    st.markdown("### 🕒 ПОЧАСОВО (24 ГОД)")
     cards_html = '<div class="weather-row">'
-    for _, row in df_w_today.iterrows():
-        cards_html += f'<div class="weather-card-industrial"><div style="color:#00d4ff;font-weight:bold;">{row["Time"].strftime("%H:%M")}</div><div style="font-size:22px;font-weight:900;">{row["Temp"]:.1f}°</div><div style="font-size:12px;color:#bbb;">☁️{row["Clouds"]}%</div></div>'
+    for _, row in df_today.iterrows():
+        cards_html += f'<div class="weather-card-industrial"><div style="color:#5dade2;font-size:12px;">{row["Time"].strftime("%H:%M")}</div><div style="font-size:18px;font-weight:bold;">{row["Temp"]:.0f}°</div><div style="font-size:10px;color:#bbb;">{get_weather_icon(row["Clouds"], row["Rain"])}</div></div>'
     cards_html += '</div>'
     st.markdown(cards_html, unsafe_allow_html=True)
     
     st.markdown("---")
     st.markdown("### 📅 МЕТЕОПРОГНОЗ НА 10 ДНІВ")
-    df_10d = df_all[df_all['Time'] >= pd.Timestamp(now_ua.date())].groupby(df_all['Time'].dt.date).agg({'Temp':['min','max'], 'Clouds':'mean'})
-    day_html = '<div class="day-grid">'
+    
+    df_10d = df_all[df_all['Time'] >= pd.Timestamp(now_ua.date())].groupby(df_all['Time'].dt.date).agg({'Temp':['min','max'], 'Clouds':'mean', 'Rain':'sum'}).head(10)
+    
+    day_html = '<div class="day-grid-fixed">'
     for date, row in df_10d.iterrows():
-        day_html += f'<div class="day-card-industrial"><div style="color:#00d4ff;font-weight:bold;">{date.strftime("%d.%m")}</div><div style="font-size:26px;font-weight:800;">{row[("Temp","max")]:.0f}°</div><div style="color:#aaa;">/{row[("Temp","min")]:.0f}°</div><div style="font-size:13px;margin-top:5px;">☁️{row[("Clouds","mean")]:.0f}%</div></div>'
+        icon = get_weather_icon(row[("Clouds","mean")], row[("Rain","sum")])
+        rain_val = min(row[("Rain","sum")] * 10, 100) # Для візуалізації шкали
+        day_html += f"""
+        <div class="day-card-hybrid">
+            <div class="day-date">{date.strftime("%d.%m")}</div>
+            <div class="day-icon">{icon}</div>
+            <div class="day-temp-max">{row[("Temp","max")]:.0f}°</div>
+            <div class="day-temp-min">/{row[("Temp","min")]:.0f}°</div>
+            <div class="rain-bar-bg"><div class="rain-bar-fill" style="width:{rain_val}%;"></div></div>
+            <div style="font-size:10px; color:#85929e;">💧 {row[("Rain","sum")]:.1f}мм</div>
+        </div>"""
     day_html += '</div>'
     st.markdown(day_html, unsafe_allow_html=True)
 
