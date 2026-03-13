@@ -5,19 +5,22 @@ from plotly.subplots import make_subplots
 import requests
 from datetime import datetime, timedelta
 
-st.set_page_config(page_title="Solar AI Nikopol", layout="wide", initial_sidebar_state="collapsed")
+# Налаштування сторінки
+st.set_page_config(page_title="Solar AI Monitor Nikopol", layout="wide", initial_sidebar_state="collapsed")
 
-# Стилізація інтерфейсу через CSS
+# Стилізація інтерфейсу (Dark Theme)
 st.markdown("""
     <style>
     .main { background-color: #0e1117; }
-    div[data-testid="stMetricValue"] { font-size: 2rem; color: #f1c40f; }
-    .stPlotlyChart { border-radius: 15px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.3); }
-    h1 { color: #ffffff; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-weight: 300; }
+    div[data-testid="stMetricValue"] { font-size: 1.8rem; color: #f1c40f; }
+    .stPlotlyChart { border-radius: 15px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+    h1 { color: #ffffff; font-family: 'Segoe UI', sans-serif; font-weight: 300; padding-bottom: 20px; }
     </style>
     """, unsafe_allow_html=True)
 
+@st.cache_data(ttl=3600)
 def get_weather_data():
+    """Отримання прогнозу погоди на 3 дні для Нікополя"""
     url = "https://api.open-meteo.com/v1/forecast?latitude=47.56&longitude=34.39&hourly=shortwave_radiation,cloud_cover,temperature_2m&timezone=auto&forecast_days=3"
     try:
         data = requests.get(url).json()
@@ -28,77 +31,109 @@ def get_weather_data():
             'Clouds': h['cloud_cover'],
             'Temp': h['temperature_2m']
         })
-        # Наша точна модель v2.6 (11.4 MW)
+        # Модель v2.6 (11.4 MW) з урахуванням Bifacial
         df['Power_MW'] = df['Radiation'] * 11.4 * 0.00092 * (1 - df['Clouds']/100 * 0.4)
         df.loc[df['Power_MW'] < 0, 'Power_MW'] = 0
         return df
-    except: return None
+    except:
+        return None
 
-# Заголовок
+# Заголовок з динамічними датами
 start_d = datetime.now().strftime("%d.%m")
 end_d = (datetime.now() + timedelta(days=2)).strftime("%d.%m")
-
 st.markdown(f"<h1>☀️ Solar AI Monitor: Nikopol <span style='font-size:18px; color:gray;'>{start_d} — {end_d}</span></h1>", unsafe_allow_html=True)
 
-df = get_weather_data()
+df_forecast = get_weather_data()
 
-if df is not None:
-    # Метрики в стилі Dashboard
-    today = df[df['Time'].dt.date == datetime.now().date()]
+if df_forecast is not None:
+    # --- БЛОК ДАНИХ АСКОЕ (ФАКТ) ---
+    df_fact = None
+    try:
+        # Пряме посилання на ваш CSV файл у GitHub
+        repo_url = "https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/solar_ai_base.csv"
+        df_fact = pd.read_csv(repo_url)
+        df_fact['Time'] = pd.to_datetime(df_fact['Time'])
+    except:
+        pass
+
+    # Метрики Dashboard
+    today = df_forecast[df_forecast['Time'].dt.date == datetime.now().date()]
     m1, m2, m3, m4 = st.columns(4)
-    with m1: st.metric("Сьогодні", f"{today['Power_MW'].sum():.1f} MWh")
-    with m2: st.metric("Пік потужності", f"{today['Power_MW'].max():.2f} MW")
-    with m3: 
+    with m1:
+        st.metric("Прогноз на сьогодні", f"{today['Power_MW'].sum():.1f} MWh")
+    with m2:
+        if df_fact is not None:
+            # Беремо суму факту за останні доступні 24 години
+            fact_sum = df_fact['Fact_MW'].sum()
+            st.metric("Факт АСКОЕ", f"{fact_sum:.1f} MWh")
+        else:
+            st.metric("Факт АСКОЕ", "Очікування...")
+    with m3:
         curr_temp = today.iloc[datetime.now().hour]['Temp']
-        st.metric("Температура", f"{curr_temp}°C")
-    with m4: st.metric("Станція", "11.4 MW")
+        st.metric("Температура зараз", f"{curr_temp}°C")
+    with m4:
+        st.metric("Потужність СЕС", "11.4 MW")
 
-    # Створення інтерактивного графіка Plotly
+    # --- СТВОРЕННЯ ГРАФІКА Plotly ---
     fig = make_subplots(specs=[[{"secondary_y": True}]])
 
-    # 1. Хмарність (сірі "гори" на фоні)
+    # 1. Хмарність (сірий фон)
     fig.add_trace(go.Scatter(
-        x=df['Time'], y=df['Clouds'], 
+        x=df_forecast['Time'], y=df_forecast['Clouds'], 
         name="Хмарність (%)", fill='tozeroy', 
         line=dict(color='rgba(128, 128, 128, 0.2)', width=0),
-        fillcolor='rgba(128, 128, 128, 0.1)'
+        fillcolor='rgba(128, 128, 128, 0.1)',
+        hoverinfo='skip'
     ))
 
-    # 2. Генерація (Золота лінія з градієнтом)
+    # 2. Прогноз генерації (Золота лінія)
     fig.add_trace(go.Scatter(
-        x=df['Time'], y=df['Power_MW'], 
-        name="Генерація (MW)", fill='tozeroy',
+        x=df_forecast['Time'], y=df_forecast['Power_MW'], 
+        name="Прогноз (MW)", fill='tozeroy',
         line=dict(color='#f1c40f', width=4),
         fillcolor='rgba(241, 196, 15, 0.15)'
     ))
 
-    # 3. Температура (Червоний пунктир на правій осі)
+    # 3. Факт АСКОЕ (Червона лінія, якщо дані є)
+    if df_fact is not None:
+        fig.add_trace(go.Scatter(
+            x=df_fact['Time'], y=df_fact['Fact_MW'], 
+            name="Факт АСКОЕ (MW)", 
+            line=dict(color='#e74c3c', width=3),
+            mode='lines+markers',
+            marker=dict(size=4)
+        ))
+
+    # 4. Температура (Червоний пунктир на правій осі)
     fig.add_trace(go.Scatter(
-        x=df['Time'], y=df['Temp'], 
+        x=df_forecast['Time'], y=df_forecast['Temp'], 
         name="Температура (°C)", 
-        line=dict(color='#e74c3c', width=2, dash='dot'),
+        line=dict(color='#e74c3c', width=1.5, dash='dot'),
+        opacity=0.6
     ), secondary_y=True)
 
-    # Налаштування стилю графіка
+    # Налаштування стилю
     fig.update_layout(
         template="plotly_dark",
         hovermode="x unified",
-        margin=dict(l=20, r=20, t=30, b=20),
+        margin=dict(l=10, r=10, t=30, b=10),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
-        height=450
+        height=500
     )
     
-    fig.update_xaxes(showgrid=False, zeroline=False)
-    fig.update_yaxes(title_text="MW / Clouds %", showgrid=True, gridcolor='rgba(255,255,255,0.05)', secondary_y=False)
+    fig.update_xaxes(showgrid=False, range=[df_forecast['Time'].min(), df_forecast['Time'].max()])
+    fig.update_yaxes(title_text="MW / Clouds %", secondary_y=False, gridcolor='rgba(255,255,255,0.05)')
     fig.update_yaxes(title_text="°C", secondary_y=True, showgrid=False)
 
     st.plotly_chart(fig, use_container_width=True)
 
-    # Нижня панель управління
-    with st.expander("🛠 Налаштування та детальні дані"):
-        st.dataframe(df.style.highlight_max(axis=0, subset=['Power_MW'], color='#3e3e00'))
+    # Інформаційна панель
+    with st.expander("📊 Переглянути детальні дані таблицею"):
+        st.dataframe(df_forecast.tail(24), use_container_width=True)
 
 else:
-    st.error("Помилка завантаження даних...")
+    st.error("⚠️ Не вдалося отримати дані з метеосервісу. Спробуйте оновити сторінку.")
+
+st.markdown("<div style='text-align: right; color: gray; font-size: 10px;'>System v3.0 | Powered by Nikopol Solar Team</div>", unsafe_allow_html=True)
