@@ -8,21 +8,23 @@ import time
 import pytz
 from io import BytesIO
 
-st.set_page_config(page_title="Solar AI Nikopol v3.5.1", layout="wide", initial_sidebar_state="collapsed")
+# Налаштування
+st.set_page_config(page_title="Solar AI Nikopol v3.6", layout="wide", initial_sidebar_state="collapsed")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 
-# 1. СТИЛІЗАЦІЯ
+# 1. СТИЛІЗАЦІЯ ТА ШРИФТИ
 st.markdown("""
     <style>
     .main { background-color: #0e1117; }
-    div[data-testid="stMetricValue"] { font-size: 1.8rem; color: #f1c40f; }
-    .stPlotlyChart { border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
-    .ai-card { background: rgba(0, 255, 127, 0.05); border: 1px solid #00ff7f; border-radius: 10px; padding: 20px; }
-    .stDownloadButton button { width: 100%; background-color: #00ff7f !important; color: black !important; font-weight: bold !important; }
+    div[data-testid="stMetricValue"] { font-size: 1.7rem; color: #f1c40f; }
+    .stPlotlyChart { border-radius: 15px; }
+    .ai-card { background: rgba(0, 255, 127, 0.05); border: 1px solid #00ff7f; border-radius: 10px; padding: 15px; }
+    .footer { position: fixed; bottom: 10px; right: 20px; color: gray; font-size: 12px; }
+    .status-tag { background: #1e272e; padding: 5px 15px; border-radius: 20px; border: 1px solid #34495e; color: #bdc3c7; font-size: 14px; }
     </style>
     """, unsafe_allow_html=True)
 
-# 2. ОТРИМАННЯ МЕТЕОДАНИХ (З ФІНАЛЬНИМ ЗСУВОМ ЧАСУ)
+# 2. ОТРИМАННЯ МЕТЕОДАНИХ
 @st.cache_data(ttl=600)
 def get_weather_data():
     url = "https://api.open-meteo.com/v1/forecast?latitude=47.56&longitude=34.39&hourly=shortwave_radiation,cloud_cover,temperature_2m,precipitation&timezone=auto&past_days=7&forecast_days=3"
@@ -36,22 +38,20 @@ def get_weather_data():
             'Temp': h['temperature_2m'],
             'Rain': h['precipitation']
         })
-        
-        # --- ФІНАЛЬНА КОРЕКЦІЯ ЧАСУ ---
-        # 1. Переводимо в київський час
-        df['Time'] = df['Time'].dt.tz_localize('UTC').dt.tz_convert(UA_TZ).dt.tz_localize(None)
-        # 2. Примусово зсуваємо на 2 години назад, щоб пік став о 12:00
-        df['Time'] = df['Time'] - pd.Timedelta(hours=2)
+        # Корекція часу: UTC -> Kyiv - 2h (фікс піку на 12:00)
+        df['Time'] = df['Time'].dt.tz_localize('UTC').dt.tz_convert(UA_TZ).dt.tz_localize(None) - pd.Timedelta(hours=2)
         
         df['Power_MW'] = df['Radiation'] * 11.4 * 0.00115 * (1 - df['Clouds']/100 * 0.2)
         df.loc[df['Power_MW'] < 0, 'Power_MW'] = 0
         return df
     except: return None
 
-# --- АДАПТАЦІЯ ШІ ---
+# --- ЗАВАНТАЖЕННЯ БАЗИ ТА АНАЛІЗ ---
 df_all = get_weather_data()
 df_fact = None
 ai_bias = 1.0 
+last_update = "Немає даних / No data"
+days_learned = 0
 
 try:
     v_tag = int(time.time() / 60)
@@ -60,6 +60,9 @@ try:
     df_fact['Time'] = pd.to_datetime(df_fact['Time']).dt.floor('H')
     
     last_date = df_fact['Time'].dt.date.max()
+    last_update = last_date.strftime("%d.%m.%Y")
+    days_learned = len(df_fact['Time'].dt.date.unique())
+    
     f_day = df_fact[df_fact['Time'].dt.date == last_date]
     p_day = df_all[df_all['Time'].dt.date == last_date]
     
@@ -72,50 +75,66 @@ except: pass
 if df_all is not None:
     df_all['Power_MW'] = df_all['Power_MW'] * ai_bias
 
-# --- ІНТЕРФЕЙС ---
-st.title("☀️ Solar AI Monitor: Nikopol v3.5.1")
+# --- ВЕРХНЯ ПАНЕЛЬ (HEADER) ---
+head_col1, head_col2 = st.columns([1, 4])
+with head_col1:
+    # ТУТ ВАШ ЛОГОТИП (якщо є пряме посилання на картинку)
+    # st.image("URL_ДО_ЛОГОТИПУ", width=150)
+    st.markdown("### ⚡️ NZF ENERGY")
+with head_col2:
+    st.title("Solar AI Monitor: Nikopol v3.6")
+    st.markdown(f"""
+    <div style='display: flex; gap: 10px;'>
+        <span class='status-tag'>📅 Останній факт / Last data: <b>{last_update}</b></span>
+        <span class='status-tag'>🧠 Навчання ШІ / AI Experience: <b>{days_learned} днів/days</b></span>
+    </div>
+    """, unsafe_allow_html=True)
 
+# --- ОСНОВНИЙ МОНІТОРИНГ ---
 if df_all is not None:
     now_ua = datetime.now(UA_TZ).replace(tzinfo=None)
     df_today = df_all[df_all['Time'].dt.date == now_ua.date()]
     
+    st.markdown("---")
     c1, c2, c3 = st.columns(3)
-    with c1: st.metric("План (Адаптований)", f"{df_today['Power_MW'].sum():.1f} MWh", f"{ai_bias:.2f}x")
+    with c1: 
+        st.metric("План на сьогодні / Today Forecast", f"{df_today['Power_MW'].sum():.1f} MWh", f"{ai_bias:.2f}x bias")
     with c2: 
-        # Визначаємо поточну годину для метрики
-        current_hour = now_ua.hour
-        temp_val = df_today[df_today['Time'].dt.hour == current_hour]['Temp'].values[0] if not df_today[df_today['Time'].dt.hour == current_hour].empty else 0
-        st.metric("Температура", f"{temp_val}°C")
-    with c3: st.metric("Статус", "Автопілот Активний")
+        current_h = now_ua.hour
+        temp_now = df_today[df_today['Time'].dt.hour == current_h]['Temp'].values[0] if current_h < 24 else 0
+        st.metric("Температура / Temperature", f"{temp_now}°C")
+    with c3:
+        st.metric("Статус СЕС / Plant Status", "11.4 MW Online")
 
-    # Графік
+    # ГРАФІК
     fig1 = make_subplots(specs=[[{"secondary_y": True}]])
     df_f = df_all[df_all['Time'] >= pd.Timestamp(now_ua.date())].copy()
 
-    fig1.add_trace(go.Bar(x=df_f['Time'], y=df_f['Rain'], name="Опади (мм)", marker_color='rgba(0, 150, 255, 0.4)'))
-    fig1.add_trace(go.Scatter(x=df_f['Time'], y=df_f['Power_MW'], name="ШІ Прогноз", fill='tozeroy', line=dict(color='#00ff7f', width=3), fillcolor='rgba(0, 255, 127, 0.2)'))
-    fig1.add_trace(go.Scatter(x=df_f['Time'], y=df_f['Temp'], name="Темп (°C)", line=dict(color='#ff4b4b', width=1, dash='dot')), secondary_y=True)
+    fig1.add_trace(go.Bar(x=df_f['Time'], y=df_f['Rain'], name="Опади / Rain (mm)", marker_color='rgba(0, 150, 255, 0.4)'))
+    fig1.add_trace(go.Scatter(x=df_f['Time'], y=df_f['Power_MW'], name="ШІ План / AI Forecast (MW)", fill='tozeroy', line=dict(color='#00ff7f', width=3), fillcolor='rgba(0, 255, 127, 0.2)'))
+    fig1.add_trace(go.Scatter(x=df_f['Time'], y=df_f['Temp'], name="Темп / Temp (°C)", line=dict(color='#ff4b4b', width=1, dash='dot')), secondary_y=True)
 
-    fig1.update_layout(template="plotly_dark", height=450, legend=dict(orientation="h", y=1.1))
+    fig1.update_layout(template="plotly_dark", height=480, legend=dict(orientation="h", y=1.1, x=1, xanchor="right"))
     st.plotly_chart(fig1, use_container_width=True)
 
-    # Excel Експорт
+    # КНОПКА EXCEL
     df_excel = df_f[['Time', 'Power_MW', 'Temp', 'Rain', 'Clouds']].head(72).copy()
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df_excel.to_excel(writer, index=False, sheet_name='Plan')
-    st.download_button(label="📥 Скачати Excel План", data=output.getvalue(), file_name=f"Solar_AI_Plan.xlsx")
+        df_excel.to_excel(writer, index=False, sheet_name='Forecast')
+    st.download_button(label="📥 Завантажити План Excel / Download Excel Forecast", data=output.getvalue(), file_name=f"Solar_AI_Nikopol_{last_update}.xlsx")
 
-# Аналітика
+# --- ФУТЕР (ПІДПИС) ---
+st.markdown(f"<div class='footer'>Developed by Sergii Kolesnyk | Powered by Gemini AI v3.6</div>", unsafe_allow_html=True)
+
+# АНАЛІТИКА (ВНИЗУ)
 if df_fact is not None:
     st.markdown("---")
-    last_date = df_fact['Time'].dt.date.max()
-    st.subheader(f"🤖 Аналіз точності за {last_date}")
-    df_p_comp = df_all[df_all['Time'].dt.date == last_date]
-    df_f_comp = df_fact[df_fact['Time'].dt.date == last_date]
-    
-    fig2 = go.Figure()
-    fig2.add_trace(go.Scatter(x=df_p_comp['Time'], y=df_p_comp['Power_MW'], name="ШІ Корекція", line=dict(color='#00ff7f', dash='dot')))
-    fig2.add_trace(go.Scatter(x=df_f_comp['Time'], y=df_f_comp['Fact_MW'], name="Факт АСКОЕ", line=dict(color='#e74c3c', width=3)))
-    fig2.update_layout(template="plotly_dark", height=350)
-    st.plotly_chart(fig2, use_container_width=True)
+    with st.expander("📊 Аналіз точності ШІ / AI Accuracy Analysis"):
+        df_p_comp = df_all[df_all['Time'].dt.date == last_date]
+        df_f_comp = df_fact[df_fact['Time'].dt.date == last_date]
+        fig2 = go.Figure()
+        fig2.add_trace(go.Scatter(x=df_p_comp['Time'], y=df_p_comp['Power_MW'], name="Модель / Model", line=dict(color='#00ff7f', dash='dot')))
+        fig2.add_trace(go.Scatter(x=df_f_comp['Time'], y=df_f_comp['Fact_MW'], name="Факт / Actual", line=dict(color='#e74c3c', width=3)))
+        fig2.update_layout(template="plotly_dark", height=300)
+        st.plotly_chart(fig2, use_container_width=True)
