@@ -8,7 +8,7 @@ import time
 import pytz
 
 # 1. КОНФІГУРАЦІЯ
-st.set_page_config(page_title="SkyGrid: Solar AI Nikopol v3.7.2", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="SkyGrid: Solar AI Nikopol v3.7.3", layout="wide", initial_sidebar_state="collapsed")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 
 # 2. СТИЛІЗАЦІЯ
@@ -43,7 +43,7 @@ def get_weather_data():
         return df
     except: return None
 
-# 4. ЛОГІКА ШІ (АСКОЕ + Коректировка)
+# 4. ЛОГІКА ШІ
 df_all = get_weather_data()
 df_fact = None
 ai_bias, last_update, days_learned = 1.0, "Оновлення...", 0
@@ -110,41 +110,56 @@ with tab_main:
         fig1 = make_subplots(specs=[[{"secondary_y": True}]])
         df_f = df_all[df_all['Time'] >= pd.Timestamp(now_ua.date())].head(72).copy()
         fig1.add_trace(go.Bar(x=df_f['Time'], y=df_f['Rain'], name="Опади", marker_color='rgba(0, 150, 255, 0.3)'))
-        fig1.add_trace(go.Scatter(x=df_f['Time'], y=df_f['Power_MW'], name="План (МВт)", fill='tozeroy', line=dict(color='#00ff7f', width=4)))
+        fig1.add_trace(go.Scatter(x=df_f['Time'], y=df_f['Power_MW'], name="План ШІ (МВт)", fill='tozeroy', line=dict(color='#00ff7f', width=4)))
         fig1.add_trace(go.Scatter(x=df_f['Time'], y=df_f['Temp'], name="Темп", line=dict(color='#ff4b4b', width=2, dash='dot')), secondary_y=True)
-        fig1.update_layout(height=380, margin=dict(l=10, r=10, t=20, b=10), hovermode="x unified", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+        fig1.update_layout(height=380, margin=dict(l=10, r=10, t=20, b=10), hovermode="x unified", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
         st.plotly_chart(fig1, use_container_width=True)
 
         st.markdown("---")
 
-        # ГРАФІК 2: НАВЧАННЯ ТА АСКОЕ (УНИЗУ)
+        # ГРАФІК 2: АНАЛІЗ ТОЧНОСТІ (ВИПРАВЛЕНО)
         st.subheader("📊 Аналіз точності ШІ та дані АСКОЕ (Навчання)")
         fig_learn = go.Figure()
         
         if df_fact is not None:
-            df_hist = df_fact.tail(72) # Останні 3 доби з бази
+            # Фільтруємо дані за останні 3 дні з бази АСКОЕ
+            df_hist_fact = df_fact.tail(72).copy()
+            hist_times = df_hist_fact['Time'].tolist()
+            # Отримуємо прогноз на ці ж самі часові мітки
+            df_hist_pred = df_all[df_all['Time'].isin(hist_times)].copy()
             
-            # 1. Дані АСКОЕ (Факт)
-            fig_learn.add_trace(go.Scatter(x=df_hist['Time'], y=df_hist['Fact_MW'], name="Факт АСКОЕ", line=dict(color='#00ff7f', width=3)))
-            
-            # 2. ШІ Прогноз (План)
-            hist_times = df_hist['Time'].tolist()
-            p_hist = df_all[df_all['Time'].isin(hist_times)]
-            if not p_hist.empty:
-                fig_learn.add_trace(go.Scatter(x=p_hist['Time'], y=p_hist['Power_MW'], name="План ШІ (коригований)", line=dict(color='#00d4ff', width=2, dash='dot')))
-            
-            # 3. Лінія Коректировки (Відхилення)
-            if not p_hist.empty:
-                # Обчислюємо різницю між фактом та планом
-                merged = pd.merge(df_hist, p_hist, on='Time')
-                merged['Diff'] = merged['Fact_MW'] - merged['Power_MW']
-                fig_learn.add_trace(go.Scatter(x=merged['Time'], y=merged['Diff'], name="Коректировка (Відхилення)", fill='tozeroid', line=dict(color='rgba(255, 255, 255, 0.4)', width=1)))
+            if not df_hist_pred.empty:
+                # 1. Область Коректировки (Дельта)
+                merged = pd.merge(df_hist_fact, df_hist_pred, on='Time')
+                fig_learn.add_trace(go.Scatter(
+                    x=merged['Time'], y=merged['Power_MW'], 
+                    name="Дельта (Помилка)", 
+                    fill=None, mode='lines', line_color='rgba(255,255,255,0)'
+                ))
+                fig_learn.add_trace(go.Scatter(
+                    x=merged['Time'], y=merged['Fact_MW'], 
+                    fill='tonexty', mode='lines', line_color='rgba(255,255,255,0)',
+                    fillcolor='rgba(255, 255, 255, 0.1)', name="Область корекції"
+                ))
 
-        fig_learn.update_layout(height=350, margin=dict(l=10, r=10, t=20, b=10), hovermode="x unified", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+                # 2. План ШІ (Пунктир)
+                fig_learn.add_trace(go.Scatter(
+                    x=merged['Time'], y=merged['Power_MW'], 
+                    name="План ШІ", 
+                    line=dict(color='#00d4ff', width=2, dash='dash')
+                ))
+
+                # 3. Факт АСКОЕ (Суцільна)
+                fig_learn.add_trace(go.Scatter(
+                    x=merged['Time'], y=merged['Fact_MW'], 
+                    name="Факт АСКОЕ", 
+                    line=dict(color='#00ff7f', width=4)
+                ))
+
+        fig_learn.update_layout(height=400, margin=dict(l=10, r=10, t=20, b=10), hovermode="x unified", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
         st.plotly_chart(fig_learn, use_container_width=True)
 
 with tab_weather:
-    # Твій ідеальний прогноз (24 год + 10 днів)
     st.markdown("### 🕒 ПОГОДИННИЙ ПРОГНОЗ (24 ГОДИНИ)")
     cards_html = '<div class="weather-row">'
     for _, row in df_today.iterrows():
