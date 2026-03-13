@@ -6,9 +6,9 @@ import requests
 from datetime import datetime, timedelta
 import time
 import pytz
-from io import BytesIO # Для роботи з Excel у пам'яті
+from io import BytesIO
 
-st.set_page_config(page_title="Solar AI Nikopol v3.4", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Solar AI Nikopol v3.4.1", layout="wide", initial_sidebar_state="collapsed")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 
 # 1. СТИЛІЗАЦІЯ
@@ -65,19 +65,18 @@ if df_all is not None:
     df_all['Power_MW'] = (df_all['Radiation'] * 11.4 * 0.00115 * (1 - df_all['Clouds']/100 * 0.2)) * ai_bias
     df_all.loc[df_all['Power_MW'] < 0, 'Power_MW'] = 0
 
-# --- ГРАФІК ТА ЕКСПОРТ ---
-st.title("☀️ Solar AI Monitor: Nikopol v3.4")
+# --- ГРАФІК ---
+st.title("☀️ Solar AI Monitor: Nikopol v3.4.1")
 
 if df_all is not None:
     now_ua = datetime.now(UA_TZ).replace(tzinfo=None)
     df_today = df_all[df_all['Time'].dt.date == now_ua.date()]
     
     c1, c2, c3 = st.columns(3)
-    with c1: st.metric("Прогноз (Адаптований)", f"{df_today['Power_MW'].sum():.1f} MWh", f"{ai_bias:.2f}x")
+    with c1: st.metric("Адаптований прогноз", f"{df_today['Power_MW'].sum():.1f} MWh", f"{ai_bias:.2f}x")
     with c2: st.metric("Температура", f"{df_today.iloc[now_ua.hour]['Temp']}°C")
-    with c3: st.metric("Корекція ШІ", "Active")
+    with c3: st.metric("Самонавчання", "Активне")
 
-    # Головний графік
     fig1 = make_subplots(specs=[[{"secondary_y": True}]])
     df_f = df_all[df_all['Time'] >= pd.Timestamp(now_ua.date())].copy()
 
@@ -88,29 +87,36 @@ if df_all is not None:
     fig1.update_layout(template="plotly_dark", height=450, legend=dict(orientation="h", y=1.1))
     st.plotly_chart(fig1, use_container_width=True)
 
-    # --- КНОПКА ЕКСПОРТУ В EXCEL ---
-    st.subheader("📦 Експорт почасового плану на 3 дні")
+    # --- ЕКСПОРТ В EXCEL ---
+    st.subheader("📦 Експорт плану на 3 дні")
     
-    # Готуємо дані для Excel
     df_excel = df_f[['Time', 'Power_MW', 'Temp', 'Rain', 'Clouds']].copy()
-    df_excel.columns = ['Час', 'Прогноз_МВт', 'Температура_C', 'Опади_мм', 'Хмарність_%']
+    df_excel['Date'] = df_excel['Time'].dt.date
+    df_excel.columns = ['Дата_Час', 'Прогноз_МВт', 'Темп_C', 'Опади_мм', 'Хмарність_%', 'Дата']
     
     output = BytesIO()
+    # Створюємо файл Excel
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df_excel.to_excel(writer, index=False, sheet_name='Solar_Forecast')
+        df_excel.to_excel(writer, index=False, sheet_name='Hourly_Plan')
+        
+        # Додаємо лист із підсумками по днях
+        summary = df_excel.groupby('Дата')['Прогноз_МВт'].sum().reset_index()
+        summary.columns = ['Дата', 'Загальна_генерація_МВт_год']
+        summary.to_excel(writer, index=False, sheet_name='Daily_Summary')
+
     excel_data = output.getvalue()
 
     st.download_button(
         label="📥 Завантажити графік прогнозу в Excel (.xlsx)",
         data=excel_data,
-        file_name=f"Solar_AI_Nikopol_{now_ua.strftime('%d_%m')}.xlsx",
+        file_name=f"Solar_AI_Plan_{now_ua.strftime('%d_%m')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
 # --- БЛОК АНАЛІТИКИ ---
 if df_fact is not None:
     st.markdown("---")
-    st.header("🤖 Самонавчання моделі")
+    st.header("🤖 Аналітика ШІ")
     last_date = df_fact['Time'].dt.date.max()
     df_p_comp = df_all[df_all['Time'].dt.date == last_date]
     df_f_comp = df_fact[df_fact['Time'].dt.date == last_date]
@@ -118,9 +124,9 @@ if df_fact is not None:
     col_a, col_b = st.columns([2, 1])
     with col_a:
         fig2 = go.Figure()
-        fig2.add_trace(go.Scatter(x=df_p_comp['Time'], y=df_p_comp['Power_MW'], name="ШІ (Корекція)", line=dict(color='#00ff7f', width=2, dash='dot')))
+        fig2.add_trace(go.Scatter(x=df_p_comp['Time'], y=df_p_comp['Power_MW'], name="ШІ (Навчений)", line=dict(color='#00ff7f', width=2, dash='dot')))
         fig2.add_trace(go.Scatter(x=df_f_comp['Time'], y=df_f_comp['Fact_MW'], name="Факт АСКОЕ", line=dict(color='#e74c3c', width=3)))
         fig2.update_layout(template="plotly_dark", title=f"Порівняння за {last_date}", height=350)
         st.plotly_chart(fig2, use_container_width=True)
     with col_b:
-        st.markdown(f"<div class='ai-card'><b>💡 Аналітика ШІ:</b><br>Коефіцієнт самонавчання: {ai_bias:.3f}<br>Дані адаптовано під реальну потужність СЕС.</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='ai-card'><b>💡 Корекція:</b> {ai_bias:.3f}x<br>Модель автоматично підлаштована під вчорашній виробіток.</div>", unsafe_allow_html=True)
