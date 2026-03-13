@@ -1,0 +1,36 @@
+name: Daily Solar Sync
+
+on:
+  schedule:
+    - cron: '0 6 * * *'  # Запуск щодня о 08:00 за Києвом (6:00 UTC)
+  workflow_dispatch:      # Кнопка для ручного запуску
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: pytz/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install pandas requests
+
+      - name: Run Collector
+        env:
+          G_TOKEN: ${{ secrets.G_TOKEN }}
+          EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
+        run: python collector.py
+
+      - name: Commit and push changes
+        run: |
+          git config --global user.name "SolarAI-Bot"
+          git config --global user.email "bot@solarai.com"
+          git add solar_ai_base.csv
+          git commit -m "Auto-update solar data [skip ci]" || exit 0
+          git push
