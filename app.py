@@ -12,7 +12,7 @@ from io import BytesIO
 st.set_page_config(page_title="SkyGrid: Solar AI Nikopol v3.6.4", layout="wide", initial_sidebar_state="collapsed")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 
-# 2. ДИЗАЙНЕРСЬКА СТИЛІЗАЦІЯ (Збільшені шрифти та іконки)
+# 2. ДИЗАЙНЕРСЬКА СТИЛІЗАЦІЯ
 st.markdown("""
     <style>
     .block-container { padding: 1rem 2rem; }
@@ -38,14 +38,12 @@ st.markdown("""
         padding: 12px 5px;
         text-align: center;
         min-width: 0;
-        transition: transform 0.2s;
     }
     .w-time-ind { font-size: 14px; color: #00d4ff; font-weight: bold; margin-bottom: 5px; }
     .w-temp-ind { font-size: 22px; font-weight: 900; color: #ffffff; margin: 5px 0; }
     .w-info-ind { font-size: 12px; color: #bbb; line-height: 1.4; font-weight: 500; }
-    .w-icon-ind { font-size: 18px; margin-bottom: 2px; }
     
-    /* 10 днів (Великі блоки) */
+    /* 10 днів (Великі блоки без СЕС) */
     .day-grid {
         display: grid;
         grid-template-columns: repeat(10, 1fr);
@@ -60,8 +58,9 @@ st.markdown("""
         text-align: center;
     }
     .day-date { color: #00d4ff; font-size: 16px; font-weight: bold; margin-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 5px; }
-    .day-temp { font-size: 26px; font-weight: 800; color: #fff; margin: 8px 0; }
-    .day-gen { font-size: 14px; color: #00ff7f; font-weight: bold; }
+    .day-temp-max { font-size: 26px; font-weight: 800; color: #fff; margin-top: 8px; }
+    .day-temp-min { font-size: 16px; color: #aaa; margin-bottom: 8px; }
+    .day-meteo { font-size: 13px; color: #bbb; line-height: 1.5; }
     
     .footer { position: fixed; bottom: 10px; right: 20px; color: gray; font-size: 12px; }
     </style>
@@ -106,7 +105,7 @@ try:
     last_date = df_fact['Time'].dt.date.max()
     last_update = last_date.strftime("%d.%m.%Y")
     days_learned = len(df_fact['Time'].dt.date.unique())
-    # Bias...
+    
     f_day = df_fact[df_fact['Time'].dt.date == last_date]
     p_day = df_all[df_all['Time'].dt.date == last_date]
     if not f_day.empty and not p_day.empty:
@@ -149,7 +148,7 @@ with tab_main:
             t_row = df_today[df_today['Time'].dt.hour == cur_h]
             t_now = t_row['Temp'].values[0] if not t_row.empty else 0
             st.metric("ПОТОЧНА ТЕМПЕРАТУРА", f"{t_now}°C")
-        with m3: st.metric("СТАТУС МЕРЕЖІ", "11.4 MW Online", delta_color="normal")
+        with m3: st.metric("СТАТУС МЕРЕЖІ", "11.4 MW Online")
 
         fig1 = make_subplots(specs=[[{"secondary_y": True}]])
         df_f = df_all[df_all['Time'] >= pd.Timestamp(now_ua.date())].head(72).copy()
@@ -162,7 +161,6 @@ with tab_main:
 with tab_weather:
     st.markdown("### 🕒 ПОГОДИННИЙ ПРОГНОЗ (24 ГОДИНИ)")
     
-    # Створюємо 24 великі картки в один ряд
     cards_html = '<div class="weather-row">'
     for _, row in df_today.iterrows():
         w_dir = get_wind_dir(row['WindDir'])
@@ -171,29 +169,34 @@ with tab_weather:
             f'<div class="w-time-ind">{row["Time"].strftime("%H:%M")}</div>'
             f'<div class="w-temp-ind">{row["Temp"]:.1f}°</div>'
             f'<div class="w-info-ind">'
-            f'<div class="w-icon-ind">☁️ {row["Clouds"]}%</div>'
-            f'<div class="w-icon-ind">💧 {row["Rain"]:.1f}</div>'
-            f'<div style="font-size:10px; margin-top:3px;">{w_dir} {row["WindSp"]:.0f}м/с</div>'
+            f'☁️ {row["Clouds"]}% | 💧 {row["Rain"]:.1f}<br>'
+            f'💨 {row["WindSp"]:.0f}м/с {w_dir}'
             f'</div></div>'
         )
     cards_html += '</div>'
     st.markdown(cards_html, unsafe_allow_html=True)
     
     st.markdown("---")
-    st.markdown("### 📅 ПРОГНОЗ НА 10 ДНІВ")
+    st.markdown("### 📅 МЕТЕОПРОГНОЗ НА 10 ДНІВ")
     
-    df_10d = df_all.groupby(df_all['Time'].dt.date).agg({'Temp':['min','max'], 'Power_MW':'sum', 'Rain':'sum'})
+    # Агрегація метеоданих без СЕС
+    df_10d = df_all.groupby(df_all['Time'].dt.date).agg({
+        'Temp':['min','max'], 
+        'Rain':'sum', 
+        'Clouds':'mean'
+    })
     
-    # Використовуємо HTML-грід для ідеального розміщення
     day_html = '<div class="day-grid">'
     for date, row in df_10d.iterrows():
         day_html += (
             f'<div class="day-card-industrial">'
             f'<div class="day-date">{date.strftime("%d.%m")}</div>'
-            f'<div class="day-temp">{row[("Temp","max")]:.0f}°</div>'
-            f'<div class="day-gen">🔋 {row[("Power_MW","sum")]:.1f}</div>'
-            f'<div style="color:rgba(255,255,255,0.6); font-size:12px; margin-top:5px;">💧 {row[("Rain","sum")]:.1f} мм</div>'
-            f'</div>'
+            f'<div class="day-temp-max">{row[("Temp","max")]:.0f}°</div>'
+            f'<div class="day-temp-min">/{row[("Temp","min")]:.0f}°</div>'
+            f'<div class="day-meteo">'
+            f'☁️ <b>{row[("Clouds","mean")]:.0f}%</b><br>'
+            f'<span style="color:#00d4ff;">💧 <b>{row[("Rain","sum")]:.1f} мм</b></span>'
+            f'</div></div>'
         )
     day_html += '</div>'
     st.markdown(day_html, unsafe_allow_html=True)
