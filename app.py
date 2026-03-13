@@ -8,11 +8,10 @@ import time
 import pytz
 from io import BytesIO
 
-# Налаштування
-st.set_page_config(page_title="Solar AI Nikopol v3.6.2", layout="wide", initial_sidebar_state="collapsed")
+# 1. НАЛАШТУВАННЯ
+st.set_page_config(page_title="Solar AI Nikopol v3.6.3", layout="wide", initial_sidebar_state="collapsed")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 
-# 1. СТИЛІЗАЦІЯ
 st.markdown("""
     <style>
     .main { background-color: #0e1117; }
@@ -38,14 +37,13 @@ def get_weather_data():
             'Temp': h['temperature_2m'],
             'Rain': h['precipitation']
         })
-        # Корекція часу: UTC -> Kyiv - 2h (фікс піку на 12:00)
         df['Time'] = df['Time'].dt.tz_localize('UTC').dt.tz_convert(UA_TZ).dt.tz_localize(None) - pd.Timedelta(hours=2)
         df['Power_MW'] = df['Radiation'] * 11.4 * 0.00115 * (1 - df['Clouds']/100 * 0.2)
         df.loc[df['Power_MW'] < 0, 'Power_MW'] = 0
         return df
     except: return None
 
-# --- ЗАВАНТАЖЕННЯ БАЗИ ТА АНАЛІЗ ---
+# 3. АНАЛІЗ ДАНИХ ТА ШІ
 df_all = get_weather_data()
 df_fact = None
 ai_bias = 1.0 
@@ -71,29 +69,53 @@ except: pass
 if df_all is not None:
     df_all['Power_MW'] = df_all['Power_MW'] * ai_bias
 
-# --- HEADER ---
-head_col1, head_col2 = st.columns([1, 4])
-with head_col1:
+# 4. ВЕРХНЯ ПАНЕЛЬ
+col_l, col_r = st.columns([1, 4])
+with col_l:
     st.image("https://www.nzf.com.ua/img/logo.gif", width=120)
-with head_col2:
-    st.title("Solar AI Monitor: Nikopol v3.6.2")
-    st.markdown(f"""
-    <div style='display: flex; gap: 10px;'>
-        <span class='status-tag'>📅 Останні дані / Last Actual: <b>{last_update}</b></span>
-        <span class='status-tag'>🧠 Досвід ШІ / AI Experience: <b>{days_learned} днів/days</b></span>
-    </div>
-    """, unsafe_allow_html=True)
+with col_r:
+    st.title("Solar AI Monitor: Nikopol v3.6.3")
+    st.markdown(f"<div style='display:flex; gap:10px;'><span class='status-tag'>📅 Останні дані / Last Actual: <b>{last_update}</b></span><span class='status-tag'>🧠 Досвід ШІ / AI Experience: <b>{days_learned} днів/days</b></span></div>", unsafe_allow_html=True)
 
-# --- ОСНОВНИЙ МОНІТОРИНГ ---
+# 5. МОНІТОРИНГ
 if df_all is not None:
     now_ua = datetime.now(UA_TZ).replace(tzinfo=None)
     df_today = df_all[df_all['Time'].dt.date == now_ua.date()]
     st.markdown("---")
-    c1, c2, c3 = st.columns(3)
-    with c1: st.metric("План (Сьогодні) / Today Forecast", f"{df_today['Power_MW'].sum():.1f} MWh", f"{ai_bias:.2f}x bias")
-    with c2: 
-        current_h = now_ua.hour
-        temp_row = df_today[df_today['Time'].dt.hour == current_h]
-        temp_now = temp_row['Temp'].values[0] if not temp_row.empty else 0
-        st.metric("Температура / Temperature", f"{temp_now}°C")
-    with c3: st.metric("Потужність СЕС / Plant Capacity", "11.
+    m1, m2, m3 = st.columns(3)
+    with m1: st.metric("План (Сьогодні) / Today Forecast", f"{df_today['Power_MW'].sum():.1f} MWh", f"{ai_bias:.2f}x bias")
+    with m2: 
+        cur_h = now_ua.hour
+        t_row = df_today[df_today['Time'].dt.hour == cur_h]
+        t_now = t_row['Temp'].values[0] if not t_row.empty else 0
+        st.metric("Температура / Temperature", f"{t_now}°C")
+    with m3: st.metric("Потужність СЕС / Plant Capacity", "11.4 MW Online")
+
+    # ГРАФІК
+    fig1 = make_subplots(specs=[[{"secondary_y": True}]])
+    df_f = df_all[df_all['Time'] >= pd.Timestamp(now_ua.date())].copy()
+    fig1.add_trace(go.Bar(x=df_f['Time'], y=df_f['Rain'], name="Опади / Rain (mm)", marker_color='rgba(0, 150, 255, 0.4)'))
+    fig1.add_trace(go.Scatter(x=df_f['Time'], y=df_f['Power_MW'], name="ШІ План / AI Plan (MW)", fill='tozeroy', line=dict(color='#00ff7f', width=3), fillcolor='rgba(0, 255, 127, 0.2)'))
+    fig1.add_trace(go.Scatter(x=df_f['Time'], y=df_f['Temp'], name="Темп / Temp (°C)", line=dict(color='#ff4b4b', width=1, dash='dot')), secondary_y=True)
+    fig1.update_layout(template="plotly_dark", height=480, legend=dict(orientation="h", y=1.1, x=1, xanchor="right"))
+    st.plotly_chart(fig1, use_container_width=True)
+
+    # EXCEL
+    df_ex = df_f[['Time', 'Power_MW', 'Temp', 'Rain', 'Clouds']].head(72).copy()
+    out = BytesIO()
+    with pd.ExcelWriter(out, engine='xlsxwriter') as wr:
+        df_ex.to_excel(wr, index=False, sheet_name='Forecast')
+    st.download_button(label="📥 Завантажити План Excel / Download Excel Forecast", data=out.getvalue(), file_name=f"Solar_AI_Nikopol_Plan.xlsx")
+
+st.markdown(f"<div class='footer'>Developed by Sergii Kolesnyk | Powered by Gemini AI v3.6.3</div>", unsafe_allow_html=True)
+
+# 6. АНАЛІТИКА
+if df_fact is not None:
+    with st.expander("📊 Аналіз точності ШІ / AI Accuracy Analysis"):
+        df_p_c = df_all[df_all['Time'].dt.date == last_date]
+        df_f_c = df_fact[df_fact['Time'].dt.date == last_date]
+        fig2 = go.Figure()
+        fig2.add_trace(go.Scatter(x=df_p_c['Time'], y=df_p_c['Power_MW'], name="ШІ План / AI Plan", line=dict(color='#00ff7f', dash='dot')))
+        fig2.add_trace(go.Scatter(x=df_f_c['Time'], y=df_f_c['Fact_MW'], name="Факт / Actual", line=dict(color='#e74c3c', width=3)))
+        fig2.update_layout(template="plotly_dark", height=300)
+        st.plotly_chart(fig2, use_container_width=True)
