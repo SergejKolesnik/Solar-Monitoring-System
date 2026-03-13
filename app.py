@@ -3,13 +3,13 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime
 import time
 import pytz
 from io import BytesIO
 
 # Налаштування
-st.set_page_config(page_title="Solar AI Nikopol v3.6", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Solar AI Nikopol v3.6.1", layout="wide", initial_sidebar_state="collapsed")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 
 # 1. СТИЛІЗАЦІЯ ТА ШРИФТИ
@@ -19,7 +19,7 @@ st.markdown("""
     div[data-testid="stMetricValue"] { font-size: 1.7rem; color: #f1c40f; }
     .stPlotlyChart { border-radius: 15px; }
     .ai-card { background: rgba(0, 255, 127, 0.05); border: 1px solid #00ff7f; border-radius: 10px; padding: 15px; }
-    .footer { position: fixed; bottom: 10px; right: 20px; color: gray; font-size: 12px; }
+    .footer { position: fixed; bottom: 10px; right: 20px; color: gray; font-size: 12px; z-index: 1000; }
     .status-tag { background: #1e272e; padding: 5px 15px; border-radius: 20px; border: 1px solid #34495e; color: #bdc3c7; font-size: 14px; }
     </style>
     """, unsafe_allow_html=True)
@@ -50,7 +50,7 @@ def get_weather_data():
 df_all = get_weather_data()
 df_fact = None
 ai_bias = 1.0 
-last_update = "Немає даних / No data"
+last_update = "No data"
 days_learned = 0
 
 try:
@@ -78,15 +78,14 @@ if df_all is not None:
 # --- ВЕРХНЯ ПАНЕЛЬ (HEADER) ---
 head_col1, head_col2 = st.columns([1, 4])
 with head_col1:
-    # ТУТ ВАШ ЛОГОТИП (якщо є пряме посилання на картинку)
-    # st.image("URL_ДО_ЛОГОТИПУ", width=150)
-    st.markdown("### ⚡️ NZF ENERGY")
+    # Офіційний логотип НЗФ
+    st.image("https://www.nzf.com.ua/img/logo.gif", width=120)
 with head_col2:
-    st.title("Solar AI Monitor: Nikopol v3.6")
+    st.title("Solar AI Monitor: Nikopol v3.6.1")
     st.markdown(f"""
     <div style='display: flex; gap: 10px;'>
-        <span class='status-tag'>📅 Останній факт / Last data: <b>{last_update}</b></span>
-        <span class='status-tag'>🧠 Навчання ШІ / AI Experience: <b>{days_learned} днів/days</b></span>
+        <span class='status-tag'>📅 Останні дані / Last Actual: <b>{last_update}</b></span>
+        <span class='status-tag'>🧠 Досвід ШІ / AI Experience: <b>{days_learned} днів/days</b></span>
     </div>
     """, unsafe_allow_html=True)
 
@@ -98,43 +97,20 @@ if df_all is not None:
     st.markdown("---")
     c1, c2, c3 = st.columns(3)
     with c1: 
-        st.metric("План на сьогодні / Today Forecast", f"{df_today['Power_MW'].sum():.1f} MWh", f"{ai_bias:.2f}x bias")
+        st.metric("План (Сьогодні) / Today Forecast", f"{df_today['Power_MW'].sum():.1f} MWh", f"{ai_bias:.2f}x bias")
     with c2: 
         current_h = now_ua.hour
-        temp_now = df_today[df_today['Time'].dt.hour == current_h]['Temp'].values[0] if current_h < 24 else 0
+        # Безпечне отримання температури
+        temp_row = df_today[df_today['Time'].dt.hour == current_h]
+        temp_now = temp_row['Temp'].values[0] if not temp_row.empty else 0
         st.metric("Температура / Temperature", f"{temp_now}°C")
     with c3:
-        st.metric("Статус СЕС / Plant Status", "11.4 MW Online")
+        st.metric("Потужність СЕС / Plant Capacity", "11.4 MW")
 
     # ГРАФІК
     fig1 = make_subplots(specs=[[{"secondary_y": True}]])
     df_f = df_all[df_all['Time'] >= pd.Timestamp(now_ua.date())].copy()
 
     fig1.add_trace(go.Bar(x=df_f['Time'], y=df_f['Rain'], name="Опади / Rain (mm)", marker_color='rgba(0, 150, 255, 0.4)'))
-    fig1.add_trace(go.Scatter(x=df_f['Time'], y=df_f['Power_MW'], name="ШІ План / AI Forecast (MW)", fill='tozeroy', line=dict(color='#00ff7f', width=3), fillcolor='rgba(0, 255, 127, 0.2)'))
-    fig1.add_trace(go.Scatter(x=df_f['Time'], y=df_f['Temp'], name="Темп / Temp (°C)", line=dict(color='#ff4b4b', width=1, dash='dot')), secondary_y=True)
-
-    fig1.update_layout(template="plotly_dark", height=480, legend=dict(orientation="h", y=1.1, x=1, xanchor="right"))
-    st.plotly_chart(fig1, use_container_width=True)
-
-    # КНОПКА EXCEL
-    df_excel = df_f[['Time', 'Power_MW', 'Temp', 'Rain', 'Clouds']].head(72).copy()
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df_excel.to_excel(writer, index=False, sheet_name='Forecast')
-    st.download_button(label="📥 Завантажити План Excel / Download Excel Forecast", data=output.getvalue(), file_name=f"Solar_AI_Nikopol_{last_update}.xlsx")
-
-# --- ФУТЕР (ПІДПИС) ---
-st.markdown(f"<div class='footer'>Developed by Sergii Kolesnyk | Powered by Gemini AI v3.6</div>", unsafe_allow_html=True)
-
-# АНАЛІТИКА (ВНИЗУ)
-if df_fact is not None:
-    st.markdown("---")
-    with st.expander("📊 Аналіз точності ШІ / AI Accuracy Analysis"):
-        df_p_comp = df_all[df_all['Time'].dt.date == last_date]
-        df_f_comp = df_fact[df_fact['Time'].dt.date == last_date]
-        fig2 = go.Figure()
-        fig2.add_trace(go.Scatter(x=df_p_comp['Time'], y=df_p_comp['Power_MW'], name="Модель / Model", line=dict(color='#00ff7f', dash='dot')))
-        fig2.add_trace(go.Scatter(x=df_f_comp['Time'], y=df_f_comp['Fact_MW'], name="Факт / Actual", line=dict(color='#e74c3c', width=3)))
-        fig2.update_layout(template="plotly_dark", height=300)
-        st.plotly_chart(fig2, use_container_width=True)
+    fig1.add_trace(go.Scatter(x=df_f['Time'], y=df_f['Power_MW'], name="ШІ План / AI Plan (MW)", fill='tozeroy', line=dict(color='#00ff7f', width=3), fillcolor='rgba(0, 255, 127, 0.2)'))
+    fig1.add_trace(go.Scatter(x=df_f['Time'], y=df_f['Temp'], name="Тем
