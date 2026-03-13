@@ -3,18 +3,18 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 import pytz
 
 # 1. КОНФІГУРАЦІЯ
-st.set_page_config(page_title="SkyGrid: Solar AI Nikopol v3.7.9", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="SkyGrid: Solar AI Nikopol v3.8.0", layout="wide", initial_sidebar_state="collapsed")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 
-# 2. СТИЛІЗАЦІЯ (Збільшено шрифт мін. температури та фікс карток)
+# 2. СТИЛІЗАЦІЯ (Фікс лого та шрифтів)
 st.markdown("""
     <style>
-    .block-container { padding: 1rem 1rem; }
+    .block-container { padding: 2rem 1rem 0rem 1rem; } /* Збільшено відступ зверху для лого */
     .progress-bg { background: rgba(255,255,255,0.1); border-radius: 10px; height: 12px; width: 150px; display: inline-block; vertical-align: middle; overflow: hidden; margin-left: 10px; border: 1px solid rgba(0,255,127,0.3); }
     .progress-fill { background: linear-gradient(90deg, #00ff7f, #00d4ff); height: 100%; border-radius: 10px; }
     
@@ -26,8 +26,8 @@ st.markdown("""
     .day-date { color: #5dade2; font-size: 14px; font-weight: bold; margin-bottom: 5px; }
     .day-temp-max { font-size: 34px; font-weight: 800; color: #ffffff; line-height: 1; }
     
-    /* ВИПРАВЛЕНО: Збільшено шрифт мінімальної температури */
-    .day-temp-min { font-size: 20px; font-weight: 600; color: #aeb6bf; margin-top: 2px; margin-bottom: 8px; }
+    /* ВИПРАВЛЕНО: Мін. температура без риски */
+    .day-temp-min { font-size: 19px; font-weight: 600; color: #aeb6bf; margin-top: 4px; margin-bottom: 8px; }
     
     .rain-bar-bg { background: #2c3e50; border-radius: 3px; height: 5px; width: 80%; margin: 5px auto; overflow: hidden; }
     .rain-bar-fill { background: #3498db; height: 100%; }
@@ -38,6 +38,7 @@ st.markdown("""
 # 3. ФУНКЦІЇ ДАНИХ
 @st.cache_data(ttl=300)
 def get_weather_data():
+    # Запитуємо дані без жорсткого зсуву в URL, обробимо їх програмно
     url = "https://api.open-meteo.com/v1/forecast?latitude=47.56&longitude=34.39&hourly=shortwave_radiation,cloud_cover,temperature_2m,precipitation&timezone=auto&past_days=7&forecast_days=10"
     try:
         res = requests.get(url).json()
@@ -49,6 +50,7 @@ def get_weather_data():
             'Temp': h['temperature_2m'],
             'Rain': h['precipitation']
         })
+        # СИНХРОНІЗАЦІЯ: Приводимо UTC до Київського часу без зайвих зсувів
         df['Time'] = df['Time'].dt.tz_localize('UTC').dt.tz_convert(UA_TZ).dt.tz_localize(None)
         df['Base_MW'] = df['Radiation'] * 11.4 * 0.00115 * (1 - df['Clouds']/100 * 0.2)
         return df
@@ -60,7 +62,7 @@ def get_weather_icon(clouds, rain):
     if clouds > 30: return "⛅"
     return "☀️"
 
-# 4. ЛОГІКА ШІ ТА ФІКС ГРАФІКА
+# 4. ЛОГІКА ШІ
 df_all = get_weather_data()
 df_fact = None
 ai_bias, last_update, days_learned = 1.0, "Оновлення", 0
@@ -71,11 +73,11 @@ try:
     df_fact = pd.read_csv(repo_url)
     df_fact['Time'] = pd.to_datetime(df_fact['Time']).dt.floor('H')
     
+    # Визначаємо Bias по останньому дню
     last_date = df_fact['Time'].dt.date.max()
     last_update = last_date.strftime("%d.%m.%Y")
     days_learned = len(df_fact['Time'].dt.date.unique())
     
-    # Розрахунок корекції
     f_day = df_fact[df_fact['Time'].dt.date == last_date]
     p_day = df_all[df_all['Time'].dt.date == last_date] if df_all is not None else pd.DataFrame()
     if not f_day.empty and not p_day.empty:
@@ -87,10 +89,20 @@ if df_all is not None:
 
 # 5. ШАПКА
 col_logo, col_title = st.columns([0.6, 5])
-with col_logo: st.image("https://www.nzf.com.ua/img/logo.gif", width=80)
+with col_logo:
+    # Логотип тепер має більше місця
+    st.image("https://www.nzf.com.ua/img/logo.gif", width=90)
 with col_title:
     prog_val = min(days_learned / 365 * 100, 100)
-    st.markdown(f"<div style='display:flex; justify-content:space-between; align-items:center; padding-top:10px;'><h2 style='margin:0;'>SkyGrid: Solar AI Nikopol</h2><div style='display:flex; gap:15px; align-items:center;'><span style='font-size:14px;'>📅 АСКОЕ: <b>{last_update}</b></span><span style='font-size:14px;'>🧠 ШІ: <b>{days_learned} дн.</b> <div class='progress-bg'><div class='progress-fill' style='width:{prog_val}%;'></div></div></span></div></div>", unsafe_allow_html=True)
+    st.markdown(f"""
+        <div style='display:flex; justify-content:space-between; align-items:center;'>
+            <h2 style='margin:0;'>SkyGrid: Solar AI Monitor Nikopol</h2>
+            <div style='display:flex; gap:15px; align-items:center;'>
+                <span class='status-tag'>📅 АСКОЕ: <b>{last_update}</b></span>
+                <span class='status-tag'>🧠 ШІ: <b>{days_learned} дн.</b> <div class='progress-bg'><div class='progress-fill' style='width:{prog_val}%;'></div></div></span>
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
 
 # 6. ВКЛАДКИ
 tab_main, tab_weather = st.tabs(["🚀 МОНІТОРИНГ", "🌦 ПРОГНОЗ ПОГОДИ"])
@@ -106,18 +118,16 @@ with tab_main:
             st.metric("ТЕМПЕРАТУРА", f"{t_now}°C")
         with m3: st.metric("СТАТУС СЕС", "11.4 MW Online")
 
-        # Графік 1
         fig1 = go.Figure()
         df_f = df_all[df_all['Time'] >= pd.Timestamp(now_ua.date())].head(72)
         fig1.add_trace(go.Scatter(x=df_f['Time'], y=df_f['Power_MW'], name="План (МВт)", fill='tozeroy', line=dict(color='#00ff7f', width=3)))
         fig1.update_layout(height=280, margin=dict(l=10, r=10, t=10, b=10), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', legend=dict(orientation="h", y=1.1, x=1))
         st.plotly_chart(fig1, use_container_width=True)
 
-        # Графік навчання (ФІКС)
+        # ФІКС ГРАФІКА НАВЧАННЯ (ПРИБРАНО ЗСУВ 2 ГОДИНИ)
         st.subheader("📊 Аналіз навчання: Факт АСКОЕ vs План")
         if df_fact is not None:
             df_hist_fact = df_fact.tail(72).sort_values('Time')
-            # Використовуємо наближене об'єднання, щоб графік не ламався при розбіжності в секундах
             df_hist_base = df_all.sort_values('Time')
             merged = pd.merge_asof(df_hist_fact, df_hist_base, on='Time', direction='nearest')
             
@@ -148,7 +158,7 @@ with tab_weather:
             <div class="day-date">{date.strftime("%d.%m")}</div>
             <div class="day-icon">{icon}</div>
             <div class="day-temp-max">{row[("Temp","max")]:.0f}°</div>
-            <div class="day-temp-min">/{row[("Temp","min")]:.0f}°</div>
+            <div class="day-temp-min">{row[("Temp","min")]:.0f}°</div>
             <div class="rain-bar-bg"><div class="rain-bar-fill" style="width:{rain_p}%;"></div></div>
             <div style="font-size:11px; color:#85929e;">💧 {row[("Rain","sum")]:.1f}мм</div>
         </div>"""
