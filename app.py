@@ -3,31 +3,35 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime
 import time
 import pytz
 
 # 1. КОНФІГУРАЦІЯ
-st.set_page_config(page_title="SkyGrid: Solar AI Nikopol v3.8.0", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="SkyGrid: Solar AI Nikopol v3.8.1", layout="wide", initial_sidebar_state="collapsed")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 
-# 2. СТИЛІЗАЦІЯ (Фікс лого та шрифтів)
+# 2. СТИЛІЗАЦІЯ (Фікс лого та чистий дизайн температур)
 st.markdown("""
     <style>
-    .block-container { padding: 2rem 1rem 0rem 1rem; } /* Збільшено відступ зверху для лого */
+    .block-container { padding: 2.5rem 1rem 0rem 1rem; } /* Фікс для лого НЗФ */
+    
+    .status-tag { background: rgba(128,128,128,0.1); padding: 4px 12px; border-radius: 15px; border: 1px solid rgba(128,128,128,0.2); font-size: 13px; }
+    
+    /* Прогрес-бар ШІ */
     .progress-bg { background: rgba(255,255,255,0.1); border-radius: 10px; height: 12px; width: 150px; display: inline-block; vertical-align: middle; overflow: hidden; margin-left: 10px; border: 1px solid rgba(0,255,127,0.3); }
     .progress-fill { background: linear-gradient(90deg, #00ff7f, #00d4ff); height: 100%; border-radius: 10px; }
     
+    /* Почасовий прогноз */
     .weather-row { display: flex !important; flex-direction: row !important; justify-content: space-between !important; width: 100%; gap: 4px; margin: 10px 0; }
     .weather-card-industrial { flex: 1; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(0, 212, 255, 0.2); border-radius: 8px; padding: 8px 2px; text-align: center; min-width: 0; }
     
+    /* 10 ДНІВ: Новий дизайн без рисок */
     .day-grid-fixed { display: grid; grid-template-columns: repeat(10, 1fr); gap: 8px; width: 100%; margin-top: 10px; }
     .day-card-hybrid { background: #1e2124; border: 1px solid #32383e; border-radius: 12px; padding: 12px 5px; text-align: center; }
     .day-date { color: #5dade2; font-size: 14px; font-weight: bold; margin-bottom: 5px; }
     .day-temp-max { font-size: 34px; font-weight: 800; color: #ffffff; line-height: 1; }
-    
-    /* ВИПРАВЛЕНО: Мін. температура без риски */
-    .day-temp-min { font-size: 19px; font-weight: 600; color: #aeb6bf; margin-top: 4px; margin-bottom: 8px; }
+    .day-temp-min { font-size: 20px; font-weight: 600; color: #aeb6bf; margin-top: 5px; margin-bottom: 8px; }
     
     .rain-bar-bg { background: #2c3e50; border-radius: 3px; height: 5px; width: 80%; margin: 5px auto; overflow: hidden; }
     .rain-bar-fill { background: #3498db; height: 100%; }
@@ -38,7 +42,6 @@ st.markdown("""
 # 3. ФУНКЦІЇ ДАНИХ
 @st.cache_data(ttl=300)
 def get_weather_data():
-    # Запитуємо дані без жорсткого зсуву в URL, обробимо їх програмно
     url = "https://api.open-meteo.com/v1/forecast?latitude=47.56&longitude=34.39&hourly=shortwave_radiation,cloud_cover,temperature_2m,precipitation&timezone=auto&past_days=7&forecast_days=10"
     try:
         res = requests.get(url).json()
@@ -50,7 +53,7 @@ def get_weather_data():
             'Temp': h['temperature_2m'],
             'Rain': h['precipitation']
         })
-        # СИНХРОНІЗАЦІЯ: Приводимо UTC до Київського часу без зайвих зсувів
+        # СИНХРОНІЗАЦІЯ: Тільки один раз переводимо в Київський час
         df['Time'] = df['Time'].dt.tz_localize('UTC').dt.tz_convert(UA_TZ).dt.tz_localize(None)
         df['Base_MW'] = df['Radiation'] * 11.4 * 0.00115 * (1 - df['Clouds']/100 * 0.2)
         return df
@@ -73,7 +76,6 @@ try:
     df_fact = pd.read_csv(repo_url)
     df_fact['Time'] = pd.to_datetime(df_fact['Time']).dt.floor('H')
     
-    # Визначаємо Bias по останньому дню
     last_date = df_fact['Time'].dt.date.max()
     last_update = last_date.strftime("%d.%m.%Y")
     days_learned = len(df_fact['Time'].dt.date.unique())
@@ -90,8 +92,7 @@ if df_all is not None:
 # 5. ШАПКА
 col_logo, col_title = st.columns([0.6, 5])
 with col_logo:
-    # Логотип тепер має більше місця
-    st.image("https://www.nzf.com.ua/img/logo.gif", width=90)
+    st.image("https://www.nzf.com.ua/img/logo.gif", width=100)
 with col_title:
     prog_val = min(days_learned / 365 * 100, 100)
     st.markdown(f"""
@@ -124,7 +125,6 @@ with tab_main:
         fig1.update_layout(height=280, margin=dict(l=10, r=10, t=10, b=10), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', legend=dict(orientation="h", y=1.1, x=1))
         st.plotly_chart(fig1, use_container_width=True)
 
-        # ФІКС ГРАФІКА НАВЧАННЯ (ПРИБРАНО ЗСУВ 2 ГОДИНИ)
         st.subheader("📊 Аналіз навчання: Факт АСКОЕ vs План")
         if df_fact is not None:
             df_hist_fact = df_fact.tail(72).sort_values('Time')
@@ -156,7 +156,7 @@ with tab_weather:
         day_html += f"""
         <div class="day-card-hybrid">
             <div class="day-date">{date.strftime("%d.%m")}</div>
-            <div class="day-icon">{icon}</div>
+            <div class="day-icon" style="font-size:24px;">{icon}</div>
             <div class="day-temp-max">{row[("Temp","max")]:.0f}°</div>
             <div class="day-temp-min">{row[("Temp","min")]:.0f}°</div>
             <div class="rain-bar-bg"><div class="rain-bar-fill" style="width:{rain_p}%;"></div></div>
