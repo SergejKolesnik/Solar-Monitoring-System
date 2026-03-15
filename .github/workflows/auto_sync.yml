@@ -26,4 +26,5 @@ jobs:
           EMAIL_USER: ${{ secrets.EMAIL_USER }}
           EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          PYTHONIOENCODING: utf-8
         run: python collector.py
