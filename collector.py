@@ -3,9 +3,6 @@ import pandas as pd
 from github import Github
 from datetime import datetime
 
-# Налаштування української мови для логів
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-
 # --- НАЛАШТУВАННЯ ---
 EMAIL_USER = os.getenv('EMAIL_USER')
 EMAIL_PASS = os.getenv('EMAIL_PASS')
@@ -14,38 +11,40 @@ REPO_NAME = "SergejKolesnik/Solar-Monitoring-System"
 CSV_PATH = "solar_ai_base.csv"
 
 def clean_num(val):
-    """Очищення: '10 846,320' -> 10.84632 (МВт)"""
+    """Очищення промислового формату: '10 846,320' -> 10.84632"""
     if pd.isna(val) or val == "": return 0.0
+    # Видаляємо все крім цифр та роздільників
     s = re.sub(r'[^\d,.]', '', str(val)).replace(',', '.')
     try:
-        return float(s) / 1000
+        return float(s) / 1000  # кВт -> МВт
     except: return 0.0
 
 def run_sync():
     try:
-        print(f"🔗 Підключення до: {EMAIL_USER}...")
+        print(f"Connecting to {EMAIL_USER}...")
         mail = imaplib.IMAP4_SSL("imap.gmail.com")
         mail.login(EMAIL_USER, EMAIL_PASS)
         mail.select("inbox")
         
-        # Шукаємо листи (тема "Звіт про роботу установ")
-        _, data = mail.uid('search', None, '(SUBJECT "Звіт про роботу установ")')
+        # Пошук за темою
+        _, data = mail.search(None, '(SUBJECT "Звіт про роботу установ")')
         uids = data[0].split()
         
         if not uids:
-            print("📭 Листів не знайдено."); return
+            print("No emails found."); return
 
         all_dfs = []
-        for uid in uids[-10:]: # Перевіряємо останні 10 листів
-            _, msg_data = mail.uid('fetch', uid, "(RFC822)")
+        # Перевіряємо останні 10 листів, щоб закрити всі пропуски
+        for uid in uids[-10:]:
+            _, msg_data = mail.fetch(uid, "(RFC822)")
             msg = email.message_from_bytes(msg_data[0][1])
             for part in msg.walk():
                 fname = part.get_filename()
                 if fname and "report" in fname:
-                    print(f"📦 Обробляю файл: {fname}")
+                    print(f"Processing: {fname}")
                     raw_df = pd.read_excel(io.BytesIO(part.get_payload(decode=True)), header=None)
                     
-                    # Шукаємо рядок з датою
+                    # Шукаємо початок даних (рядок з датою)
                     start_idx = None
                     for i, row in raw_df.iterrows():
                         if re.search(r'\d{4}-\d{2}-\d{2}', str(row[0])):
@@ -54,6 +53,7 @@ def run_sync():
                     
                     if start_idx is not None:
                         df = raw_df.iloc[start_idx:].copy()
+                        # Стовпець 0 - Час, Стовпець 5 - Виробництво
                         df = df.iloc[:, [0, 5]].dropna()
                         df.columns = ['Time', 'Fact_MW']
                         df['Fact_MW'] = df['Fact_MW'].apply(clean_num)
@@ -64,26 +64,29 @@ def run_sync():
         
         if all_dfs:
             new_combined = pd.concat(all_dfs).drop_duplicates('Time')
-            print(f"✅ Знайдено {len(new_combined)} рядків нових даних.")
+            print(f"Extracted {len(new_combined)} rows.")
             
-            # Оновлення GitHub
+            # GitHub Update
             g = Github(GH_TOKEN)
             repo = g.get_repo(REPO_NAME)
             contents = repo.get_contents(CSV_PATH)
             old_df = pd.read_csv(io.StringIO(contents.decoded_content.decode('utf-8')))
             
+            # Об'єднуємо, залишаємо новіші дані при дублікатах
             final_df = pd.concat([old_df, new_combined]).drop_duplicates('Time', keep='last')
             final_df['Time'] = pd.to_datetime(final_df['Time'])
             final_df = final_df.sort_values('Time')
             
+            # Запис
             repo.update_file(contents.path, f"AI Sync: {datetime.now().strftime('%d.%m %H:%M')}", 
                              final_df.to_csv(index=False), contents.sha)
-            print("🚀 БАЗУ УСПІШНО ОНОВЛЕНО НА GITHUB!")
+            print("DONE: CSV UPDATED ON GITHUB!")
         else:
-            print("🤔 Дані у файлах не знайдено.")
+            print("No valid data found in files.")
 
     except Exception as e:
-        print(f"❌ Помилка: {str(e)}")
+        # Виводимо помилку англійською, щоб уникнути проблем з ASCII
+        print(f"ERROR: {str(e)}")
 
 if __name__ == "__main__":
     run_sync()
