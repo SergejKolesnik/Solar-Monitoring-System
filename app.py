@@ -1,14 +1,13 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import requests
 from datetime import datetime
 import time
 import pytz
 
 # 1. КОНФІГУРАЦІЯ
-st.set_page_config(page_title="SkyGrid: Solar AI Nikopol v3.8.2", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="SkyGrid: Solar AI Nikopol v3.8.3", layout="wide", initial_sidebar_state="collapsed")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 
 # 2. СТИЛІЗАЦІЯ
@@ -31,13 +30,15 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# 3. ФУНКЦІЇ ДАНИХ
+# 3. ФУНКЦІЇ ДАНИХ (Виправлено URL)
 @st.cache_data(ttl=300)
 def get_weather_data():
-    url = "https://api.open-meteo.com/v1/forecast?latitude=47.56&longitude=34.39&hourly=shortwave_radiation,cloud_cover,temperature_2m,precipitation&timezone=auto&past_days=7&forecast_days=10"
+    # Замінено timezone=auto на Europe/London для стабільності API
+    url = "https://api.open-meteo.com/v1/forecast?latitude=47.56&longitude=34.39&hourly=shortwave_radiation,cloud_cover,temperature_2m,precipitation&timezone=Europe%2FLondon&past_days=7&forecast_days=10"
     try:
-        res = requests.get(url).json()
-        h = res['hourly']
+        res = requests.get(url, timeout=10)
+        res.raise_for_status()
+        h = res.json()['hourly']
         df = pd.DataFrame({
             'Time': pd.to_datetime(h['time']),
             'Radiation': h['shortwave_radiation'],
@@ -45,10 +46,13 @@ def get_weather_data():
             'Temp': h['temperature_2m'],
             'Rain': h['precipitation']
         })
+        # Конвертуємо час у Київський
         df['Time'] = df['Time'].dt.tz_localize('UTC').dt.tz_convert(UA_TZ).dt.tz_localize(None)
         df['Base_MW'] = df['Radiation'] * 11.4 * 0.00115 * (1 - df['Clouds']/100 * 0.2)
         return df
-    except: return None
+    except Exception as e:
+        st.error(f"Технічна помилка API: {e}")
+        return None
 
 def get_weather_icon(clouds, rain):
     if rain > 0.5: return "🌧️"
@@ -78,14 +82,11 @@ if df_all is not None:
             ai_bias = f_day['Fact_MW'].sum() / p_day['Base_MW'].sum() if p_day['Base_MW'].sum() > 0 else 1.0
     except: pass
 
-    # Застосовуємо корекцію
     df_all['Power_MW'] = df_all['Base_MW'] * ai_bias
-    
-    # ВИЗНАЧАЄМО df_today ТУТ (ЩОБ БУЛА ДОСТУПНА ВСЮДИ)
     now_ua = datetime.now(UA_TZ).replace(tzinfo=None)
     df_today = df_all[df_all['Time'].dt.date == now_ua.date()]
 else:
-    st.error("Помилка завантаження метеоданих.")
+    st.warning("Очікування відповіді від метеослужби... Спробуйте оновити сторінку через хвилину.")
     st.stop()
 
 # 5. ШАПКА
