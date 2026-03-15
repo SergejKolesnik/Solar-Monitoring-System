@@ -7,7 +7,7 @@ import time
 import pytz
 
 # 1. КОНФІГУРАЦІЯ
-st.set_page_config(page_title="SkyGrid: Solar AI Nikopol v3.8.3", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="SkyGrid: Solar AI Nikopol v3.8.4", layout="wide", initial_sidebar_state="collapsed")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 
 # 2. СТИЛІЗАЦІЯ
@@ -17,26 +17,32 @@ st.markdown("""
     .status-tag { background: rgba(128,128,128,0.1); padding: 4px 12px; border-radius: 15px; border: 1px solid rgba(128,128,128,0.2); font-size: 13px; }
     .progress-bg { background: rgba(255,255,255,0.1); border-radius: 10px; height: 12px; width: 150px; display: inline-block; vertical-align: middle; overflow: hidden; margin-left: 10px; border: 1px solid rgba(0,255,127,0.3); }
     .progress-fill { background: linear-gradient(90deg, #00ff7f, #00d4ff); height: 100%; border-radius: 10px; }
+    
+    /* Почасовий прогноз */
     .weather-row { display: flex !important; flex-direction: row !important; justify-content: space-between !important; width: 100%; gap: 4px; margin: 10px 0; }
     .weather-card-industrial { flex: 1; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(0, 212, 255, 0.2); border-radius: 8px; padding: 8px 2px; text-align: center; min-width: 0; }
+    
+    /* 10 днів */
     .day-grid-fixed { display: grid; grid-template-columns: repeat(10, 1fr); gap: 8px; width: 100%; margin-top: 10px; }
     .day-card-hybrid { background: #1e2124; border: 1px solid #32383e; border-radius: 12px; padding: 12px 5px; text-align: center; }
     .day-date { color: #5dade2; font-size: 14px; font-weight: bold; margin-bottom: 5px; }
     .day-temp-max { font-size: 34px; font-weight: 800; color: #ffffff; line-height: 1; }
     .day-temp-min { font-size: 20px; font-weight: 600; color: #aeb6bf; margin-top: 5px; margin-bottom: 8px; }
+    
     .rain-bar-bg { background: #2c3e50; border-radius: 3px; height: 5px; width: 80%; margin: 5px auto; overflow: hidden; }
     .rain-bar-fill { background: #3498db; height: 100%; }
     .footer { position: fixed; bottom: 10px; right: 20px; color: gray; font-size: 11px; }
     </style>
     """, unsafe_allow_html=True)
 
-# 3. ФУНКЦІЇ ДАНИХ (Виправлено URL)
-@st.cache_data(ttl=300)
+# 3. ФУНКЦІЇ ДАНИХ (Кешування збільшено до 20 хвилин для уникнення помилки 429)
+@st.cache_data(ttl=1200)
 def get_weather_data():
-    # Замінено timezone=auto на Europe/London для стабільності API
     url = "https://api.open-meteo.com/v1/forecast?latitude=47.56&longitude=34.39&hourly=shortwave_radiation,cloud_cover,temperature_2m,precipitation&timezone=Europe%2FLondon&past_days=7&forecast_days=10"
     try:
-        res = requests.get(url, timeout=10)
+        res = requests.get(url, timeout=15)
+        if res.status_code == 429:
+            return "429"
         res.raise_for_status()
         h = res.json()['hourly']
         df = pd.DataFrame({
@@ -46,13 +52,11 @@ def get_weather_data():
             'Temp': h['temperature_2m'],
             'Rain': h['precipitation']
         })
-        # Конвертуємо час у Київський
         df['Time'] = df['Time'].dt.tz_localize('UTC').dt.tz_convert(UA_TZ).dt.tz_localize(None)
         df['Base_MW'] = df['Radiation'] * 11.4 * 0.00115 * (1 - df['Clouds']/100 * 0.2)
         return df
     except Exception as e:
-        st.error(f"Технічна помилка API: {e}")
-        return None
+        return str(e)
 
 def get_weather_icon(clouds, rain):
     if rain > 0.5: return "🌧️"
@@ -60,34 +64,37 @@ def get_weather_icon(clouds, rain):
     if clouds > 30: return "⛅"
     return "☀️"
 
-# 4. ЛОГІКА ШІ
-df_all = get_weather_data()
+# 4. ЛОГІКА
+weather_result = get_weather_data()
+
+if isinstance(weather_result, str):
+    if weather_result == "429":
+        st.warning("⚠️ Перевищено ліміт запитів до метеослужби (Error 429). Дані оновляться автоматично через кілька хвилин. Спробуйте не перезавантажувати сторінку часто.")
+    else:
+        st.error(f"Помилка з'єднання: {weather_result}")
+    st.stop()
+
+df_all = weather_result
 df_fact = None
 ai_bias, last_update, days_learned = 1.0, "Оновлення", 0
 
-if df_all is not None:
-    try:
-        v_tag = int(time.time() / 60)
-        repo_url = f"https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/solar_ai_base.csv?v={v_tag}"
-        df_fact = pd.read_csv(repo_url)
-        df_fact['Time'] = pd.to_datetime(df_fact['Time']).dt.floor('H')
-        
-        last_date = df_fact['Time'].dt.date.max()
-        last_update = last_date.strftime("%d.%m.%Y")
-        days_learned = len(df_fact['Time'].dt.date.unique())
-        
-        f_day = df_fact[df_fact['Time'].dt.date == last_date]
-        p_day = df_all[df_all['Time'].dt.date == last_date]
-        if not f_day.empty and not p_day.empty:
-            ai_bias = f_day['Fact_MW'].sum() / p_day['Base_MW'].sum() if p_day['Base_MW'].sum() > 0 else 1.0
-    except: pass
+try:
+    v_tag = int(time.time() / 60)
+    repo_url = f"https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/solar_ai_base.csv?v={v_tag}"
+    df_fact = pd.read_csv(repo_url)
+    df_fact['Time'] = pd.to_datetime(df_fact['Time']).dt.floor('H')
+    last_date = df_fact['Time'].dt.date.max()
+    last_update = last_date.strftime("%d.%m.%Y")
+    days_learned = len(df_fact['Time'].dt.date.unique())
+    f_day = df_fact[df_fact['Time'].dt.date == last_date]
+    p_day = df_all[df_all['Time'].dt.date == last_date]
+    if not f_day.empty and not p_day.empty:
+        ai_bias = f_day['Fact_MW'].sum() / p_day['Base_MW'].sum() if p_day['Base_MW'].sum() > 0 else 1.0
+except: pass
 
-    df_all['Power_MW'] = df_all['Base_MW'] * ai_bias
-    now_ua = datetime.now(UA_TZ).replace(tzinfo=None)
-    df_today = df_all[df_all['Time'].dt.date == now_ua.date()]
-else:
-    st.warning("Очікування відповіді від метеослужби... Спробуйте оновити сторінку через хвилину.")
-    st.stop()
+df_all['Power_MW'] = df_all['Base_MW'] * ai_bias
+now_ua = datetime.now(UA_TZ).replace(tzinfo=None)
+df_today = df_all[df_all['Time'].dt.date == now_ua.date()]
 
 # 5. ШАПКА
 col_logo, col_title = st.columns([0.6, 5])
@@ -134,9 +141,15 @@ with tab_main:
 
 with tab_weather:
     st.markdown("### 🕒 ПОЧАСОВО (24 ГОД)")
+    # ВИПРАВЛЕНО: Рендеримо HTML один раз зовні циклу
     cards_html = '<div class="weather-row">'
     for _, row in df_today.iterrows():
-        cards_html += f'<div class="weather-card-industrial"><div style="color:#5dade2;font-size:12px;">{row["Time"].strftime("%H:%M")}</div><div style="font-size:18px;font-weight:bold;">{row["Temp"]:.0f}°</div><div style="font-size:10px;color:#bbb;">{get_weather_icon(row["Clouds"], row["Rain"])}</div></div>'
+        cards_html += f"""
+        <div class="weather-card-industrial">
+            <div style="color:#5dade2;font-size:12px;">{row['Time'].strftime('%H:%M')}</div>
+            <div style="font-size:18px;font-weight:bold;">{row['Temp']:.0f}°</div>
+            <div style="font-size:10px;color:#bbb;">{get_weather_icon(row['Clouds'], row['Rain'])}</div>
+        </div>"""
     cards_html += '</div>'
     st.markdown(cards_html, unsafe_allow_html=True)
     
