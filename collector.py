@@ -1,49 +1,89 @@
-import imaplib, email, os, io, sys
+import imaplib, email, os, io, sys, re
 import pandas as pd
 from github import Github
+from datetime import datetime
 
-# Налаштування кодування для виводу в лог
+# Налаштування української мови для логів
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
-# --- ПРЯМЕ ПРИЗНАЧЕННЯ ЗМІННИХ ---
+# --- НАЛАШТУВАННЯ ---
 EMAIL_USER = os.getenv('EMAIL_USER')
 EMAIL_PASS = os.getenv('EMAIL_PASS')
 GH_TOKEN = os.getenv('GH_TOKEN')
+REPO_NAME = "SergejKolesnik/Solar-Monitoring-System"
+CSV_PATH = "solar_ai_base.csv"
 
-def run_diagnostic():
+def clean_num(val):
+    """Очищення: '10 846,320' -> 10.84632 (МВт)"""
+    if pd.isna(val) or val == "": return 0.0
+    s = re.sub(r'[^\d,.]', '', str(val)).replace(',', '.')
     try:
-        print(f"🔗 Спроба підключення для: {EMAIL_USER}...")
+        return float(s) / 1000
+    except: return 0.0
+
+def run_sync():
+    try:
+        print(f"🔗 Підключення до: {EMAIL_USER}...")
         mail = imaplib.IMAP4_SSL("imap.gmail.com")
         mail.login(EMAIL_USER, EMAIL_PASS)
-        print("✅ Вхід у пошту успішний!")
-        
         mail.select("inbox")
-        # Шукаємо листи (використовуємо інший метод пошуку для надійності)
-        result, data = mail.uid('search', None, '(SUBJECT "Звіт про роботу установ")')
+        
+        # Шукаємо листи (тема "Звіт про роботу установ")
+        _, data = mail.uid('search', None, '(SUBJECT "Звіт про роботу установ")')
         uids = data[0].split()
         
         if not uids:
-            print("📭 Листів з такою темою не знайдено."); return
+            print("📭 Листів не знайдено."); return
 
-        # Беремо останній знайдений лист за UID
-        res, msg_data = mail.uid('fetch', uids[-1], "(RFC822)")
-        msg = email.message_from_bytes(msg_data[0][1])
-        
-        for part in msg.walk():
-            fname = part.get_filename()
-            if fname and "report" in fname:
-                print(f"📦 ФАЙЛ ЗНАЙДЕНО: {fname}")
-                content = part.get_payload(decode=True)
-                raw_df = pd.read_excel(io.BytesIO(content), header=None)
-                
-                print("\n--- СИРІ ДАНІ (ПЕРШІ 15 РЯДКІВ) ---")
-                # Виводимо перші 15 рядків, щоб точно побачити структуру
-                print(raw_df.head(15).to_string()) 
-                print("----------------------------------\n")
+        all_dfs = []
+        for uid in uids[-10:]: # Перевіряємо останні 10 листів
+            _, msg_data = mail.uid('fetch', uid, "(RFC822)")
+            msg = email.message_from_bytes(msg_data[0][1])
+            for part in msg.walk():
+                fname = part.get_filename()
+                if fname and "report" in fname:
+                    print(f"📦 Обробляю файл: {fname}")
+                    raw_df = pd.read_excel(io.BytesIO(part.get_payload(decode=True)), header=None)
+                    
+                    # Шукаємо рядок з датою
+                    start_idx = None
+                    for i, row in raw_df.iterrows():
+                        if re.search(r'\d{4}-\d{2}-\d{2}', str(row[0])):
+                            start_idx = i
+                            break
+                    
+                    if start_idx is not None:
+                        df = raw_df.iloc[start_idx:].copy()
+                        df = df.iloc[:, [0, 5]].dropna()
+                        df.columns = ['Time', 'Fact_MW']
+                        df['Fact_MW'] = df['Fact_MW'].apply(clean_num)
+                        df['Time'] = pd.to_datetime(df['Time']).dt.strftime('%Y-%m-%d %H:00:00')
+                        all_dfs.append(df)
         
         mail.logout()
+        
+        if all_dfs:
+            new_combined = pd.concat(all_dfs).drop_duplicates('Time')
+            print(f"✅ Знайдено {len(new_combined)} рядків нових даних.")
+            
+            # Оновлення GitHub
+            g = Github(GH_TOKEN)
+            repo = g.get_repo(REPO_NAME)
+            contents = repo.get_contents(CSV_PATH)
+            old_df = pd.read_csv(io.StringIO(contents.decoded_content.decode('utf-8')))
+            
+            final_df = pd.concat([old_df, new_combined]).drop_duplicates('Time', keep='last')
+            final_df['Time'] = pd.to_datetime(final_df['Time'])
+            final_df = final_df.sort_values('Time')
+            
+            repo.update_file(contents.path, f"AI Sync: {datetime.now().strftime('%d.%m %H:%M')}", 
+                             final_df.to_csv(index=False), contents.sha)
+            print("🚀 БАЗУ УСПІШНО ОНОВЛЕНО НА GITHUB!")
+        else:
+            print("🤔 Дані у файлах не знайдено.")
+
     except Exception as e:
         print(f"❌ Помилка: {str(e)}")
 
 if __name__ == "__main__":
-    run_diagnostic()
+    run_sync()
