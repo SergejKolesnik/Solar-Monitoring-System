@@ -1,75 +1,70 @@
-import imaplib, email, os, io, re
+import requests
 import pandas as pd
-from github import Github
+import os
+from datetime import datetime
+import pytz
 
-# --- КОНФІГ ---
-EMAIL_USER = os.getenv('EMAIL_USER')
-EMAIL_PASS = os.getenv('EMAIL_PASS')
-GH_TOKEN = os.getenv('GH_TOKEN')
-REPO_NAME = "SergejKolesnik/Solar-Monitoring-System"
-CSV_PATH = "solar_ai_base.csv"
+# 1. НАЛАШТУВАННЯ
+API_KEY = "ТВІЙ_WEATHER_API_KEY" # Краще використовувати os.environ.get("WEATHER_API_KEY")
+LAT, LON = "47.56", "34.39"
+CSV_FILE = "solar_ai_base.csv"
+UA_TZ = pytz.timezone('Europe/Kyiv')
 
-def clean_num(val):
+def get_current_forecast():
+    """Отримує прогноз радіації на поточну годину"""
     try:
-        s = re.sub(r'[^\d,.]', '', str(val)).replace(',', '.')
-        return float(s) / 1000
-    except: return 0.0
-
-def run():
-    try:
-        # 1. ПОШТА
-        mail = imaplib.IMAP4_SSL("imap.gmail.com")
-        mail.login(EMAIL_USER, EMAIL_PASS)
-        mail.select("INBOX")
+        url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/{LAT},{LON}/today?unitGroup=metric&elements=datetime,solarradiation&key={API_KEY}&contentType=json"
+        response = requests.get(url, timeout=10)
+        data = response.json()
         
-        # Шукаємо ВСІ листи від відправника (так надійніше, ніж за темою)
-        _, data = mail.search(None, 'ALL')
-        uids = data[0].split()
+        # Визначаємо поточну годину в Нікополі
+        now_hour = datetime.now(UA_TZ).hour
         
-        all_dfs = []
-        for uid in uids[-15:]: # Останні 15 листів
-            _, msg_data = mail.fetch(uid, "(RFC822)")
-            msg = email.message_from_bytes(msg_data[0][1])
-            for part in msg.walk():
-                if part.get_content_maintype() == 'application':
-                    # Завантажуємо вміст без перевірки назви (щоб уникнути ASCII error)
-                    try:
-                        df_raw = pd.read_excel(io.BytesIO(part.get_payload(decode=True)), header=None)
-                        # Шукаємо рядок з датою у першій колонці
-                        for i, row in df_raw.iterrows():
-                            if re.search(r'\d{4}-\d{2}-\d{2}', str(row[0])):
-                                # Якщо знайшли дату, забираємо цей блок
-                                temp_df = df_raw.iloc[i:].copy()
-                                temp_df = temp_df.iloc[:, [0, 5]].dropna()
-                                temp_df.columns = ['Time', 'Fact_MW']
-                                temp_df['Fact_MW'] = temp_df['Fact_MW'].apply(clean_num)
-                                temp_df['Time'] = pd.to_datetime(temp_df['Time']).dt.strftime('%Y-%m-%d %H:00:00')
-                                all_dfs.append(temp_df)
-                                break
-                    except: continue
-        mail.logout()
-
-        if not all_dfs:
-            print("No data found in recent emails.")
-            return
-
-        # 2. GITHUB
-        new_data = pd.concat(all_dfs).drop_duplicates('Time')
-        g = Github(GH_TOKEN)
-        repo = g.get_repo(REPO_NAME)
-        contents = repo.get_contents(CSV_PATH)
-        old_df = pd.read_csv(io.StringIO(contents.decoded_content.decode('utf-8')))
+        # Знаходимо дані для цієї години
+        radiation = data['days'][0]['hours'][now_hour].get('solarradiation', 0)
         
-        final_df = pd.concat([old_df, new_data]).drop_duplicates('Time', keep='last')
-        final_df['Time'] = pd.to_datetime(final_df['Time'])
-        final_df = final_df.sort_values('Time')
-        
-        repo.update_file(contents.path, "Update", final_df.to_csv(index=False), contents.sha)
-        print("Done. Base updated.")
-
+        # Базовий розрахунок плану (11.4 MW * 0.001 як коефіцієнт)
+        forecast_mw = radiation * 11.4 * 0.001
+        return round(forecast_mw, 3)
     except Exception as e:
-        # Друкуємо тільки тип помилки без деталей, де може бути кирилиця
-        print(f"Error type: {type(e).__name__}")
+        print(f"Помилка отримання прогнозу: {e}")
+        return 0
+
+def get_askoe_fact():
+    """
+    Тут має бути твоя логіка отримання даних з АСКОЕ.
+    Зараз я ставлю заглушку, заміни її на свій виклик API або парсер.
+    """
+    # Приклад: fact = requests.get("URL_ТВОГО_АСКОЕ").json()['power']
+    return 8.45 # Тимчасове значення для тесту
+
+def update_database():
+    # 1. Отримуємо час, факт та прогноз
+    now_time = datetime.now(UA_TZ).replace(minute=0, second=0, microsecond=0)
+    fact_mw = get_askoe_fact()
+    forecast_mw = get_current_forecast()
+    
+    new_data = {
+        'Time': [now_time.strftime('%Y-%m-%d %H:%M:%S')],
+        'Fact_MW': [fact_mw],
+        'Forecast_MW': [forecast_mw]
+    }
+    
+    df_new = pd.DataFrame(new_data)
+    
+    # 2. Оновлюємо CSV
+    if os.path.exists(CSV_FILE):
+        df_old = pd.read_csv(CSV_FILE)
+        # Перевіряємо, щоб не було дублікатів по часу
+        if now_time.strftime('%Y-%m-%d %H:%M:%S') not in df_old['Time'].values:
+            df_final = pd.concat([df_old, df_new], ignore_index=True)
+            df_final.to_csv(CSV_FILE, index=False)
+            print(f"Дані додано: {now_time} | Факт: {fact_mw} | План: {forecast_mw}")
+        else:
+            print("Запис для цієї години вже існує.")
+    else:
+        df_new.to_csv(CSV_FILE, index=False)
+        print("Створено новий файл бази даних.")
 
 if __name__ == "__main__":
-    run()
+    update_database()
