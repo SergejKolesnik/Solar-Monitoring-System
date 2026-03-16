@@ -131,43 +131,67 @@ with tab1:
 
 with tab2:
     if df_today is not None and not df_today.empty:
-        # 1. ДАТА ПРОГНОЗУ (Крупно)
+        # 1. ЗАГОЛОВОК (Центруємо)
         f_date = df_today['Time'].dt.date.iloc[0].strftime("%d.%m.%Y")
-        st.markdown(f"<h1 style='text-align: center;'>📅 Прогноз на сьогодні: {f_date}</h1>", unsafe_allow_html=True)
+        st.markdown(f"<h1 style='text-align: center; margin-bottom: 30px;'>📅 Прогноз на сьогодні: <span style='color: #FFD700;'>{f_date}</span></h1>", unsafe_allow_html=True)
         
         now_hour = datetime.now(UA_TZ).hour
         current_data = df_today[df_today['Time'].dt.hour == now_hour].iloc[0] if now_hour < len(df_today) else df_today.iloc[0]
 
-        # 2. ГОЛОВНІ ПОКАЗНИКИ (Розділяємо на колонки)
-        col_weather, col_chart = st.columns([1, 2])
+        # 2. ОСНОВНИЙ БЛОК
+        col_info, col_chart = st.columns([1.2, 2])
 
-        with col_weather:
-            # Велика іконка поточного стану
+        with col_info:
+            # Створюємо єдину стильну картку для поточних даних
             icon = get_weather_icon(current_data['Clouds'], current_data['Rain'])
-            st.markdown(f"<p style='font-size: 100px; text-align: center; margin: 0;'>{icon}</p>", unsafe_allow_html=True)
-            
-            # Рідні метрики Streamlit (вони завжди виглядають професійно і не ламаються)
-            m1, m2 = st.columns(2)
-            m1.metric("ТЕМПЕРАТУРА", f"{current_data['Temp']:.0f} °C")
-            m2.metric("ХМАРНІСТЬ", f"{current_data['Clouds']:.0f} %")
-            
-            st.metric("ЕНЕРГІЯ НЕБА", f"{current_data['Radiation']:.0f} W/m²")
-            st.metric("ОПАДИ", f"{current_data['Rain']:.1f} мм")
+            st.markdown(f"""
+                <div style='background: rgba(255, 255, 255, 0.05); padding: 25px; border-radius: 20px; border: 1px solid rgba(255, 255, 255, 0.1); text-align: center;'>
+                    <p style='font-size: 80px; margin: 0;'>{icon}</p>
+                    <div style='display: flex; justify-content: space-around; margin-top: 10px;'>
+                        <div>
+                            <p style='color: gray; font-size: 14px; margin: 0;'>ТЕМПЕРАТУРА</p>
+                            <p style='font-size: 32px; font-weight: bold; margin: 0;'>{current_data['Temp']:.0f}°C</p>
+                        </div>
+                        <div>
+                            <p style='color: gray; font-size: 14px; margin: 0;'>ХМАРНІСТЬ</p>
+                            <p style='font-size: 32px; font-weight: bold; margin: 0;'>{current_data['Clouds']:.0f}%</p>
+                        </div>
+                    </div>
+                    <hr style='border: 0; border-top: 1px solid rgba(255,255,255,0.1); margin: 20px 0;'>
+                    <div style='display: flex; justify-content: space-around;'>
+                        <div>
+                            <p style='color: gray; font-size: 14px; margin: 0;'>ЕНЕРГІЯ НЕБА</p>
+                            <p style='font-size: 28px; font-weight: bold; color: #FFD700; margin: 0;'>{current_data['Radiation']:.0f} <span style='font-size: 14px;'>W/m²</span></p>
+                        </div>
+                        <div>
+                            <p style='color: gray; font-size: 14px; margin: 0;'>ОПАДИ</p>
+                            <p style='font-size: 28px; font-weight: bold; color: #3498db; margin: 0;'>{current_data['Rain']:.1f} <span style='font-size: 14px;'>мм</span></p>
+                        </div>
+                    </div>
+                </div>
+            """, unsafe_allow_html=True)
 
         with col_chart:
-            st.write("📈 **Графік сонячної активності**")
-            chart_data = df_today.set_index('Time')[['Radiation']]
-            st.area_chart(chart_data, color="#FFD700", height=300)
+            # Графік у рамці (через контейнер Streamlit)
+            with st.container(border=True):
+                st.write("📈 **Графік сонячної активності**")
+                chart_data = df_today.set_index('Time')[['Radiation']]
+                st.area_chart(chart_data, color="#FFD700", height=275)
 
-        st.divider()
+        st.markdown("<br>", unsafe_allow_html=True)
 
-        # 3. ТАЙМЛАЙН (Погодинно)
+        # 3. ТАЙМЛАЙН (Повертаємо рамки-картки)
         st.write("🕒 **Ключові години доби:**")
         t_cols = st.columns(7)
         display_hours = df_today[df_today['Time'].dt.hour.isin([8, 10, 12, 14, 16, 18, 20])]
         
         for i, (idx, row) in enumerate(display_hours.iterrows()):
             with t_cols[i]:
-                st.write(f"**{row['Time'].strftime('%H:%M')}**")
-                st.write(get_weather_icon(row['Clouds'], row['Rain']))
-                st.write(f"{row['Temp']:.0f}°")
+                # Кожна година в окремій маленькій рамці
+                st.markdown(f"""
+                    <div style='background: rgba(255, 255, 255, 0.03); padding: 10px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.07); text-align: center;'>
+                        <p style='font-size: 12px; color: gray; margin: 0;'>{row['Time'].strftime('%H:%M')}</p>
+                        <p style='font-size: 24px; margin: 5px 0;'>{get_weather_icon(row['Clouds'], row['Rain'])}</p>
+                        <p style='font-size: 18px; font-weight: bold; margin: 0;'>{row['Temp']:.0f}°</p>
+                    </div>
+                """, unsafe_allow_html=True)
