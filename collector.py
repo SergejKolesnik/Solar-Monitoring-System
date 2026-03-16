@@ -8,7 +8,7 @@ import io
 from datetime import datetime, timedelta
 import pytz
 
-# 1. КОНФІГУРАЦІЯ (Вже налаштована на твої Secrets)
+# 1. КОНФІГУРАЦІЯ (Беремо з Secrets GitHub)
 WEATHER_API_KEY = os.environ.get("WEATHER_API_KEY")
 EMAIL_USER = os.environ.get("EMAIL_USER")
 EMAIL_PASS = os.environ.get("EMAIL_PASS")
@@ -18,6 +18,7 @@ UA_TZ = pytz.timezone('Europe/Kyiv')
 
 # --- БЛОК А: ПРОГНОЗ НА МАЙБУТНЄ (3 ДНІ) ---
 def get_forecast():
+    print("Запитуємо прогноз погоди...")
     try:
         url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/{LAT},{LON}/next3days?unitGroup=metric&elements=datetime,solarradiation&key={WEATHER_API_KEY}&contentType=json"
         res = requests.get(url, timeout=15).json()
@@ -29,17 +30,20 @@ def get_forecast():
                     'Forecast_MW': round(hr.get('solarradiation', 0) * 11.4 * 0.001, 3)
                 })
         return pd.DataFrame(forecast_data)
-    except: return pd.DataFrame()
+    except Exception as e:
+        print(f"Помилка API погоди: {e}")
+        return pd.DataFrame()
 
-# --- БЛОК Б: ТВОЯ ВЧОРАШНЯ ЛОГІКА ПАРСИНГУ ПОШТИ ---
+# --- БЛОК Б: ПАРСЕР ПОШТИ АСКОЕ (ФАКТ ЗА ВЧОРА) ---
 def get_fact_from_mail():
+    print("Шукаємо листи АСКОЕ...")
     askoe_records = []
     try:
         mail = imaplib.IMAP4_SSL("imap.gmail.com")
         mail.login(EMAIL_USER, EMAIL_PASS)
         mail.select("inbox")
         
-        # Шукаємо листи АСКОЕ за останні 2 дні
+        # Перевіряємо листи за останні 2 дні
         date_cut = (datetime.now(UA_TZ) - timedelta(days=2)).strftime("%d-%b-%Y")
         _, data = mail.search(None, f'(SINCE "{date_cut}" SUBJECT "ASKOE")')
         
@@ -54,15 +58,17 @@ def get_fact_from_mail():
                 filename = part.get_filename()
                 if filename and (filename.endswith('.xlsx') or filename.endswith('.csv')):
                     payload = part.get_payload(decode=True)
-                    # Читаємо файл (АСКОЕ зазвичай шле Excel)
-                    df_mail = pd.read_excel(io.BytesIO(payload)) if filename.endswith('.xlsx') else pd.read_csv(io.BytesIO(payload))
+                    # Читаємо файл (автовизначення формату)
+                    if filename.endswith('.xlsx'):
+                        df_mail = pd.read_excel(io.BytesIO(payload))
+                    else:
+                        df_mail = pd.read_csv(io.BytesIO(payload))
                     
-                    # Наша вчорашня логіка мапінгу колонок
-                    # Припускаємо, що у файлі є 'Дата/Час' та 'Потужність'
+                    # Логіка витягування: перша колонка - Час, друга - Факт МВт
                     for _, row in df_mail.iterrows():
                         askoe_records.append({
-                            'Time': pd.to_datetime(row.iloc[0]), # Перша колонка - час
-                            'Fact_MW': row.iloc[1]             # Друга колонка - генерація
+                            'Time': pd.to_datetime(row.iloc[0]),
+                            'Fact_MW': row.iloc[1]
                         })
         mail.logout()
         return pd.DataFrame(askoe_records)
@@ -72,31 +78,35 @@ def get_fact_from_mail():
 
 # --- БЛОК В: СИНХРОНІЗАЦІЯ ---
 def sync_all():
+    # Завантажуємо існуючу базу
     if os.path.exists(CSV_FILE):
         df_base = pd.read_csv(CSV_FILE)
         df_base['Time'] = pd.to_datetime(df_base['Time'])
     else:
         df_base = pd.DataFrame(columns=['Time', 'Fact_MW', 'Forecast_MW'])
 
-    # 1. Оновлюємо прогнози
+    # 1. Додаємо прогнози наперед (Майбутнє)
     df_f = get_forecast()
     if not df_f.empty:
         for _, row in df_f.iterrows():
             if row['Time'] not in df_base['Time'].values:
+                # Створюємо новий рядок, якщо такого часу ще немає
                 df_base = pd.concat([df_base, pd.DataFrame([row])], ignore_index=True)
             else:
+                # Оновлюємо прогноз у існуючому рядку
                 df_base.loc[df_base['Time'] == row['Time'], 'Forecast_MW'] = row['Forecast_MW']
 
-    # 2. Оновлюємо факти
+    # 2. Додаємо факти АСКОЕ (Минуле)
     df_fact = get_fact_from_mail()
     if not df_fact.empty:
         for _, row in df_fact.iterrows():
-            # Вписуємо факт там, де час збігається
+            # Вписуємо факт строго у відповідну часову мітку
             df_base.loc[df_base['Time'] == pd.to_datetime(row['Time']), 'Fact_MW'] = row['Fact_MW']
 
-    # Зберігаємо
-    df_base.sort_values('Time').drop_duplicates('Time', keep='last').to_csv(CSV_FILE, index=False)
-    print("Дані АСКОЕ та Прогноз успішно зведено в CSV.")
+    # 3. Чищення та збереження
+    df_base = df_base.sort_values('Time').drop_duplicates('Time', keep='last')
+    df_base.to_csv(CSV_FILE, index=False)
+    print("--- СИНХРОНІЗАЦІЯ ЗАВЕРШЕНА ---")
 
 if __name__ == "__main__":
     sync_all()
