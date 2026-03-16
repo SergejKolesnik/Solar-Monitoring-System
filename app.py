@@ -131,80 +131,52 @@ with tab1:
 
 with tab2:
     if df_today is not None and not df_today.empty:
-        st.markdown("### 🕒 Енергетичний пульс доби")
+        # 1. ГОЛОВНИЙ ВІДЖЕТ (Поточний стан)
+        now_hour = datetime.now(UA_TZ).hour
+        current_data = df_today[df_today['Time'].dt.hour == now_hour].iloc[0] if now_hour < len(df_today) else df_today.iloc[0]
         
-        # Створюємо графік без зайвих "тонких" налаштувань
-        fig_pulse = go.Figure()
-
-        # 1. Зона радіації ( Area Chart )
-        fig_pulse.add_trace(go.Scatter(
-            x=df_today['Time'], 
-            y=df_today['Radiation'],
-            name="Радіація",
-            fill='tozeroy',
-            line=dict(color='#FFD700', width=2),
-            fillcolor='rgba(255, 215, 0, 0.12)',
-            hovertemplate='%{y:.0f} W/m²'
-        ))
-
-        # 2. Лінія температури ( на правій осі )
-        fig_pulse.add_trace(go.Scatter(
-            x=df_today['Time'], 
-            y=df_today['Temp'],
-            name="Температура",
-            line=dict(color='#00d4ff', width=4),
-            yaxis="y2",
-            hovertemplate='%{y:.1f}°C'
-        ))
-
-        # Мінімалістичне налаштування осей - без dtick, щоб не було помилок
-        fig_pulse.update_layout(
-            height=380,
-            margin=dict(l=10, r=10, t=30, b=10),
-            paper_bgcolor='rgba(0,0,0,0)',
-            plot_bgcolor='rgba(0,0,0,0)',
-            hovermode="x unified",
-            showlegend=False,
-            xaxis=dict(showgrid=False, font=dict(color="gray")),
-            yaxis=dict(showgrid=False, showticklabels=False),
-            yaxis2=dict(
-                overlaying='y', 
-                side='right', 
-                showgrid=False, 
-                font=dict(color="#00d4ff")
-            )
-        )
-        
-        st.plotly_chart(fig_pulse, use_container_width=True)
-
-        # Сучасні індикатори ( Картки )
-        st.markdown("<br>", unsafe_allow_html=True)
-        i1, i2, i3 = st.columns(3)
-        
-        with i1:
+        c1, c2 = st.columns([1, 1])
+        with c1:
             st.markdown(f"""
-                <div style='background: rgba(255,255,255,0.03); padding: 20px; border-radius: 15px; border-left: 4px solid #FFD700; text-align: center;'>
-                    <div style='color:gray; font-size:11px; text-transform:uppercase; letter-spacing:1px;'>Інсоляція (max)</div>
-                    <div style='font-size:28px; font-weight:800; color:white;'>{df_today['Radiation'].max():.0f} <span style='font-size:12px; color:gray;'>W/m²</span></div>
+                <div style='background: linear-gradient(135deg, #2c3e50, #000000); padding: 30px; border-radius: 20px; border: 1px solid #34495e;'>
+                    <div style='color: #00d4ff; font-size: 14px; text-transform: uppercase;'>Зараз у Нікополі</div>
+                    <div style='font-size: 64px; font-weight: 800; margin: 10px 0;'>{current_data['Temp']:.0f}°C</div>
+                    <div style='font-size: 20px;'>{get_weather_icon(current_data['Clouds'], current_data['Rain'])} Прогноз сонячності</div>
                 </div>
             """, unsafe_allow_html=True)
             
-        with i2:
-            st.markdown(f"""
-                <div style='background: rgba(255,255,255,0.03); padding: 20px; border-radius: 15px; border-left: 4px solid #00d4ff; text-align: center;'>
-                    <div style='color:gray; font-size:11px; text-transform:uppercase; letter-spacing:1px;'>Термо-пік</div>
-                    <div style='font-size:28px; font-weight:800; color:white;'>{df_today['Temp'].max():.1f}°C</div>
-                </div>
-            """, unsafe_allow_html=True)
+        with c2:
+            # 2. ПРОСТИЙ ГРАФІК РАДІАЦІЇ (Бронебійний)
+            st.markdown("<p style='color:gray; font-size:12px; margin-bottom:5px;'>ГРАФІК ІНСОЛЯЦІЇ (W/m²)</p>", unsafe_allow_html=True)
+            chart_data = df_today.set_index('Time')[['Radiation']]
+            st.area_chart(chart_data, color="#FFD700", height=180)
 
-        with i3:
-            rain_val = df_today['Rain'].sum()
-            r_color = "#3498db" if rain_val > 0 else "gray"
-            st.markdown(f"""
-                <div style='background: rgba(255,255,255,0.03); padding: 20px; border-radius: 15px; border-left: 4px solid {r_color}; text-align: center;'>
-                    <div style='color:gray; font-size:11px; text-transform:uppercase; letter-spacing:1px;'>Опади (24г)</div>
-                    <div style='font-size:28px; font-weight:800; color:white;'>{rain_val:.1f} <span style='font-size:12px; color:gray;'>mm</span></div>
-                </div>
-            """, unsafe_allow_html=True)
+        st.markdown("---")
+
+        # 3. ТАЙМЛАЙН ДОБИ (Сучасно і читабельно)
+        st.write("📅 **Прогноз по годинах**")
+        
+        # Вибираємо ключові години для економії місця (кожні 2 години)
+        display_hours = df_today[df_today['Time'].dt.hour.isin([8, 10, 12, 14, 16, 18, 20])]
+        
+        cols = st.columns(len(display_hours))
+        for i, (idx, row) in enumerate(display_hours.iterrows()):
+            with cols[i]:
+                st.markdown(f"""
+                    <div style='text-align: center; background: rgba(255,255,255,0.03); padding: 10px; border-radius: 10px;'>
+                        <div style='font-size: 12px; color: gray;'>{row['Time'].strftime('%H:%M')}</div>
+                        <div style='font-size: 24px; margin: 5px 0;'>{get_weather_icon(row['Clouds'], row['Rain'])}</div>
+                        <div style='font-weight: bold;'>{row['Temp']:.0f}°</div>
+                        <div style='font-size: 10px; color: #FFD700;'>{row['Radiation']:.0f}W</div>
+                    </div>
+                """, unsafe_allow_html=True)
+        
+        # 4. РЕЗЮМЕ ДНЯ
+        st.markdown("<br>", unsafe_allow_html=True)
+        m1, m2, m3 = st.columns(3)
+        m1.metric("ПІК СОНЦЯ", f"{df_today['Radiation'].max():.0f} W/m²")
+        m2.metric("СЕРЕДНЯ ХМАРНІСТЬ", f"{df_today['Clouds'].mean():.0f}%")
+        m3.metric("ОПАДИ", f"{df_today['Rain'].sum():.1f} мм")
+
     else:
-        st.info("🕒 Чекаємо на дані прогнозу...")
+        st.info("🕒 Дані завантажуються...")
