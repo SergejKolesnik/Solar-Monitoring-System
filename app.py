@@ -131,66 +131,59 @@ with tab1:
 
 with tab2:
     if df_today is not None and not df_today.empty:
-        # Отримуємо дату прогнозу
         forecast_date = df_today['Time'].dt.date.iloc[0].strftime("%d.%m.%Y")
         now_hour = datetime.now(UA_TZ).hour
         current_data = df_today[df_today['Time'].dt.hour == now_hour].iloc[0] if now_hour < len(df_today) else df_today.iloc[0]
         
-        # ВЕЛИКИЙ ЗАГОЛОВОК З ДАТОЮ
-        st.markdown(f"""
-            <div style='text-align: center; margin-bottom: 20px;'>
-                <h1 style='color: white; margin: 0; font-size: 32px;'>📅 ПРОГНОЗ НА СЬОГОДНІ: <span style='color: #FFD700;'>{forecast_date}</span></h1>
-            </div>
-        """, unsafe_allow_html=True)
+        # ВЕЛИКИЙ ЗАГОЛОВОК
+        st.markdown(f"<h1 style='text-align: center; color: white; font-size: 32px;'>📅 ПРОГНОЗ НА СЬОГОДНІ: <span style='color: #FFD700;'>{forecast_date}</span></h1>", unsafe_allow_html=True)
 
-        c1, c2 = st.columns([1.3, 2.5])
+        c1, c2 = st.columns([1.5, 2.5])
         
         with c1:
-            # ЛІВА ПАНЕЛЬ: АКЦЕНТ НА ТЕМПЕРАТУРІ ТА СТАНІ НЕБА
+            # ЛІВА ПАНЕЛЬ: ТЕМПЕРАТУРА + ПОГОДА
             st.markdown(f"""
-                <div style='background: linear-gradient(135deg, #1a1c20, #0f1113); padding: 25px; border-radius: 15px; border: 1px solid #32383e; height: 320px;'>
-                    <div style='color: #00d4ff; font-size: 12px; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 10px;'>ПОТОЧНИЙ СТАН: НІКОПОЛЬ</div>
+                <div style='background: linear-gradient(135deg, #1a1c20, #0f1113); padding: 25px; border-radius: 15px; border: 1px solid #32383e; height: 350px;'>
+                    <div style='color: #00d4ff; font-size: 12px; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 20px;'>ПОТОЧНИЙ СТАН: НІКОПОЛЬ</div>
                     
-                    <div style='display: flex; align-items: center; justify-content: space-around; margin-bottom: 20px;'>
-                        <span style='font-size: 72px; font-weight: 800; color: white; line-height: 1;'>{current_data['Temp']:.0f}°</span>
-                        <span style='font-size: 72px; line-height: 1;'>{get_weather_icon(current_data['Clouds'], current_data['Rain'])}</span>
+                    <div style='display: flex; align-items: center; justify-content: center; gap: 30px; margin-bottom: 30px;'>
+                        <span style='font-size: 80px; font-weight: 800; color: white; line-height: 1;'>{current_data['Temp']:.0f}°</span>
+                        <span style='font-size: 80px; line-height: 1;'>{get_weather_icon(current_data['Clouds'], current_data['Rain'])}</span>
                     </div>
 
-                    <div style='display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 20px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 20px;'>
+                    <div style='display: grid; grid-template-columns: 1fr 1fr; gap: 20px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 25px;'>
                         <div>
-                            <p style='color:gray; font-size: 13px; margin:0;'>ХМАРНІСТЬ</p>
-                            <p style='font-size: 22px; font-weight: bold; margin:0;'>{current_data['Clouds']:.0f}%</p>
+                            <p style='color:gray; font-size: 14px; margin:0;'>ХМАРНІСТЬ</p>
+                            <p style='font-size: 26px; font-weight: bold; margin:0;'>{current_data['Clouds']:.0f}%</p>
                         </div>
                         <div>
-                            <p style='color:gray; font-size: 13px; margin:0;'>ОПАДИ</p>
-                            <p style='font-size: 22px; font-weight: bold; color: #3498db; margin:0;'>{current_data['Rain']:.1f} <span style='font-size:12px;'>мм</span></p>
+                            <p style='color:gray; font-size: 14px; margin:0;'>ОПАДИ</p>
+                            <p style='font-size: 26px; font-weight: bold; color: #3498db; margin:0;'>{current_data['Rain']:.1f} <span style='font-size:14px;'>мм</span></p>
                         </div>
                         <div style='grid-column: span 2;'>
-                            <p style='color:gray; font-size: 13px; margin:0;'>ЕНЕРГІЯ НЕБА (ІНСОЛЯЦІЯ)</p>
-                            <p style='font-size: 26px; font-weight: 800; color: #FFD700; margin:0;'>{current_data['Radiation']:.0f} <span style='font-size:14px;'>W/m²</span></p>
+                            <p style='color:gray; font-size: 14px; margin:0;'>ЕНЕРГІЯ НЕБА (W/m²)</p>
+                            <p style='font-size: 32px; font-weight: 800; color: #FFD700; margin:0;'>{current_data['Radiation']:.0f}</p>
                         </div>
                     </div>
                 </div>
             """, unsafe_allow_html=True)
             
         with c2:
-            # ПРАВА ПАНЕЛЬ: ГРАФІК
-            st.markdown("<p style='color:gray; font-size:12px; text-align:right; margin-bottom:5px; letter-spacing:1px;'>ГРАФІК СОНЯЧНОЇ АКТИВНОСТІ</p>", unsafe_allow_html=True)
+            st.markdown("<p style='color:gray; font-size:12px; text-align:right; margin-bottom:5px;'>ГРАФІК СОНЯЧНОЇ АКТИВНОСТІ</p>", unsafe_allow_html=True)
             chart_data = df_today.set_index('Time')[['Radiation']]
-            st.area_chart(chart_data, color="#FFD700", height=320)
+            st.area_chart(chart_data, color="#FFD700", height=350)
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        # ПОГОДИННИЙ ТАЙМЛАЙН
+        # ТАЙМЛАЙН
         cols = st.columns(7)
         display_hours = df_today[df_today['Time'].dt.hour.isin([8, 10, 12, 14, 16, 18, 20])]
-        
         for i, (idx, row) in enumerate(display_hours.iterrows()):
             with cols[i]:
                 st.markdown(f"""
-                    <div style='text-align: center; background: rgba(255,255,255,0.03); padding: 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.05);'>
+                    <div style='text-align: center; background: rgba(255,255,255,0.03); padding: 15px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.05);'>
                         <div style='font-size: 12px; color: gray;'>{row['Time'].strftime('%H:%M')}</div>
-                        <div style='font-size: 28px; margin: 8px 0;'>{get_weather_icon(row['Clouds'], row['Rain'])}</div>
-                        <div style='font-weight: bold; font-size: 18px;'>{row['Temp']:.0f}°</div>
+                        <div style='font-size: 32px; margin: 10px 0;'>{get_weather_icon(row['Clouds'], row['Rain'])}</div>
+                        <div style='font-weight: bold; font-size: 20px;'>{row['Temp']:.0f}°</div>
                     </div>
                 """, unsafe_allow_html=True)
