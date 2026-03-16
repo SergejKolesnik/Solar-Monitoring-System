@@ -130,50 +130,91 @@ with tab1:
         st.plotly_chart(fig_learn, use_container_width=True)
 
 with tab2:
-    st.markdown("### 🕒 Хід доби (Прогноз)")
+    st.markdown("### 🕒 Хід доби (Прогноз радіації та температури)")
     
-    # Створюємо комбінований графік замість карток
+    # Створюємо графік
     fig_hourly = go.Figure()
 
-    # Зона радіації (сонця)
+    # 1. Зона сонячної радіації (Area Chart)
     fig_hourly.add_trace(go.Scatter(
-        x=df_today['Time'], y=df_today['Radiation'],
-        name="Радіація (W/m²)",
+        x=df_today['Time'], 
+        y=df_today['Radiation'],
+        name="Радіація",
         fill='tozeroy',
-        line=dict(color='#FFD700', width=0),
-        fillcolor='rgba(255, 215, 0, 0.2)'
+        line=dict(color='#FFD700', width=2),
+        fillcolor='rgba(255, 215, 0, 0.15)',
+        hovertemplate='%{y:.0f} W/m²'
     ))
 
-    # Лінія температури
+    # 2. Лінія температури (Spline)
     fig_hourly.add_trace(go.Scatter(
-        x=df_today['Time'], y=df_today['Temp'],
-        name="Температура (°C)",
-        line=dict(color='#00d4ff', width=3, shape='spline'),
-        yaxis="y2"
+        x=df_today['Time'], 
+        y=df_today['Temp'],
+        name="Температура",
+        line=dict(color='#00d4ff', width=4, shape='spline'),
+        yaxis="y2",
+        hovertemplate='%{y:.1f}°C'
     ))
 
-    # Налаштування осей для "чистого" вигляду
+    # Налаштування осей та дизайну
     fig_hourly.update_layout(
-        height=300,
-        margin=dict(l=0, r=0, t=10, b=0),
+        height=350,
+        margin=dict(l=10, r=10, t=20, b=10),
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
-        showlegend=False,
         hovermode="x unified",
-        xaxis=dict(showgrid=False, tickformat="%H:%M", font=dict(color="gray")),
-        yaxis=dict(showgrid=False, showticklabels=False),
-        yaxis2=dict(overlaying='y', side='right', showgrid=False, font=dict(color="#00d4ff"))
+        showlegend=False,
+        xaxis=dict(
+            showgrid=False, 
+            tickformat="%H:%M", 
+            dtick=10800000, # кожні 3 години
+            font=dict(color="gray")
+        ),
+        yaxis=dict(
+            showgrid=False, 
+            showticklabels=False,
+            range=[0, df_today['Radiation'].max() * 1.2]
+        ),
+        yaxis2=dict(
+            overlaying='y', 
+            side='right', 
+            showgrid=False, 
+            font=dict(color="#00d4ff"),
+            range=[df_today['Temp'].min() - 5, df_today['Temp'].max() + 5]
+        )
     )
     
     st.plotly_chart(fig_hourly, use_container_width=True)
 
-    # Коротке резюме дня в один рядок
-    t_max = df_today['Temp'].max()
-    r_max = df_today['Radiation'].max()
-    st.markdown(f"""
-        <div style='display: flex; justify-content: space-around; background: rgba(255,255,255,0.05); padding: 15px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.1);'>
-            <div style='text-align:center;'> <span style='color:gray; font-size:12px;'>Пік тепла</span><br><b style='font-size:20px;'>{t_max:.1f}°C</b> </div>
-            <div style='text-align:center;'> <span style='color:gray; font-size:12px;'>Пік сонця</span><br><b style='font-size:20px;'>{r_max:.0f} W/m²</b> </div>
-            <div style='text-align:center;'> <span style='color:gray; font-size:12px;'>Ймовірність опадів</span><br><b style='font-size:20px;'>{df_today['Rain'].max()*100:.0f}%</b> </div>
-        </div>
-    """, unsafe_allow_html=True)
+    # 3. ІНДАСТРІАЛ-БЛОК (Резюме дня)
+    st.markdown("---")
+    res_col1, res_col2, res_col3 = st.columns(3)
+    
+    with res_col1:
+        st.markdown(f"""
+            <div style='text-align:center;'>
+                <div style='color:gray; font-size:12px; text-transform:uppercase;'>Макс. Температура</div>
+                <div style='font-size:32px; font-weight:800; color:white;'>{df_today['Temp'].max():.1f}°C</div>
+                <div style='color:#00d4ff; font-size:12px;'>↓↓ {df_today['Temp'].min():.1f}°C вночі</div>
+            </div>
+        """, unsafe_allow_html=True)
+        
+    with res_col2:
+        st.markdown(f"""
+            <div style='text-align:center;'>
+                <div style='color:gray; font-size:12px; text-transform:uppercase;'>Пік Радіації</div>
+                <div style='font-size:32px; font-weight:800; color:#FFD700;'>{df_today['Radiation'].max():.0f} <span style='font-size:14px;'>W/m²</span></div>
+                <div style='color:gray; font-size:12px;'>Очікується о {df_today.loc[df_today['Radiation'].idxmax(), 'Time'].strftime('%H:%M')}</div>
+            </div>
+        """, unsafe_allow_html=True)
+
+    with res_col3:
+        rain_sum = df_today['Rain'].sum()
+        rain_color = "#3498db" if rain_sum > 0 else "gray"
+        st.markdown(f"""
+            <div style='text-align:center;'>
+                <div style='color:gray; font-size:12px; text-transform:uppercase;'>Опади за добу</div>
+                <div style='font-size:32px; font-weight:800; color:{rain_color};'>{rain_sum:.1f} <span style='font-size:14px;'>мм</span></div>
+                <div style='color:gray; font-size:12px;'>{"Ймовірність дощу" if rain_sum > 0 else "Без опадів"}</div>
+            </div>
+        """, unsafe_allow_html=True)
