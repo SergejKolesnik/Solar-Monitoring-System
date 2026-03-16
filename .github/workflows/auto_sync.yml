@@ -2,30 +2,38 @@ name: Solar AI Sync
 
 on:
   schedule:
-    - cron: '10 * * * *' # Запуск кожну 10-ту хвилину години
-  workflow_dispatch:
+    - cron: '10 * * * *' # Запуск щогодини на 10-й хвилині
+  workflow_dispatch:      # Кнопка для ручного запуску
 
 jobs:
   update:
     runs-on: ubuntu-latest
+    # ВАЖЛИВО: Надаємо права боту на запис у репозиторій
+    permissions:
+      contents: write
+    
     steps:
       - uses: actions/checkout@v3
+
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
+
       - name: Install dependencies
-        run: pip install pandas requests pytz
+        run: pip install pandas requests pytz openpyxl
+
       - name: Run Collector
         env:
           WEATHER_API_KEY: ${{ secrets.WEATHER_API_KEY }}
           EMAIL_USER: ${{ secrets.EMAIL_USER }}
           EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
         run: python collector.py
-      - name: Push changes
+
+      - name: Commit and Push Changes
         run: |
           git config --global user.name 'SkyGrid Bot'
           git config --global user.email 'bot@skygrid.ai'
           git add solar_ai_base.csv
-          git commit -m "Auto-update: Forecast & Fact" || exit 0
+          git commit -m "Auto-update: Sync Forecast and Fact" || exit 0
           git push
