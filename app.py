@@ -16,9 +16,12 @@ def get_weather_data():
     try:
         api_key = st.secrets["WEATHER_API_KEY"]
         lat, lon = "47.56", "34.39"
-        url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/{lat},{lon}/next7days?unitGroup=metric&elements=datetime,temp,cloudcover,solarradiation,precip&include=hours,days&key={api_key}&contentType=json"
-        res = requests.get(url, timeout=15); res.raise_for_status()
+        # Запитуємо дані від -3 дні до +7 днів
+        url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/{lat},{lon}/last3days/next7days?unitGroup=metric&elements=datetime,temp,cloudcover,solarradiation,precip&include=hours,days&key={api_key}&contentType=json"
+        res = requests.get(url, timeout=15)
+        res.raise_for_status()
         data = res.json()
+        
         hours_list = []
         for day in data['days']:
             for hr in day['hours']:
@@ -30,7 +33,8 @@ def get_weather_data():
                     'Rain': hr.get('precip', 0)
                 })
         return pd.DataFrame(hours_list)
-    except Exception as e: return f"Error: {e}"
+    except Exception as e:
+        return f"Помилка API: {e}"
 
 def get_weather_icon(clouds, rain):
     if rain > 0.2: return "🌧️"
