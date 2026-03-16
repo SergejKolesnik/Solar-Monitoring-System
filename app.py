@@ -7,7 +7,7 @@ import time
 import pytz
 
 # 1. НАЛАШТУВАННЯ
-st.set_page_config(page_title="SkyGrid: Solar AI v4.9.2", layout="wide")
+st.set_page_config(page_title="SkyGrid: Solar AI v4.9.3", layout="wide")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 
 # 2. ОТРИМАННЯ ДАНИХ (Прогноз + Історія для навчання)
@@ -64,11 +64,11 @@ except: pass
 df_all['Power_MW'] = df_all['Radiation'] * 11.4 * 0.001 * ai_bias
 
 # 4. ІНТЕРФЕЙС
-# ЛОГОТИП НЗФ ТА ЗАГОЛОВОК
+# ЛОГОТИП ТА ЗАГОЛОВОК
 col_logo, col_title = st.columns([1, 8])
 with col_logo:
-    # Використовуємо твій логотип з GitHub
-    st.image("https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/nzf_logo.png", width=80)
+    # Пряме посилання на логотип у вашому репозиторії
+    st.image("https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/nzf_logo.png", width=70)
 with col_title:
     st.title("SkyGrid: Solar AI Nikopol Ferroalloy Plant")
 
@@ -76,11 +76,9 @@ tab1, tab2 = st.tabs(["📊 МОНІТОРИНГ ТА НАВЧАННЯ", "🌦 �
 
 # --- ВКЛАДКА 1: МОНІТОРИНГ ---
 with tab1:
-    # РОЗДІЛЬНІ МЕТРИКИ ПО ДНЯХ
     st.markdown("### 📅 План генерації по днях (MWh)")
     d1, d2, d3, d_bias = st.columns(4)
     
-    # Розрахунок по днях
     sum_d1 = df_all[df_all['Time'].dt.date == now_ua.date()]['Power_MW'].sum()
     sum_d2 = df_all[df_all['Time'].dt.date == (now_ua + timedelta(days=1)).date()]['Power_MW'].sum()
     sum_d3 = df_all[df_all['Time'].dt.date == (now_ua + timedelta(days=2)).date()]['Power_MW'].sum()
@@ -101,7 +99,9 @@ with tab1:
     if df_fact is not None:
         st.subheader("🧠 Ретроспектива навчання: Факт vs План")
         df_c = pd.merge(df_fact, df_all[['Time', 'Radiation']], on='Time', how='left')
-        df_c['AI_Plan'] = df_c['Radiation'] * 11.4 * 0.001 * ai_bias
+        df_comp_bias = df_c['Fact_MW'].sum() / (df_c['Radiation'].sum() * 11.4 * 0.001) if df_c['Radiation'].sum() > 0 else 1
+        df_c['AI_Plan'] = df_c['Radiation'] * 11.4 * 0.001 * df_comp_bias
+        
         fig_c = go.Figure()
         fig_c.add_trace(go.Scatter(x=df_c['Time'], y=df_c['Fact_MW'], name="ФАКТ (АСКОЕ)", line=dict(color='#ff4b4b', width=3)))
         fig_c.add_trace(go.Scatter(x=df_c['Time'], y=df_c['AI_Plan'], name="ПЛАН ШІ", line=dict(color='white', width=2, dash='dot')))
