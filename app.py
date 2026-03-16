@@ -7,15 +7,16 @@ import time
 import pytz
 
 # 1. НАЛАШТУВАННЯ
-st.set_page_config(page_title="SkyGrid: Solar AI v4.9.3", layout="wide")
+st.set_page_config(page_title="SkyGrid: Solar AI v4.9.4", layout="wide")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 
-# 2. ОТРИМАННЯ ДАНИХ (Прогноз + Історія для навчання)
+# 2. ОТРИМАННЯ ДАНИХ
 @st.cache_data(ttl=3600)
 def get_weather_data():
     try:
         api_key = st.secrets["WEATHER_API_KEY"]
         lat, lon = "47.56", "34.39"
+        # Запитуємо історію за 3 дні та прогноз на 7 днів
         url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/{lat},{lon}/last3days/next7days?unitGroup=metric&elements=datetime,temp,cloudcover,solarradiation,precip&include=hours,days&key={api_key}&contentType=json"
         res = requests.get(url, timeout=15); res.raise_for_status()
         data = res.json()
@@ -38,7 +39,7 @@ def get_weather_icon(clouds, rain):
     if clouds > 30: return "⛅"
     return "☀️"
 
-# 3. ПІДГОТОВКА ДАНИХ
+# 3. ЛОГІКА ТА ОБРОБКА
 df_all = get_weather_data()
 if isinstance(df_all, str): st.error(df_all); st.stop()
 
@@ -53,8 +54,11 @@ try:
     repo_url = f"https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/solar_ai_base.csv?v={v_tag}"
     df_fact = pd.read_csv(repo_url)
     df_fact['Time'] = pd.to_datetime(df_fact['Time'])
+    
     hist_times = df_fact['Time'].unique()
     relevant_w = df_all[df_all['Time'].isin(hist_times)]
+    
+    # 11.4 MW - встановлена потужність
     base_sum = (relevant_w['Radiation'] * 11.4 * 0.001).sum()
     if base_sum > 0:
         ai_bias = df_fact['Fact_MW'].sum() / base_sum
@@ -64,20 +68,41 @@ except: pass
 df_all['Power_MW'] = df_all['Radiation'] * 11.4 * 0.001 * ai_bias
 
 # 4. ІНТЕРФЕЙС
+# СТИЛЬ ПУЛЬСАЦІЇ ДЛЯ ЛОГОТИПУ
+st.markdown("""
+    <style>
+    @keyframes pulse {
+        0% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.8; transform: scale(1.02); }
+        100% { opacity: 1; transform: scale(1); }
+    }
+    .nzf-logo {
+        animation: pulse 3s infinite ease-in-out;
+        width: 70px;
+        margin-right: 20px;
+    }
+    .title-container {
+        display: flex;
+        align-items: center;
+        margin-bottom: 20px;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
 # ЛОГОТИП ТА ЗАГОЛОВОК
-col_logo, col_title = st.columns([1, 8])
-with col_logo:
-    # Пряме посилання на логотип у вашому репозиторії
-    st.image("https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/nzf_logo.png", width=70)
-with col_title:
-    st.title("SkyGrid: Solar AI Nikopol Ferroalloy Plant")
+st.markdown(f"""
+    <div class="title-container">
+        <img src="https://www.nzf.com.ua/images/logo.png" class="nzf-logo">
+        <h1 style='margin: 0;'>SkyGrid: Solar AI Nikopol Ferroalloy Plant</h1>
+    </div>
+""", unsafe_allow_html=True)
 
 tab1, tab2 = st.tabs(["📊 МОНІТОРИНГ ТА НАВЧАННЯ", "🌦 ПРОГНОЗ ПОГОДИ"])
 
 # --- ВКЛАДКА 1: МОНІТОРИНГ ---
 with tab1:
-    st.markdown("### 📅 План генерації по днях (MWh)")
-    d1, d2, d3, d_bias = st.columns(4)
+    st.markdown("### 📅 План генерації за прогнозом (MWh)")
+    d1, d2, d3, d_acc = st.columns(4)
     
     sum_d1 = df_all[df_all['Time'].dt.date == now_ua.date()]['Power_MW'].sum()
     sum_d2 = df_all[df_all['Time'].dt.date == (now_ua + timedelta(days=1)).date()]['Power_MW'].sum()
@@ -86,29 +111,27 @@ with tab1:
     d1.metric("СЬОГОДНІ", f"{sum_d1:.1f}")
     d2.metric("ЗАВТРА", f"{sum_d2:.1f}")
     d3.metric("ПІСЛЯЗАВТРА", f"{sum_d3:.1f}")
-    d_bias.metric("ТОЧНІСТЬ ШІ", f"{accuracy:.1f} %", f"{ai_bias:.2f}x bias")
+    d_acc.metric("ТОЧНІСТЬ ШІ", f"{accuracy:.1f} %", f"{ai_bias:.2f}x bias")
 
     st.markdown("---")
     st.subheader("📈 Оперативний графік (Наступні 72 години)")
     df_f3 = df_all[df_all['Time'] >= pd.Timestamp(now_ua.date())].head(72)
     fig3 = go.Figure()
     fig3.add_trace(go.Scatter(x=df_f3['Time'], y=df_f3['Power_MW'], name="План МВт", fill='tozeroy', line=dict(color='#00ff7f', width=3)))
-    fig3.update_layout(height=300, template="plotly_dark", margin=dict(l=10, r=10, t=10, b=10), hovermode="x unified")
+    fig3.update_layout(height=300, template="plotly_dark", margin=dict(l=10, r=10, t=10, b=10))
     st.plotly_chart(fig3, use_container_width=True)
 
     if df_fact is not None:
-        st.subheader("🧠 Ретроспектива навчання: Факт vs План")
+        st.subheader("🧠 Ретроспектива навчання (Факт vs План)")
         df_c = pd.merge(df_fact, df_all[['Time', 'Radiation']], on='Time', how='left')
-        df_comp_bias = df_c['Fact_MW'].sum() / (df_c['Radiation'].sum() * 11.4 * 0.001) if df_c['Radiation'].sum() > 0 else 1
-        df_c['AI_Plan'] = df_c['Radiation'] * 11.4 * 0.001 * df_comp_bias
-        
+        df_c['AI_Plan'] = df_c['Radiation'] * 11.4 * 0.001 * ai_bias
         fig_c = go.Figure()
         fig_c.add_trace(go.Scatter(x=df_c['Time'], y=df_c['Fact_MW'], name="ФАКТ (АСКОЕ)", line=dict(color='#ff4b4b', width=3)))
         fig_c.add_trace(go.Scatter(x=df_c['Time'], y=df_c['AI_Plan'], name="ПЛАН ШІ", line=dict(color='white', width=2, dash='dot')))
-        fig_c.update_layout(height=300, template="plotly_dark")
+        fig_c.update_layout(height=300, template="plotly_dark", hovermode="x unified")
         st.plotly_chart(fig_c, use_container_width=True)
 
-# --- ВКЛАДКА 2: ПРОГНОЗ ПОГОДИ (БЕЗ ЗМІН) ---
+# --- ВКЛАДКА 2: ПРОГНОЗ ПОГОДИ (Твоя улюблена версія) ---
 with tab2:
     if not df_today.empty:
         f_date = df_today['Time'].dt.date.iloc[0].strftime("%d.%m.%Y")
