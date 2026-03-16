@@ -5,12 +5,13 @@ import requests
 from datetime import datetime, timedelta
 import time
 import pytz
+import io
 
 # 1. НАЛАШТУВАННЯ
-st.set_page_config(page_title="SkyGrid: Solar AI v5.1", layout="wide")
+st.set_page_config(page_title="SkyGrid: Solar AI v5.2", layout="wide")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 
-# 2. ОТРИМАННЯ ДАНИХ (Тільки прогноз на майбутнє)
+# 2. ОТРИМАННЯ ДАНИХ
 @st.cache_data(ttl=3600)
 def get_weather_forecast():
     try:
@@ -54,19 +55,15 @@ try:
     df_history = pd.read_csv(repo_url)
     df_history['Time'] = pd.to_datetime(df_history['Time'])
     
-    # Фільтруємо рядки, де є і Факт, і Прогноз
     df_valid = df_history.dropna(subset=['Fact_MW', 'Forecast_MW'])
     if not df_valid.empty:
-        # Беремо дані за останні 7 днів для навчання
         df_learn = df_valid[df_valid['Time'] > (now_ua - timedelta(days=7))]
         if not df_learn.empty:
             ai_bias = df_learn['Fact_MW'].sum() / df_learn['Forecast_MW'].sum()
-            # Рахуємо точність як відхилення
             error = abs(df_learn['Fact_MW'].sum() - df_learn['Forecast_MW'].sum() * ai_bias) / df_learn['Fact_MW'].sum()
             accuracy = (1 - error) * 100
 except: pass
 
-# Розрахунок потужності на майбутнє з урахуванням вивченого BIAS
 df_forecast['Power_MW'] = df_forecast['Radiation'] * 11.4 * 0.001 * ai_bias
 
 # 4. ІНТЕРФЕЙС
@@ -103,15 +100,35 @@ with tab1:
     st.markdown("---")
     st.subheader("📈 Оперативний графік (72 години)")
     df_plot = df_forecast[df_forecast['Time'] >= pd.Timestamp(now_ua.date())].head(72)
+    
+    # ПІДГОТОВКА EXCEL ФАЙЛУ ДЛЯ ЗАВАНТАЖЕННЯ
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        # Експортуємо тільки чистий план
+        df_export = df_plot[['Time', 'Power_MW', 'Clouds', 'Temp']].copy()
+        df_export['Time'] = df_export['Time'].dt.strftime('%Y-%m-%d %H:%M')
+        df_export.columns = ['Дата/Час', 'План (МВт)', 'Хмарність (%)', 'Темп (°C)']
+        df_export.to_excel(writer, index=False, sheet_name='Solar_Plan')
+    processed_data = output.getvalue()
+
+    # ВІЗУАЛІЗАЦІЯ
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=df_plot['Time'], y=df_plot['Power_MW'], fill='tozeroy', name="План МВт", line=dict(color='#00ff7f', width=3)))
     fig.update_layout(height=300, template="plotly_dark", margin=dict(l=10, r=10, t=10, b=10))
     st.plotly_chart(fig, use_container_width=True)
 
+    # КНОПКА ЗАВАНТАЖЕННЯ (Тепер тут)
+    st.download_button(
+        label="📥 Завантажити погодинний план в Excel",
+        data=processed_data,
+        file_name=f"Solar_Plan_NZF_{now_ua.strftime('%d_%m')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
     if df_history is not None:
-        st.subheader("🧠 Ретроспектива: Як ШІ вивчив об'єкт")
-        # Порівнюємо реальний Факт з тим Прогнозом, який був у базі
-        df_hist_plot = df_history.dropna(subset=['Fact_MW']).tail(168) # Остання неділя
+        st.markdown("---")
+        st.subheader("🧠 Ретроспектива: Аналіз План-Факт")
+        df_hist_plot = df_history.dropna(subset=['Fact_MW']).tail(168)
         fig_h = go.Figure()
         fig_h.add_trace(go.Scatter(x=df_hist_plot['Time'], y=df_hist_plot['Fact_MW'], name="ФАКТ (АСКОЕ)", line=dict(color='#ff4b4b', width=3)))
         if 'Forecast_MW' in df_hist_plot.columns:
