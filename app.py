@@ -8,7 +8,7 @@ import pytz
 import io
 
 # 1. НАЛАШТУВАННЯ
-st.set_page_config(page_title="SkyGrid: Solar AI v5.2", layout="wide")
+st.set_page_config(page_title="SkyGrid: Solar AI v5.3", layout="wide")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 
 # 2. ОТРИМАННЯ ДАНИХ
@@ -71,7 +71,7 @@ st.markdown("""
     <style>
     @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.7; } 100% { opacity: 1; } }
     .nzf-logo { animation: pulse 3s infinite; width: 70px; margin-right: 15px; border-radius: 8px; }
-    .title-box { display: flex; align-items: center; margin-bottom: 20px; }
+    .title-box { display: flex; align-items: center; margin-bottom: 25px; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -84,6 +84,7 @@ st.markdown(f"""
 
 tab1, tab2 = st.tabs(["📊 МОНІТОРИНГ ТА НАВЧАННЯ", "🌦 ПРОГНОЗ ПОГОДИ"])
 
+# --- ВКЛАДКА 1: МОНІТОРИНГ (ТУТ КНОПКА ЕКСЕЛЬ) ---
 with tab1:
     st.markdown("### 📅 План генерації (MWh)")
     m1, m2, m3, m4 = st.columns(4)
@@ -101,23 +102,20 @@ with tab1:
     st.subheader("📈 Оперативний графік (72 години)")
     df_plot = df_forecast[df_forecast['Time'] >= pd.Timestamp(now_ua.date())].head(72)
     
-    # ПІДГОТОВКА EXCEL ФАЙЛУ ДЛЯ ЗАВАНТАЖЕННЯ
+    # ПІДГОТОВКА EXCEL
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        # Експортуємо тільки чистий план
         df_export = df_plot[['Time', 'Power_MW', 'Clouds', 'Temp']].copy()
         df_export['Time'] = df_export['Time'].dt.strftime('%Y-%m-%d %H:%M')
         df_export.columns = ['Дата/Час', 'План (МВт)', 'Хмарність (%)', 'Темп (°C)']
         df_export.to_excel(writer, index=False, sheet_name='Solar_Plan')
     processed_data = output.getvalue()
 
-    # ВІЗУАЛІЗАЦІЯ
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=df_plot['Time'], y=df_plot['Power_MW'], fill='tozeroy', name="План МВт", line=dict(color='#00ff7f', width=3)))
     fig.update_layout(height=300, template="plotly_dark", margin=dict(l=10, r=10, t=10, b=10))
     st.plotly_chart(fig, use_container_width=True)
 
-    # КНОПКА ЗАВАНТАЖЕННЯ (Тепер тут)
     st.download_button(
         label="📥 Завантажити погодинний план в Excel",
         data=processed_data,
@@ -128,34 +126,4 @@ with tab1:
     if df_history is not None:
         st.markdown("---")
         st.subheader("🧠 Ретроспектива: Аналіз План-Факт")
-        df_hist_plot = df_history.dropna(subset=['Fact_MW']).tail(168)
-        fig_h = go.Figure()
-        fig_h.add_trace(go.Scatter(x=df_hist_plot['Time'], y=df_hist_plot['Fact_MW'], name="ФАКТ (АСКОЕ)", line=dict(color='#ff4b4b', width=3)))
-        if 'Forecast_MW' in df_hist_plot.columns:
-            fig_h.add_trace(go.Scatter(x=df_hist_plot['Time'], y=df_hist_plot['Forecast_MW']*ai_bias, name="ПЛАН ШІ", line=dict(color='white', width=2, dash='dot')))
-        fig_h.update_layout(height=300, template="plotly_dark")
-        st.plotly_chart(fig_h, use_container_width=True)
-
-with tab2:
-    # Твоя незмінна друга сторінка
-    f_date = df_today['Time'].dt.date.iloc[0].strftime("%d.%m.%Y")
-    st.markdown(f"<h1 style='text-align: center;'>📅 Прогноз на сьогодні: <span style='color:#FFD700;'>{f_date}</span></h1>", unsafe_allow_html=True)
-    c1, c2 = st.columns([1.2, 2])
-    with c1:
-        st.markdown(f"""
-            <div style='background:rgba(255,255,255,0.05); padding:25px; border-radius:20px; border:1px solid rgba(255,255,255,0.1); text-align:center;'>
-                <p style='font-size:80px; margin:0;'>{get_weather_icon(current_data['Clouds'], current_data['Rain'])}</p>
-                <div style='display:flex; justify-content:space-around;'>
-                    <div><p style='color:gray; font-size:14px; margin:0;'>ТЕМП</p><p style='font-size:32px; font-weight:bold; margin:0;'>{current_data['Temp']:.0f}°</p></div>
-                    <div><p style='color:gray; font-size:14px; margin:0;'>ХМАР</p><p style='font-size:32px; font-weight:bold; margin:0;'>{current_data['Clouds']:.0f}%</p></div>
-                </div>
-                <hr style='opacity:0.1; margin:20px 0;'>
-                <div style='display:flex; justify-content:space-around;'>
-                    <div><p style='color:gray; font-size:14px; margin:0;'>РАДІАЦІЯ</p><p style='font-size:24px; font-weight:bold; color:#FFD700; margin:0;'>{current_data['Radiation']:.0f}W</p></div>
-                    <div><p style='color:gray; font-size:14px; margin:0;'>ОПАДИ</p><p style='font-size:24px; font-weight:bold; color:#3498db; margin:0;'>{current_data['Rain']:.1f}мм</p></div>
-                </div>
-            </div>
-        """, unsafe_allow_html=True)
-    with c2:
-        with st.container(border=True):
-            st.area_chart(df_today.set_index('Time')[['Radiation']], color="#FFD700", height=270)
+        df_hist_plot =
