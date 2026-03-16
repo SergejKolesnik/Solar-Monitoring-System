@@ -107,27 +107,62 @@ with col_title:
 tab1, tab2 = st.tabs(["🚀 МОНІТОРИНГ", "🌦 ПРОГНОЗ ПОГОДИ"])
 
 with tab1:
+    # 1. ОСНОВНІ МЕТРИКИ
     m1, m2, m3 = st.columns(3)
-    with m1: st.metric("ШІ ПЛАН (СЬОГОДНІ)", f"{df_today['Power_MW'].sum():.1f} MWh", f"{ai_bias:.2f}x bias")
+    with m1: 
+        st.metric("ШІ ПЛАН (СЬОГОДНІ)", f"{df_today['Power_MW'].sum():.1f} MWh", f"{ai_bias:.2f}x bias")
     with m2: 
         t_now = df_today[df_today['Time'].dt.hour == now_ua.hour]['Temp'].values[0] if not df_today.empty else 0
         st.metric("ТЕМПЕРАТУРА", f"{t_now}°C")
-    with m3: st.metric("СТАТУС СЕС", "11.4 MW Online")
+    with m3: 
+        st.metric("СТАТУС СЕС", "11.4 MW Online")
 
-    fig1 = go.Figure()
-    # Показуємо прогноз на найближчі 48 годин
-    df_f = df_all[df_all['Time'] >= pd.Timestamp(now_ua.date())].head(48)
-    fig1.add_trace(go.Scatter(x=df_f['Time'], y=df_f['Power_MW'], name="План ШІ (МВт)", fill='tozeroy', line=dict(color='#00ff7f', width=3)))
-    fig1.update_layout(height=350, margin=dict(l=10, r=10, t=10, b=10), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='white'))
-    st.plotly_chart(fig1, use_container_width=True)
+    # 2. ВЕЛИКИЙ ГРАФІК ПРОГНОЗУ (На сьогодні-завтра)
+    st.subheader("🚀 Оперативний план генерації (Прогноз)")
+    fig_main = go.Figure()
+    df_future = df_all[df_all['Time'] >= pd.Timestamp(now_ua.date())].head(48)
+    fig_main.add_trace(go.Scatter(x=df_future['Time'], y=df_future['Power_MW'], 
+                                 name="План ШІ", fill='tozeroy', 
+                                 line=dict(color='#00ff7f', width=3)))
+    fig_main.update_layout(height=350, margin=dict(l=10, r=10, t=10, b=10), template="plotly_dark")
+    st.plotly_chart(fig_main, use_container_width=True)
 
+    # 3. ЗОНА НАВЧАННЯ (Факт vs План)
     if df_fact is not None:
-        st.subheader("📊 Порівняння Факт vs План (Останні дні)")
-        df_hist_fact = df_fact.tail(72)
-        fig_learn = go.Figure()
-        fig_learn.add_trace(go.Scatter(x=df_hist_fact['Time'], y=df_hist_fact['Fact_MW'], name="Факт АСКОЕ", line=dict(color='#ff4b4b', width=3)))
-        fig_learn.update_layout(height=250, margin=dict(l=10, r=10, t=10, b=10), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='white'))
-        st.plotly_chart(fig_learn, use_container_width=True)
+        st.markdown("---")
+        st.subheader("🧠 Аналіз точності та навчання ШІ (Останні 3 дні)")
+        
+        # Об'єднуємо дані для порівняння
+        df_compare = pd.merge(df_fact, df_all[['Time', 'Base_MW']], on='Time', how='left')
+        df_compare['Plan_MW'] = df_compare['Base_MW'] * ai_bias
+        
+        # Вибираємо останні 3-4 дні для порівняння
+        df_hist = df_compare.tail(96) 
+        
+        fig_study = go.Figure()
+        # Лінія Факту (АСКОЕ)
+        fig_study.add_trace(go.Scatter(x=df_hist['Time'], y=df_hist['Fact_MW'], 
+                                      name="ФАКТ (АСКОЕ)", line=dict(color='#ff4b4b', width=4)))
+        # Лінія Плану (який був побудований ШІ)
+        fig_study.add_trace(go.Scatter(x=df_hist['Time'], y=df_hist['Plan_MW'], 
+                                      name="ПЛАН ШІ", line=dict(color='rgba(255,255,255,0.4)', width=2, dash='dot')))
+        
+        fig_study.update_layout(height=300, margin=dict(l=10, r=10, t=10, b=10), 
+                               template="plotly_dark", hovermode="x unified")
+        st.plotly_chart(fig_study, use_container_width=True)
+
+        # Розрахунок дельти за вчора
+        yesterday = (now_ua - pd.Timedelta(days=1)).date()
+        df_yest = df_compare[df_compare['Time'].dt.date == yesterday]
+        if not df_yest.empty:
+            yest_fact = df_yest['Fact_MW'].sum()
+            yest_plan = df_yest['Plan_MW'].sum()
+            error = ((yest_fact - yest_plan) / yest_fact * 100) if yest_fact > 0 else 0
+            
+            c1, c2, c3 = st.columns(3)
+            c1.write(f"📊 Факт за вчора: **{yest_fact:.1f} MWh**")
+            c2.write(f"📉 План за вчора: **{yest_plan:.1f} MWh**")
+            c3.info(f"🎯 Відхилення: **{error:.1f}%**")
 
 with tab2:
     if df_today is not None and not df_today.empty:
