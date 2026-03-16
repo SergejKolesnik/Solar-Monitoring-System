@@ -131,67 +131,43 @@ with tab1:
 
 with tab2:
     if df_today is not None and not df_today.empty:
-        # Визначаємо дату та поточні дані
-        forecast_date = df_today['Time'].dt.date.iloc[0].strftime("%d.%m.%Y")
+        # 1. ДАТА ПРОГНОЗУ (Крупно)
+        f_date = df_today['Time'].dt.date.iloc[0].strftime("%d.%m.%Y")
+        st.markdown(f"<h1 style='text-align: center;'>📅 Прогноз на сьогодні: {f_date}</h1>", unsafe_allow_html=True)
+        
         now_hour = datetime.now(UA_TZ).hour
         current_data = df_today[df_today['Time'].dt.hour == now_hour].iloc[0] if now_hour < len(df_today) else df_today.iloc[0]
-        
-        # 1. ВЕЛИКИЙ ЗАГОЛОВОК З ДАТОЮ
-        st.markdown(f"""
-            <div style='text-align: center; margin-bottom: 25px;'>
-                <p style='color: white; margin: 0; font-size: 36px; font-weight: 900;'>
-                    📅 ПРОГНОЗ НА СЬОГОДНІ: <span style='color: #FFD700;'>{forecast_date}</span>
-                </p>
-            </div>
-        """, unsafe_allow_html=True)
 
-        c1, c2 = st.columns([1.6, 2.4])
-        
-        with c1:
-            # 2. ЛІВА ПАНЕЛЬ: ТЕМПЕРАТУРА + ПОГОДА (ГІГАНТСЬКІ)
-            st.markdown(f"""
-                <div style='background: linear-gradient(135deg, #1a1c20, #0a0a0a); padding: 30px; border-radius: 20px; border: 1px solid #32383e; height: 380px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);'>
-                    <div style='color: #00d4ff; font-size: 13px; font-weight: bold; text-transform: uppercase; letter-spacing: 3px; margin-bottom: 25px;'>LIVE: НІКОПОЛЬ</div>
-                    
-                    <div style='display: flex; align-items: center; justify-content: center; gap: 40px; margin-bottom: 35px;'>
-                        <span style='font-size: 92px; font-weight: 900; color: white; line-height: 1;'>{current_data['Temp']:.0f}°</span>
-                        <span style='font-size: 92px; line-height: 1;'>{get_weather_icon(current_data['Clouds'], current_data['Rain'])}</span>
-                    </div>
+        # 2. ГОЛОВНІ ПОКАЗНИКИ (Розділяємо на колонки)
+        col_weather, col_chart = st.columns([1, 2])
 
-                    <div style='display: grid; grid-template-columns: 1fr 1fr; gap: 25px; border-top: 2px solid rgba(255,255,255,0.05); padding-top: 30px;'>
-                        <div>
-                            <p style='color:gray; font-size: 15px; font-weight: bold; margin:0;'>ХМАРНІСТЬ</p>
-                            <p style='font-size: 28px; font-weight: 900; color: white; margin:0;'>{current_data['Clouds']:.0f}%</p>
-                        </div>
-                        <div>
-                            <p style='color:gray; font-size: 15px; font-weight: bold; margin:0;'>ОПАДИ</p>
-                            <p style='font-size: 28px; font-weight: 900; color: #3498db; margin:0;'>{current_data['Rain']:.1f}<span style='font-size:16px;'>мм</span></p>
-                        </div>
-                        <div style='grid-column: span 2;'>
-                            <p style='color:gray; font-size: 15px; font-weight: bold; margin:0;'>ЕНЕРГІЯ НЕБА (W/m²)</p>
-                            <p style='font-size: 36px; font-weight: 900; color: #FFD700; margin:0;'>{current_data['Radiation']:.0f}</p>
-                        </div>
-                    </div>
-                </div>
-            """, unsafe_allow_html=True)
+        with col_weather:
+            # Велика іконка поточного стану
+            icon = get_weather_icon(current_data['Clouds'], current_data['Rain'])
+            st.markdown(f"<p style='font-size: 100px; text-align: center; margin: 0;'>{icon}</p>", unsafe_allow_html=True)
             
-        with c2:
-            # 3. ПРАВА ПАНЕЛЬ: ГРАФІК (БІЛЬШИЙ)
-            st.markdown("<p style='color:gray; font-size:13px; font-weight:bold; text-align:right; margin-bottom:8px;'>АКТИВНІСТЬ СОНЦЯ</p>", unsafe_allow_html=True)
+            # Рідні метрики Streamlit (вони завжди виглядають професійно і не ламаються)
+            m1, m2 = st.columns(2)
+            m1.metric("ТЕМПЕРАТУРА", f"{current_data['Temp']:.0f} °C")
+            m2.metric("ХМАРНІСТЬ", f"{current_data['Clouds']:.0f} %")
+            
+            st.metric("ЕНЕРГІЯ НЕБА", f"{current_data['Radiation']:.0f} W/m²")
+            st.metric("ОПАДИ", f"{current_data['Rain']:.1f} мм")
+
+        with col_chart:
+            st.write("📈 **Графік сонячної активності**")
             chart_data = df_today.set_index('Time')[['Radiation']]
-            st.area_chart(chart_data, color="#FFD700", height=380)
+            st.area_chart(chart_data, color="#FFD700", height=300)
 
-        st.markdown("<br>", unsafe_allow_html=True)
+        st.divider()
 
-        # 4. ТАЙМЛАЙН (Великі іконки)
-        cols = st.columns(7)
+        # 3. ТАЙМЛАЙН (Погодинно)
+        st.write("🕒 **Ключові години доби:**")
+        t_cols = st.columns(7)
         display_hours = df_today[df_today['Time'].dt.hour.isin([8, 10, 12, 14, 16, 18, 20])]
+        
         for i, (idx, row) in enumerate(display_hours.iterrows()):
-            with cols[i]:
-                st.markdown(f"""
-                    <div style='text-align: center; background: rgba(255,255,255,0.02); padding: 18px; border-radius: 15px; border: 1px solid rgba(255,255,255,0.05);'>
-                        <div style='font-size: 13px; color: gray; font-weight: bold;'>{row['Time'].strftime('%H:%M')}</div>
-                        <div style='font-size: 36px; margin: 12px 0;'>{get_weather_icon(row['Clouds'], row['Rain'])}</div>
-                        <div style='font-weight: 900; font-size: 22px; color: white;'>{row['Temp']:.0f}°</div>
-                    </div>
-                """, unsafe_allow_html=True)
+            with t_cols[i]:
+                st.write(f"**{row['Time'].strftime('%H:%M')}**")
+                st.write(get_weather_icon(row['Clouds'], row['Rain']))
+                st.write(f"{row['Temp']:.0f}°")
