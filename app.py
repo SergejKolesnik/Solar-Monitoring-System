@@ -8,7 +8,7 @@ import pytz
 import io
 
 # 1. НАЛАШТУВАННЯ
-st.set_page_config(page_title="SkyGrid: Solar AI v5.6", layout="wide")
+st.set_page_config(page_title="SkyGrid: Solar AI v5.7", layout="wide")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 
 @st.cache_data(ttl=3600)
@@ -36,7 +36,7 @@ def get_weather_icon(clouds):
     if clouds > 30: return "⛅"
     return "☀️"
 
-# 2. ЗАВАНТАЖЕННЯ БАЗИ ТА НАВЧАННЯ
+# 2. ДАНІ ТА НАВЧАННЯ
 df_forecast = get_weather_forecast()
 if isinstance(df_forecast, str): st.error(f"API Error: {df_forecast}"); st.stop()
 
@@ -49,10 +49,10 @@ try:
     df_history = pd.read_csv(repo_url)
     df_history['Time'] = pd.to_datetime(df_history['Time'])
     
-    # Розрахунок Bias на основі реальних ПАР (Факт + Прогноз)
+    # Фільтр для навчання (тільки рядки, де є і Факт, і Прогноз)
     df_valid = df_history.dropna(subset=['Fact_MW', 'Forecast_MW'])
     if not df_valid.empty:
-        # Беремо останні 3 дні для оперативного навчання
+        # Навчання на даних за останні 3 доби
         df_learn = df_valid[df_valid['Time'] > (now_ua - timedelta(days=3))]
         if not df_learn.empty:
             ai_bias = df_learn['Fact_MW'].sum() / df_learn['Forecast_MW'].sum()
@@ -78,23 +78,23 @@ st.markdown(f"""<div class="title-box">
 tab1, tab2 = st.tabs(["📊 МОНІТОРИНГ ТА НАВЧАННЯ", "🌦 ПРОГНОЗ ПОГОДИ"])
 
 with tab1:
-    col1, col2, col3, col4 = st.columns(4)
+    c1, c2, c3, c4 = st.columns(4)
     s1 = df_forecast[df_forecast['Time'].dt.date == now_ua.date()]['Power_MW'].sum()
     s2 = df_forecast[df_forecast['Time'].dt.date == (now_ua + timedelta(days=1)).date()]['Power_MW'].sum()
-    col1.metric("СЬОГОДНІ", f"{s1:.1f} MWh")
-    col2.metric("ЗАВТРА", f"{s2:.1f} MWh")
-    col3.metric("ТОЧНІСТЬ", f"{accuracy:.1f} %")
-    col4.metric("КОЕФІЦІЄНТ", f"{ai_bias:.2f}x")
+    c1.metric("СЬОГОДНІ", f"{s1:.1f} MWh")
+    c2.metric("ЗАВТРА", f"{s2:.1f} MWh")
+    c3.metric("ТОЧНІСТЬ", f"{accuracy:.1f} %")
+    c4.metric("BIAS", f"{ai_bias:.2f}x")
 
     st.markdown("---")
-    st.subheader("📈 Оперативний план (Наступні 72 години)")
+    st.subheader("📈 Оперативний план (72 години)")
     df_p = df_forecast[df_forecast['Time'] >= pd.Timestamp(now_ua.date())].head(72)
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=df_p['Time'], y=df_p['Power_MW'], fill='tozeroy', name="План ШІ", line=dict(color='#00ff7f', width=3)))
     fig.update_layout(height=300, template="plotly_dark", margin=dict(l=0,r=0,t=0,b=0))
     st.plotly_chart(fig, use_container_width=True)
 
-    # КНОПКА EXCEL
+    # ЕКСЕЛЬ КНОПКА
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df_ex = df_p[['Time', 'Power_MW']].copy()
@@ -102,27 +102,26 @@ with tab1:
         df_ex.to_excel(writer, index=False)
     st.download_button("📥 Скачати Excel План", output.getvalue(), f"Plan_{now_ua.strftime('%d%m')}.xlsx")
 
-    # ТАБЛИЦЯ ДЛЯ ПЕРЕВІРКИ БАЗИ
+    # ТАБЛИЦЯ НАВЧАННЯ
     if df_history is not None:
         st.markdown("---")
-        st.subheader("🧠 Останні дані в базі (Факт vs Прогноз)")
-        # Показуємо останні 10 записів, де є дані
-        st.table(df_history.dropna(subset=['Fact_MW']).tail(10).style.format({
-            'Fact_MW': '{:.2f}',
-            'Forecast_MW': '{:.2f}'
-        }))
+        st.subheader("🔍 Останні записи бази (Факт vs Прогноз)")
+        # Відображаємо останні 8 годин, де є реальний факт з пошти
+        df_view = df_history.dropna(subset=['Fact_MW']).tail(8).copy()
+        df_view['Відхилення'] = (df_view['Fact_MW'] - df_view['Forecast_MW'])
+        st.table(df_view.style.format({'Fact_MW': '{:.2f}', 'Forecast_MW': '{:.2f}', 'Відхилення': '{:+.2f}'}))
 
 with tab2:
     # Друга сторінка (Твій дизайн v4.6)
-    if not df_today := df_forecast[df_forecast['Time'].dt.date == now_ua.date()].empty:
-        df_t = df_forecast[df_forecast['Time'].dt.date == now_ua.date()]
-        cur = df_t[df_t['Time'].dt.hour == now_ua.hour].iloc[0]
+    df_t = df_forecast[df_forecast['Time'].dt.date == now_ua.date()]
+    if not df_t.empty:
+        cur = df_t[df_t['Time'].dt.hour == now_ua.hour].iloc[0] if now_ua.hour in df_t['Time'].dt.hour.values else df_t.iloc[0]
         st.markdown(f"<h1 style='text-align: center;'>📅 {now_ua.strftime('%d.%m.%Y')}</h1>", unsafe_allow_html=True)
         c_l, c_r = st.columns([1.2, 2])
         with c_l:
             st.markdown(f"""<div style='background:rgba(255,255,255,0.05); padding:25px; border-radius:20px; border:1px solid rgba(255,255,255,0.1); text-align:center;'>
                 <p style='font-size:70px; margin:0;'>{get_weather_icon(cur['Clouds'])}</p>
-                <p style='font-size:30px; font-weight:bold;'>{cur['Temp']:.0f}°C</p>
+                <p style='font-size:30px; font-weight:bold;'>{cur['Temp']:.1f}°C</p>
                 <p style='color:gray;'>Хмарність: {cur['Clouds']:.0f}%</p>
             </div>""", unsafe_allow_html=True)
         with c_r:
