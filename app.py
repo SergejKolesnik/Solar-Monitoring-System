@@ -8,7 +8,7 @@ import pytz
 import io
 
 # 1. КОНФІГУРАЦІЯ
-st.set_page_config(page_title="SkyGrid: Solar AI v8.1", layout="wide")
+st.set_page_config(page_title="SkyGrid: Solar AI v8.2", layout="wide")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 
 @st.cache_data(ttl=3600)
@@ -35,9 +35,9 @@ def get_weather_data():
 def get_icon(clouds):
     return "☀️" if clouds < 30 else "⛅" if clouds < 70 else "☁️"
 
-# 2. АНАЛІТИКА
+# 2. АНАЛІТИКА ТА РОЗРАХУНКИ
 df_forecast = get_weather_data()
-if isinstance(df_forecast, str): st.error(f"Помилка метеоданих: {df_forecast}"); st.stop()
+if isinstance(df_forecast, str): st.error(f"⚠️ {df_forecast}: Сервер погоди тимчасово недоступний. Спробуйте оновити сторінку."); st.stop()
 
 now_ua = datetime.now(UA_TZ).replace(tzinfo=None)
 ai_bias = 1.0
@@ -48,7 +48,7 @@ try:
     df_history = pd.read_csv(repo_url)
     df_history['Time'] = pd.to_datetime(df_history['Time'])
     
-    # Корекція по 3-х останніх днях
+    # Розрахунок Bias по останніх 3-х днях
     df_v = df_history.dropna(subset=['Fact_MW', 'Forecast_MW'])
     if not df_v.empty:
         df_recent = df_v[df_v['Time'] > (now_ua - timedelta(days=3))]
@@ -60,7 +60,7 @@ try:
     daily_stats = daily_stats.tail(7)
 except: daily_stats = pd.DataFrame()
 
-# Розрахунок виробітки
+# Розрахунок двох типів прогнозу
 df_forecast['Raw_MW'] = df_forecast['Radiation'] * 11.4 * 0.001
 df_forecast['AI_MW'] = df_forecast['Raw_MW'] * ai_bias
 
@@ -74,7 +74,7 @@ st.markdown("""
 
 st.markdown(f"""<div class="main-header">
     <img src="https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/nzf_logo.png" class="nzf-logo">
-    <h1 style='margin:0;'>SkyGrid Solar AI <span style='color:#00ff7f; font-size:16px;'>v8.1</span></h1>
+    <h1 style='margin:0;'>SkyGrid Solar AI <span style='color:#00ff7f; font-size:16px;'>v8.2</span></h1>
 </div>""", unsafe_allow_html=True)
 
 c1, c2, c3, c4 = st.columns(4)
@@ -86,15 +86,15 @@ c2.metric("ПРОГНОЗ VISUAL CROSSING", f"{s_raw:.1f} MWh")
 c3.metric("КОЕФІЦІЄНТ AI", f"{ai_bias:.2f}x")
 c4.metric("СТАТУС", "Online")
 
-tab1, tab2 = st.tabs(["📊 АНАЛІТИКА ТА ПОРІВНЯННЯ", "🌦 МЕТЕОУМОВИ"])
+tab1, tab2 = st.tabs(["📊 ПОРІВНЯННЯ ТА АНАЛІЗ", "🌦 МЕТЕОУМОВИ"])
 
 with tab1:
-    st.subheader("📅 Порівняння: Сайт vs SkyGrid (AI) vs Факт АСКОЕ")
+    st.subheader("📅 Історія порівняння: Метео vs SkyGrid (AI) vs Факт")
     if not daily_stats.empty:
         fig_d = go.Figure()
-        # Прогноз сайта (Сірий)
+        # Прогноз Visual Crossing (Сірий)
         fig_d.add_trace(go.Bar(x=daily_stats['Date'], y=daily_stats['Forecast_MW'], name="Прогноз Visual Crossing", marker_color='#666'))
-        # Оцінка ШІ (Синій)
+        # Оцінка AI (Синій)
         fig_d.add_trace(go.Bar(x=daily_stats['Date'], y=daily_stats['Forecast_MW']*ai_bias, name="Оцінка SkyGrid (AI)", marker_color='#1f77b4'))
         # Факт АСКОЕ (Зелений)
         fig_d.add_trace(go.Bar(x=daily_stats['Date'], y=daily_stats['Fact_MW'], name="Факт АСКОЕ", marker_color='#00ff7f', text=daily_stats['Fact_MW'].round(1), textposition='outside'))
@@ -103,15 +103,15 @@ with tab1:
         st.plotly_chart(fig_d, use_container_width=True)
 
     st.markdown("---")
-    st.subheader("⏱ Оперативний графік 72 години")
+    st.subheader("⏱ Оперативний графік на 72 години")
     
     df_p = df_forecast[df_forecast['Time'] >= pd.Timestamp(now_ua.date())].head(72)
     daily_sums_ai = df_p.groupby(df_p['Time'].dt.date)['AI_MW'].sum()
     daily_sums_raw = df_p.groupby(df_p['Time'].dt.date)['Raw_MW'].sum()
     
     fig_h = go.Figure()
-    fig_h.add_trace(go.Scatter(x=df_p['Time'], y=df_p['AI_MW'], fill='tozeroy', name="AI (МВт)", line=dict(color='#00ff7f', width=3)))
-    fig_h.add_trace(go.Scatter(x=df_p['Time'], y=df_p['Raw_MW'], name="Метео (МВт)", line=dict(color='gray', width=1, dash='dot')))
+    fig_h.add_trace(go.Scatter(x=df_p['Time'], y=df_p['AI_MW'], fill='tozeroy', name="AI Оцінка (МВт)", line=dict(color='#00ff7f', width=3)))
+    fig_h.add_trace(go.Scatter(x=df_p['Time'], y=df_p['Raw_MW'], name="Метео Прогноз (МВт)", line=dict(color='gray', width=1, dash='dot')))
     
     for date, t_ai in daily_sums_ai.items():
         t_raw = daily_sums_raw[date]
@@ -125,12 +125,13 @@ with tab1:
     st.plotly_chart(fig_h, use_container_width=True)
 
     # Експорт Excel
+    st.markdown("### 📥 Експорт даних")
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df_ex = df_p[['Time', 'AI_MW', 'Raw_MW']].copy()
         df_ex.columns = ['Дата/Час', 'Оцінка AI (МВт)', 'Прогноз Метео (МВт)']
         df_ex.to_excel(writer, index=False)
-    st.download_button(label="📥 Завантажити прогноз в Excel", data=output.getvalue(), file_name=f"Solar_AI_v8.1.xlsx")
+    st.download_button(label="💾 Завантажити прогноз в Excel", data=output.getvalue(), file_name=f"Solar_AI_v8.2.xlsx")
 
 with tab2:
     # Друга сторінка (фіксована v4.6)
