@@ -8,7 +8,7 @@ import pytz
 import io
 
 # 1. КОНФІГУРАЦІЯ
-st.set_page_config(page_title="SkyGrid: Solar AI v7.1", layout="wide")
+st.set_page_config(page_title="SkyGrid: Solar AI v7.2", layout="wide")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 
 @st.cache_data(ttl=3600)
@@ -45,32 +45,33 @@ try:
     df_history = pd.read_csv(repo_url)
     df_history['Time'] = pd.to_datetime(df_history['Time'])
     
-    # --- РОЗРАХУНОК КОРЕКЦІЇ (BIAS) ---
-    # Пріоритет 1: Сьогоднішній ранок (якщо є хоча б 3 години факту)
-    df_today_check = df_history[(df_history['Time'].dt.date == now_ua.date()) & (df_history['Fact_MW'] > 0)]
-    if len(df_today_check) >= 3:
-        ai_bias = df_today_check['Fact_MW'].sum() / df_today_check['Forecast_MW'].sum()
-    else:
-        # Пріоритет 2: Останні 3 дні
-        df_recent = df_history.dropna(subset=['Fact_MW', 'Forecast_MW']).tail(72)
+    # Виправляємо BIAS: порівнюємо факти з планами, які БУЛИ в базі
+    df_valid = df_history.dropna(subset=['Fact_MW', 'Forecast_MW'])
+    if not df_valid.empty:
+        df_recent = df_valid[df_valid['Time'] > (now_ua - timedelta(days=5))]
         if not df_recent.empty:
             ai_bias = df_recent['Fact_MW'].sum() / df_recent['Forecast_MW'].sum()
 
-    # --- СТАТИСТИКА ПО ДНЯХ ---
+    # --- ПІДГОТОВКА СТАТИСТИКИ ПО ДНЯХ ---
     df_history['Date'] = df_history['Time'].dt.date
-    daily_stats = df_history.groupby('Date').agg({
+    # Беремо тільки останні 7 днів від сьогоднішньої дати
+    min_date = (now_ua - timedelta(days=7)).date()
+    df_filtered = df_history[df_history['Date'] >= min_date]
+    
+    daily_stats = df_filtered.groupby('Date').agg({
         'Fact_MW': 'sum',
         'Forecast_MW': 'sum'
-    }).reset_index().tail(7)
+    }).reset_index()
     
-    # Розрахунок точності (по вчорашньому дню)
-    if len(daily_stats) > 1:
-        yesterday = daily_stats.iloc[-2]
-        if yesterday['Fact_MW'] > 0:
-            accuracy = (1 - abs(yesterday['Fact_MW'] - yesterday['Forecast_MW'])/yesterday['Fact_MW']) * 100
+    # Розрахунок точності по останньому повному дню (вчора)
+    yesterday_date = (now_ua - timedelta(days=1)).date()
+    y_data = daily_stats[daily_stats['Date'] == yesterday_date]
+    if not y_data.empty and y_data['Fact_MW'].iloc[0] > 0:
+        f, p = y_data['Fact_MW'].iloc[0], y_data['Forecast_MW'].iloc[0]
+        accuracy = (1 - abs(f - p)/f) * 100
 except: pass
 
-# Застосовуємо корекцію до майбутнього
+# Корекція майбутнього прогнозу
 df_forecast['Power_MW'] = df_forecast['Radiation'] * 11.4 * 0.001 * ai_bias
 
 # 3. ІНТЕРФЕЙС
@@ -78,12 +79,13 @@ st.markdown("""
     <style>
     .nzf-logo { width: 60px; margin-right: 15px; border-radius: 8px; }
     .main-title { display: flex; align-items: center; margin-bottom: 30px; }
+    [data-testid="stMetricValue"] { font-size: 28px !important; }
     </style>
 """, unsafe_allow_html=True)
 
 st.markdown(f"""<div class="main-title">
     <img src="https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/nzf_logo.png" class="nzf-logo">
-    <h1 style='margin:0;'>SkyGrid Solar AI <span style='color:#00ff7f; font-size:18px;'>v7.1</span></h1>
+    <h1 style='margin:0;'>SkyGrid Solar AI <span style='color:#00ff7f; font-size:18px;'>v7.2</span></h1>
 </div>""", unsafe_allow_html=True)
 
 c1, c2, c3, c4 = st.columns(4)
@@ -91,49 +93,74 @@ s_today = df_forecast[df_forecast['Time'].dt.date == now_ua.date()]['Power_MW'].
 c1.metric("ПЛАН НА СЬОГОДНІ", f"{s_today:.1f} MWh")
 c2.metric("КОЕФІЦІЄНТ AI", f"{ai_bias:.2f}x")
 c3.metric("ТОЧНІСТЬ ВЧОРА", f"{accuracy:.1f}%")
-c4.metric("ОНОВЛЕНО", now_ua.strftime("%H:%M"))
+c4.metric("СТАТУС", "Синхронно", delta="Online")
 
 tab1, tab2 = st.tabs(["📊 АНАЛІТИКА ТА ПРОГНОЗ", "🌦 МЕТЕОУМОВИ"])
 
 with tab1:
-    # ГРАФІК 1: ПОРІВНЯННЯ ПО ДНЯХ
-    st.subheader("📅 Порівняння виробітки за тиждень (MWh)")
+    st.subheader("📅 Порівняльний аналіз генерації (MWh)")
+    
     if not daily_stats.empty:
         fig_daily = go.Figure()
-        fig_daily.add_trace(go.Bar(x=daily_stats['Date'], y=daily_stats['Forecast_MW'], name="Початковий План", marker_color='#444'))
-        fig_daily.add_trace(go.Bar(x=daily_stats['Date'], y=daily_stats['Fact_MW'], name="Реальний Факт", marker_color='#00ff7f'))
-        fig_daily.update_layout(barmode='group', height=300, template="plotly_dark", margin=dict(l=0,r=0,t=10,b=0))
+        # План (Сірий)
+        fig_daily.add_trace(go.Bar(
+            x=daily_stats['Date'], y=daily_stats['Forecast_MW'],
+            name="План", marker_color='#444',
+            text=daily_stats['Forecast_MW'].round(1), textposition='outside'
+        ))
+        # Факт (Зелений)
+        fig_daily.add_trace(go.Bar(
+            x=daily_stats['Date'], y=daily_stats['Fact_MW'],
+            name="Факт АСКОЕ", marker_color='#00ff7f',
+            text=daily_stats['Fact_MW'].round(1), textposition='outside'
+        ))
+        
+        fig_daily.update_layout(
+            barmode='group', height=350, template="plotly_dark",
+            margin=dict(l=0,r=0,t=30,b=0),
+            xaxis=dict(type='category'), # Щоб дні не розтягувалися
+            yaxis_title="MWh"
+        )
         st.plotly_chart(fig_daily, use_container_width=True)
+        
+        # Маленька таблиця підсумків для точності
+        with st.expander("📝 Відкрити таблицю значень за тиждень"):
+            df_table = daily_stats.copy()
+            df_table['Відхилення (MWh)'] = (df_table['Fact_MW'] - df_table['Forecast_MW']).round(2)
+            df_table.columns = ['Дата', 'Факт (MWh)', 'План (MWh)', 'Різниця']
+            st.dataframe(df_table.sort_values('Дата', ascending=False), use_container_width=True)
 
     st.markdown("---")
-    
-    # ГРАФІК 2: ОПЕРАТИВНИЙ ПЛАН
     st.subheader("⏱ Оперативний графік на 72 години (Корегований)")
+    
     df_p = df_forecast[df_forecast['Time'] >= pd.Timestamp(now_ua.date())].head(72)
     fig_hours = go.Figure()
-    fig_hours.add_trace(go.Scatter(x=df_p['Time'], y=df_p['Power_MW'], fill='tozeroy', name="МВт План", line=dict(color='#00ff7f', width=3)))
+    fig_hours.add_trace(go.Scatter(
+        x=df_p['Time'], y=df_p['Power_MW'], 
+        fill='tozeroy', name="МВт План", 
+        line=dict(color='#00ff7f', width=3)
+    ))
     fig_hours.update_layout(height=300, template="plotly_dark", margin=dict(l=0,r=0,t=10,b=0))
     st.plotly_chart(fig_hours, use_container_width=True)
 
-    # Кнопка Excel
+    # Excel
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df_ex = df_p[['Time', 'Power_MW']].copy()
         df_ex.columns = ['Дата/Час', 'План МВт (корегований)']
         df_ex.to_excel(writer, index=False)
-    st.download_button("📥 Завантажити Excel План", output.getvalue(), f"Solar_Plan_AI_{now_ua.strftime('%d%m')}.xlsx")
+    st.download_button("📥 Завантажити Excel План", output.getvalue(), f"Plan_AI_{now_ua.strftime('%d%m')}.xlsx")
 
 with tab2:
-    # Друга сторінка (Твій дизайн v4.6)
+    # Дизайн метеоумов (v4.6)
     df_t = df_forecast[df_forecast['Time'].dt.date == now_ua.date()]
     if not df_t.empty:
-        st.markdown(f"<h3 style='text-align:center;'>Нікополь: {now_ua.strftime('%d.%m.%Y')}</h3>", unsafe_allow_html=True)
         cur = df_t[df_t['Time'].dt.hour == now_ua.hour].iloc[0] if now_ua.hour in df_t['Time'].dt.hour.values else df_t.iloc[0]
-        
+        st.markdown(f"<h3 style='text-align:center;'>Нікополь: {now_ua.strftime('%d.%m.%Y')}</h3>", unsafe_allow_html=True)
         cl1, cl2 = st.columns([1.2, 2])
         with cl1:
             st.markdown(f"""<div style='background:rgba(255,255,255,0.05); padding:25px; border-radius:15px; border:1px solid rgba(255,255,255,0.1); text-align:center;'>
-                <p style='font-size:60px; margin:0;'>⛅</p>
+                <p style='font-size:60px; margin:0;'>☀️</p>
                 <p style='font-size:35px; font-weight:bold; margin:0;'>{cur['Temp']:.1f}°C</p>
                 <p style='color:gray;'>Хмарність: {cur['Clouds']:.0f}%</p>
             </div>""", unsafe_allow_html=True)
