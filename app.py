@@ -8,7 +8,7 @@ import pytz
 import io
 
 # 1. КОНФІГУРАЦІЯ
-st.set_page_config(page_title="SkyGrid: Solar AI v9.8", layout="wide")
+st.set_page_config(page_title="SkyGrid: Solar AI v10.0", layout="wide")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 
 if 'weather_cache' not in st.session_state: st.session_state.weather_cache = None
@@ -39,7 +39,7 @@ def fetch_weather():
         return None, f"API Error {res.status_code}"
     except Exception as e: return None, str(e)
 
-# 2. ДАНІ ТА AI
+# 2. ДАНІ ТА AI ЛОГІКА
 df_raw, status = fetch_weather()
 df_f = df_raw if df_raw is not None else st.session_state.weather_cache
 if df_f is None: st.error(f"📡 Збій зв'язку: {status}"); st.stop()
@@ -53,9 +53,8 @@ try:
     df_h = pd.read_csv(repo_url)
     df_h['Time'] = pd.to_datetime(df_h['Time'])
     
-    # ФІЛЬТР: Тільки останні 7 днів (прибираємо 3 грудня)
-    min_date = now_ua - timedelta(days=7)
-    df_h = df_h[df_h['Time'] >= min_date]
+    # ФІЛЬТР: Тільки актуальне вікно (прибираємо старі помилкові дати)
+    df_h = df_h[df_h['Time'] >= (now_ua - timedelta(days=7))]
     
     df_v = df_h.dropna(subset=['Fact_MW', 'Forecast_MW']).tail(72)
     if not df_v.empty: ai_bias = df_v['Fact_MW'].sum() / df_v['Forecast_MW'].sum()
@@ -76,13 +75,13 @@ df_f['Raw_MW'] = df_f['Rad'] * 11.4 * 0.001
 # 3. ІНТЕРФЕЙС
 st.markdown(f"""<div style="display:flex; align-items:center; margin-bottom:15px;">
     <img src="https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/nzf_logo.png" style="width:55px; border-radius:8px; margin-right:15px;">
-    <h1 style='margin:0;'>SkyGrid Solar AI v9.8</h1>
+    <h1 style='margin:0;'>SkyGrid Solar AI v10.0</h1>
 </div>""", unsafe_allow_html=True)
 
 t1, t2 = st.tabs(["📊 АНАЛІТИКА ТА ПРОГНОЗ", "🌦 МЕТЕОУМОВИ НІКОПОЛЬ"])
 
 with t1:
-    st.subheader(f"📅 Прогноз на сьогодні: {now_ua.strftime('%d.%m.%Y')}")
+    st.markdown(f"### 📅 Прогноз на сьогодні: **{now_ua.strftime('%d.%m.%Y')}**")
     c1, c2, c3, c4 = st.columns(4)
     s_ai = df_f[df_f['Time'].dt.date == now_ua.date()]['AI_MW'].sum()
     s_raw = df_f[df_f['Time'].dt.date == now_ua.date()]['Raw_MW'].sum()
@@ -101,7 +100,7 @@ with t1:
         fig_d.update_layout(barmode='group', height=330, template="plotly_dark", margin=dict(l=0,r=0,t=30,b=0), xaxis=dict(type='category'))
         st.plotly_chart(fig_d, use_container_width=True)
 
-    with st.expander("🧠 AI Training Center (Погодинний аналіз похибки)"):
+    with st.expander("🧠 AI Training Center (Погодинна похибка)"):
         if not df_h.empty and 'Fact_MW' in df_h.columns:
             df_err = df_h.dropna(subset=['Fact_MW', 'Forecast_MW']).copy()
             if not df_err.empty:
@@ -110,18 +109,25 @@ with t1:
                 hourly_err = df_err.groupby('Hour')['Error'].mean().reset_index()
                 fig_err = go.Figure()
                 fig_err.add_trace(go.Bar(x=hourly_err['Hour'], y=hourly_err['Error'], marker_color='#eb4034'))
-                fig_err.update_layout(height=250, template="plotly_dark", title="Середня похибка по годинах (МВт)")
+                fig_err.update_layout(height=250, template="plotly_dark", title="Середня похибка МВт (Факт - Сайт)")
                 st.plotly_chart(fig_err, use_container_width=True)
 
     st.markdown("---")
+    st.subheader("⏱ Оперативний прогноз (72 години)")
     df_p = df_f[df_f['Time'] >= pd.Timestamp(now_ua.date())].head(72)
     fig_h = go.Figure()
     fig_h.add_trace(go.Scatter(x=df_p['Time'], y=df_p['AI_MW'], fill='tozeroy', name="AI План", line=dict(color='#00ff7f', width=3)))
     sums = df_p.groupby(df_p['Time'].dt.date)['AI_MW'].sum()
     for date, val in sums.items():
         fig_h.add_annotation(x=f"{date} 12:00:00", y=df_p[df_p['Time'].dt.date == date]['AI_MW'].max()+0.5, text=f"Σ {val:.1f} MWh", showarrow=False, font=dict(color="#FFD700"))
-    fig_h.update_layout(height=350, template="plotly_dark")
+    fig_h.update_layout(height=350, template="plotly_dark", margin=dict(l=0,r=0,t=20,b=0))
     st.plotly_chart(fig_h, use_container_width=True)
+    
+    # КНОПКА ЕКСЕЛЬ (Повернуто!)
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df_p[['Time', 'AI_MW', 'Raw_MW']].to_excel(writer, index=False)
+    st.download_button("📥 Скачати Excel План", output.getvalue(), f"Solar_Plan_{now_ua.strftime('%d%m')}.xlsx")
 
 with t2:
     # ПОВЕРНЕННЯ ПОВНОГО ДИЗАЙНУ v4.6
