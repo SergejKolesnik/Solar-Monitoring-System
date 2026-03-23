@@ -9,7 +9,7 @@ import pytz
 import io
 
 # 1. КОНФІГУРАЦІЯ
-st.set_page_config(page_title="SkyGrid: Solar AI v14.2", layout="wide")
+st.set_page_config(page_title="SkyGrid: Solar AI v14.3", layout="wide")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 
 if 'weather_cache' not in st.session_state: st.session_state.weather_cache = None
@@ -84,10 +84,7 @@ df_f['AI_MW'] = df_f['Rad'] * 11.4 * 0.001 * final_bias
 # 4. ВЕРСТКА
 st.markdown(f"""<div style="display:flex; align-items:center; margin-bottom:20px;">
     <img src="https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/nzf_logo.png" style="width:60px; border-radius:10px; margin-right:20px;">
-    <div>
-        <h1 style='margin:0; font-size:32px;'>SkyGrid Solar AI v14.2</h1>
-        <p style='margin:0; color:gray;'>Нікополь • Енергомоніторинг NZF</p>
-    </div>
+    <div><h1 style='margin:0; font-size:32px;'>SkyGrid Solar AI v14.3</h1><p style='margin:0; color:gray;'>Нікополь • Енергомоніторинг NZF</p></div>
 </div>""", unsafe_allow_html=True)
 
 t1, t2 = st.tabs(["📊 АНАЛІТИКА ТА ПРОГНОЗ", "🌦 МЕТЕОЦЕНТР НІКОПОЛЬ"])
@@ -97,4 +94,56 @@ with t1:
     c1, c2, c3, c4 = st.columns(4)
     s_ai = df_f[df_f['Time'].dt.date == now_ua.date()]['AI_MW'].sum()
     c1.metric("ПРОГНОЗ AI", f"{s_ai:.1f} MWh", delta=f"{final_bias:.2f}x")
-    c2.metric("БАЗА ДОСВІДУ", f"{exp_hours} год
+    c2.metric("БАЗА ДОСВІДУ", f"{exp_hours} год")
+    c3.metric("КОЕФІЦІЄНТ AI", f"{ai_bias:.2f}x")
+    c4.metric("РУЧНИЙ БУСТ", f"{boost:.2f}x")
+
+    if not daily_stats.empty:
+        fig_d = go.Figure()
+        fig_d.add_trace(go.Bar(x=daily_stats['Date'], y=daily_stats['Fact_MW'], name="Факт АСКОЕ", marker_color='#00ff7f', text=daily_stats['Fact_MW'].round(1), textposition='outside'))
+        fig_d.add_trace(go.Bar(x=daily_stats['Date'], y=daily_stats['Forecast_MW']*final_bias, name="План AI", marker_color='#1f77b4'))
+        fig_d.update_layout(barmode='group', height=350, template="plotly_dark", margin=dict(l=0,r=0,t=30,b=0))
+        st.plotly_chart(fig_d, use_container_width=True)
+
+    with st.expander("🧠 AI Training Center (Heatmap Похибок)"):
+        if not df_h.empty:
+            df_heat = df_h.dropna(subset=['Fact_MW', 'Forecast_MW']).copy()
+            if not df_heat.empty:
+                df_heat['Hour'] = df_heat['Time'].dt.hour
+                df_heat['Day'] = df_heat['Time'].dt.strftime('%d.%m')
+                df_heat['Error'] = df_heat['Fact_MW'] - (df_heat['Forecast_MW'] * ai_bias)
+                pivot = df_heat[(df_heat['Hour']>=6) & (df_heat['Hour']<=19)].pivot(index='Day', columns='Hour', values='Error')
+                fig_hm = px.imshow(pivot, color_continuous_scale="RdBu_r", aspect="auto")
+                fig_hm.update_layout(height=350, template="plotly_dark")
+                st.plotly_chart(fig_hm, use_container_width=True)
+
+with t2:
+    st.subheader("🌦 Прогноз погоди: Нікополь (10 днів)")
+    if day_forecast:
+        # Попередження
+        for d in day_forecast[:3]:
+            if d['Вітер'] > 12: st.error(f"🚩 **{d['Дата']}**: Сильний вітер! {d['Вітер']} м/с")
+            elif d['Опади'] > 75: st.warning(f"🌧 **{d['Дата']}**: Висока ймовірність опадів")
+
+        # Плиточки
+        st.markdown("<br>", unsafe_allow_html=True)
+        def get_icon(name):
+            icons = {"rain": "🌧️", "cloudy": "☁️", "partly-cloudy-day": "⛅", "clear-day": "☀️", "wind": "💨"}
+            return icons.get(name, "🌡️")
+
+        cols = st.columns(len(day_forecast))
+        for i, d in enumerate(day_forecast):
+            with cols[i]:
+                st.markdown(f"""<div style='background:rgba(255,255,255,0.05); padding:10px; border-radius:12px; text-align:center; border:1px solid rgba(255,255,255,0.1);'><p style='margin:0; font-size:12px; color:gray;'>{d['Дата']}</p><p style='margin:5px 0; font-size:25px;'>{get_icon(d['Icon'])}</p><p style='margin:0; font-weight:bold; font-size:16px;'>{d['Макс']:.0f}°</p><p style='margin:0; font-size:11px; color:#00d4ff;'>{d['Вітер']:.0f} м/с</p></div>""", unsafe_allow_html=True)
+
+        st.markdown("---")
+        df_10 = pd.DataFrame(day_forecast)
+        c_table, c_graph = st.columns([1.2, 1])
+        with c_table:
+            st.dataframe(df_10[['Дата', 'Умови', 'Мін', 'Макс', 'Опади', 'Вітер']], hide_index=True, use_container_width=True)
+        with c_graph:
+            fig_w = go.Figure()
+            fig_w.add_trace(go.Bar(x=df_10['Дата'], y=df_10['Вітер'], name="Вітер м/с", marker_color='#00d4ff'))
+            fig_w.add_trace(go.Scatter(x=df_10['Дата'], y=df_10['Опади'], name="Опади %", yaxis="y2", line=dict(color='#ff4b4b')))
+            fig_w.update_layout(height=280, template="plotly_dark", yaxis2=dict(overlaying='y', side='right', range=[0,100]), margin=dict(l=0,r=0,t=10,b=0))
+            st.plotly_chart(fig_w, use_container_width=True)
