@@ -12,67 +12,57 @@ WEATHER_API_KEY = os.environ.get("WEATHER_API_KEY")
 EMAIL_USER = os.environ.get("EMAIL_USER")
 EMAIL_PASS = os.environ.get("EMAIL_PASS")
 CSV_FILE = "solar_ai_base.csv"
-LAT, LON = "47.56", "34.39"
+# Твої точні координати
+LAT, LON = "47.631494", "34.348690"
 UA_TZ = pytz.timezone('Europe/Kyiv')
 
-def get_forecast():
+def get_detailed_forecast():
     try:
-        url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/{LAT},{LON}/next3days?unitGroup=metric&elements=datetime,solarradiation&key={WEATHER_API_KEY}&contentType=json"
+        url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/{LAT},{LON}/next3days?unitGroup=metric&elements=datetime,temp,cloudcover,solarradiation,windspeed,precipprob&key={WEATHER_API_KEY}&contentType=json"
         res = requests.get(url, timeout=15).json()
-        f_list = []
-        for d in res['days']:
-            for hr in d['hours']:
-                f_list.append({
-                    'Time': pd.to_datetime(f"{d['datetime']} {hr['datetime']}"),
-                    'Forecast_MW': round(hr.get('solarradiation', 0) * 11.4 * 0.001, 3)
+        forecast_list = []
+        for day in res['days']:
+            for hr in day['hours']:
+                forecast_list.append({
+                    'Time': pd.to_datetime(f"{day['datetime']} {hr['datetime']}"),
+                    'Forecast_MW': round(hr.get('solarradiation', 0) * 11.4 * 0.001, 4),
+                    'CloudCover': hr.get('cloudcover', 0),
+                    'Temp': hr.get('temp', 0),
+                    'WindSpeed': hr.get('windspeed', 0),
+                    'PrecipProb': hr.get('precipprob', 0)
                 })
-        return pd.DataFrame(f_list)
-    except: return pd.DataFrame()
+        return pd.DataFrame(forecast_list)
+    except Exception as e:
+        print(f"Помилка погоди: {e}")
+        return pd.DataFrame()
 
 def get_fact_from_mail():
-    print("Сканування пошти за структурою НЗФ...")
-    records = []
+    askoe_records = []
     try:
         mail = imaplib.IMAP4_SSL("imap.gmail.com")
         mail.login(EMAIL_USER, EMAIL_PASS)
         mail.select("INBOX")
-        
-        date_cut = (datetime.now(UA_TZ) - timedelta(days=7)).strftime("%d-%b-%Y")
-        status, data = mail.search(None, f'(SINCE "{date_cut}")')
+        date_cut = (datetime.now(UA_TZ) - timedelta(days=5)).strftime("%d-%b-%Y")
+        _, data = mail.search(None, f'(SINCE "{date_cut}")')
         
         for num in data[0].split():
             _, msg_data = mail.fetch(num, '(RFC822)')
             msg = email.message_from_bytes(msg_data[0][1])
-            
             for part in msg.walk():
                 filename = part.get_filename()
-                # Шукаємо файли report... або reportCEC...
-                if filename and (filename.startswith('report')):
-                    print(f"Парсинг файлу: {filename}")
+                if filename and filename.startswith('report'):
                     payload = part.get_payload(decode=True)
-                    
-                    # ВАЖЛИВО: пропускаємо перші 2 рядки шапки (skiprows=2)
-                    df = pd.read_excel(io.BytesIO(payload), skiprows=2)
-                    
-                    for _, row in df.iterrows():
+                    df_mail = pd.read_excel(io.BytesIO(payload), skiprows=2)
+                    for _, row in df_mail.iterrows():
                         try:
-                            # Колонка A (index 0) - Час
-                            # Колонка E (index 4) - Виробіток фотоел. (кВт-год)
-                            t_raw = pd.to_datetime(row.iloc[0], dayfirst=True)
-                            val_kwh = float(str(row.iloc[4]).replace(',', '.'))
-                            
-                            # Конвертуємо кВт-год у МВт
-                            val_mw = val_kwh / 1000
-                            
-                            records.append({
-                                'Time': t_raw.replace(tzinfo=None).floor('H'),
-                                'Fact_MW': round(val_mw, 4)
-                            })
+                            t = pd.to_datetime(row.iloc[0], dayfirst=True).replace(tzinfo=None).floor('H')
+                            val_mw = float(str(row.iloc[4]).replace(',', '.')) / 1000
+                            askoe_records.append({'Time': t, 'Fact_MW': round(val_mw, 4)})
                         except: continue
         mail.logout()
-        return pd.DataFrame(records)
+        return pd.DataFrame(askoe_records)
     except Exception as e:
-        print(f"Помилка: {e}")
+        print(f"Помилка пошти: {e}")
         return pd.DataFrame()
 
 def sync():
@@ -80,29 +70,29 @@ def sync():
         df_base = pd.read_csv(CSV_FILE)
         df_base['Time'] = pd.to_datetime(df_base['Time'])
     else:
-        df_base = pd.DataFrame(columns=['Time', 'Fact_MW', 'Forecast_MW'])
+        df_base = pd.DataFrame(columns=['Time', 'Fact_MW', 'Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb'])
 
-    # Прогноз (тільки нові)
-    df_f = get_forecast()
+    # 1. Додаємо нові прогнози з деталями
+    df_f = get_detailed_forecast()
     if not df_f.empty:
-        new_h = df_f[~df_f['Time'].isin(df_base['Time'])]
-        df_base = pd.concat([df_base, new_h], ignore_index=True)
+        # Оновлюємо тільки ті години, яких ще немає
+        new_hours = df_f[~df_f['Time'].isin(df_base['Time'])]
+        df_base = pd.concat([df_base, new_hours], ignore_index=True)
 
-    # Факт (заповнюємо пропуски)
+    # 2. Додаємо факти
     df_fact = get_fact_from_mail()
     if not df_fact.empty:
-        df_fact = df_fact.drop_duplicates('Time')
         for _, row in df_fact.iterrows():
             mask = df_base['Time'] == row['Time']
             if mask.any():
-                # Оновлюємо, якщо порожньо
-                if pd.isna(df_base.loc[mask, 'Fact_MW']).any():
-                    df_base.loc[mask, 'Fact_MW'] = row['Fact_MW']
-            else:
-                df_base = pd.concat([df_base, pd.DataFrame([row])], ignore_index=True)
+                df_base.loc[mask, 'Fact_MW'] = row['Fact_MW']
 
-    df_base.sort_values('Time').drop_duplicates('Time', keep='first').to_csv(CSV_FILE, index=False)
-    print("Синхронізація виконана під структуру Excel.")
+    # Фільтр сміття (тільки березень 2026)
+    df_base = df_base[df_base['Time'].dt.year == 2026]
+    df_base = df_base[df_base['Time'].dt.month == 3]
+
+    df_base.sort_values('Time').drop_duplicates('Time').to_csv(CSV_FILE, index=False)
+    print("База v11.0 оновлена.")
 
 if __name__ == "__main__":
     sync()
