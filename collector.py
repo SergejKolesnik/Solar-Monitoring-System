@@ -1,3 +1,69 @@
+import os
+import requests
+import pandas as pd
+import imaplib
+import email
+import io
+from datetime import datetime, timedelta
+import pytz
+
+# 1. КОНФІГУРАЦІЯ
+WEATHER_API_KEY = os.environ.get("WEATHER_API_KEY")
+EMAIL_USER = os.environ.get("EMAIL_USER")
+EMAIL_PASS = os.environ.get("EMAIL_PASS")
+CSV_FILE = "solar_ai_base.csv"
+LAT, LON = "47.631494", "34.348690"
+UA_TZ = pytz.timezone('Europe/Kyiv')
+
+def get_detailed_forecast():
+    try:
+        # Беремо прогноз на 7 днів, щоб зачепити 26-те число
+        url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/{LAT},{LON}/next7days?unitGroup=metric&elements=datetime,temp,cloudcover,solarradiation,windspeed,precipprob&key={WEATHER_API_KEY}&contentType=json"
+        res = requests.get(url, timeout=15).json()
+        forecast_list = []
+        for day in res['days']:
+            for hr in day['hours']:
+                forecast_list.append({
+                    'Time': pd.to_datetime(f"{day['datetime']} {hr['datetime']}"),
+                    'Forecast_MW': round(hr.get('solarradiation', 0) * 11.4 * 0.001, 4),
+                    'CloudCover': hr.get('cloudcover', 0),
+                    'Temp': hr.get('temp', 0),
+                    'WindSpeed': hr.get('windspeed', 0),
+                    'PrecipProb': hr.get('precipprob', 0)
+                })
+        return pd.DataFrame(forecast_list)
+    except Exception as e:
+        print(f"Помилка погоди: {e}")
+        return pd.DataFrame()
+
+def get_fact_from_mail():
+    askoe_records = []
+    try:
+        mail = imaplib.IMAP4_SSL("imap.gmail.com")
+        mail.login(EMAIL_USER, EMAIL_PASS)
+        mail.select("INBOX")
+        date_cut = (datetime.now(UA_TZ) - timedelta(days=5)).strftime("%d-%b-%Y")
+        _, data = mail.search(None, f'(SINCE "{date_cut}")')
+        for num in data[0].split():
+            _, msg_data = mail.fetch(num, '(RFC822)')
+            msg = email.message_from_bytes(msg_data[0][1])
+            for part in msg.walk():
+                filename = part.get_filename()
+                if filename and filename.startswith('report'):
+                    payload = part.get_payload(decode=True)
+                    df_mail = pd.read_excel(io.BytesIO(payload), skiprows=2)
+                    for _, row in df_mail.iterrows():
+                        try:
+                            t = pd.to_datetime(row.iloc[0], dayfirst=True).replace(tzinfo=None).floor('H')
+                            val_mw = float(str(row.iloc[4]).replace(',', '.')) / 1000
+                            askoe_records.append({'Time': t, 'Fact_MW': round(val_mw, 4)})
+                        except: continue
+        mail.logout()
+        return pd.DataFrame(askoe_records)
+    except Exception as e:
+        print(f"Помилка пошти: {e}")
+        return pd.DataFrame()
+
 def sync():
     if os.path.exists(CSV_FILE):
         df_base = pd.read_csv(CSV_FILE)
@@ -5,19 +71,20 @@ def sync():
     else:
         df_base = pd.DataFrame(columns=['Time', 'Fact_MW', 'Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb'])
 
+    # ФОРСОВАНЕ ОНОВЛЕННЯ ПРОГНОЗУ
     df_f = get_detailed_forecast()
     if not df_f.empty:
         for _, row in df_f.iterrows():
             mask = df_base['Time'] == row['Time']
             if mask.any():
-                # ОНОВЛЕННЯ: якщо дані про погоду пусті (NaN) - заповнюємо їх
-                if pd.isna(df_base.loc[mask, 'CloudCover']).any() or df_base.loc[mask, 'CloudCover'].iloc[0] == 0:
+                # Якщо хоча б один параметр (хмари або темп) порожній - перезаписуємо весь рядок
+                if pd.isna(df_base.loc[mask, 'CloudCover']).any() or pd.isna(df_base.loc[mask, 'Temp']).any():
                     df_base.loc[mask, ['Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb']] = \
                         [row['Forecast_MW'], row['CloudCover'], row['Temp'], row['WindSpeed'], row['PrecipProb']]
             else:
-                # Якщо години взагалі немає - додаємо новий рядок
                 df_base = pd.concat([df_base, pd.DataFrame([row])], ignore_index=True)
 
+    # ОНОВЛЕННЯ ФАКТІВ
     df_fact = get_fact_from_mail()
     if not df_fact.empty:
         for _, row in df_fact.iterrows():
@@ -25,9 +92,12 @@ def sync():
             if mask.any():
                 df_base.loc[mask, 'Fact_MW'] = row['Fact_MW']
 
-    # Фільтрація по поточному місяцю
+    # ЧИСТКА: Тільки 2026 рік, Тільки Березень
     now = datetime.now(UA_TZ)
-    df_base = df_base[(df_base['Time'].dt.year == now.year) & (df_base['Time'].dt.month == now.month)]
-    
+    df_base = df_base[(df_base['Time'].dt.year == 2026) & (df_base['Time'].dt.month == 3)]
+
     df_base.sort_values('Time').drop_duplicates('Time').to_csv(CSV_FILE, index=False)
-    print("Дані успішно оновлені та заповнені.")
+    print("Синхронізація v11.6 успішна. Порожні клітинки заповнені.")
+
+if __name__ == "__main__":
+    sync()
