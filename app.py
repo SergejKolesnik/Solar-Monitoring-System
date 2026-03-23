@@ -9,7 +9,7 @@ import pytz
 import io
 
 # 1. КОНФІГУРАЦІЯ
-st.set_page_config(page_title="SkyGrid: Solar AI v14.5", layout="wide")
+st.set_page_config(page_title="SkyGrid: Solar AI v14.6", layout="wide")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 
 if 'weather_cache' not in st.session_state: st.session_state.weather_cache = None
@@ -17,6 +17,7 @@ if 'weather_cache' not in st.session_state: st.session_state.weather_cache = Non
 @st.cache_data(ttl=1800)
 def fetch_weather():
     api_key = st.secrets["WEATHER_API_KEY"]
+    # Прогноз Visual Crossing
     url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/47.631494,34.348690/next10days?unitGroup=metric&elements=datetime,temp,tempmax,tempmin,cloudcover,solarradiation,windspeed,winddir,precipprob,conditions,icon&key={api_key}&contentType=json"
     try:
         res = requests.get(url, timeout=10)
@@ -43,17 +44,19 @@ def fetch_weather():
                         'WindSpd': hr.get('windspeed', 0)
                     })
             df = pd.DataFrame(h_list)
+            st.session_state.weather_cache = (df, d_list)
             return df, d_list, "OK"
         return None, None, f"Помилка API {res.status_code}"
     except Exception as e: return None, None, str(e)
 
-# 2. ДАНІ
+# 2. ДАНІ ТА AI
 df_raw, day_forecast, status = fetch_weather()
 if df_raw is None and st.session_state.weather_cache:
     df_f, day_forecast = st.session_state.weather_cache
 else:
     df_f = df_raw
-    st.session_state.weather_cache = (df_raw, day_forecast)
+
+if df_f is None: st.error(f"📡 Збій зв'язку: {status}"); st.stop()
 
 now_ua = datetime.now(UA_TZ).replace(tzinfo=None)
 ai_bias, exp_hours = 1.0, 0
@@ -75,20 +78,35 @@ try:
     daily_stats = df_h.groupby('Date').agg({'Fact_MW':'sum','Forecast_MW':'sum'}).reset_index()
 except: daily_stats = pd.DataFrame()
 
-# 3. КЕРУВАННЯ
+# 3. КЕРУВАННЯ ТА БРЕНДУВАННЯ
+st.sidebar.markdown(f"""<div style="text-align:center; margin-bottom:20px;">
+    <a href="https://www.nzf.com.ua/main.aspx" target="_blank">
+        <img src="https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/nzf_logo.png" style="width:110px; border-radius:15px; border:2px solid rgba(255,255,255,0.1);">
+    </a>
+    <h3 style='margin-top:10px;'>SkyGrid: Solar AI</h3>
+    <p style='color:gray; font-size:12px;'>v14.6 | Нікополь NZF</p>
+</div>""", unsafe_allow_html=True)
+
 st.sidebar.header("⚙️ Керування")
 boost = st.sidebar.slider("Ручна корекція (%)", 50, 300, 100) / 100
 final_bias = ai_bias * boost
 df_f['AI_MW'] = df_f['Rad'] * 11.4 * 0.001 * final_bias
 df_f['Raw_MW'] = df_f['Rad'] * 11.4 * 0.001
 
-# 4. ВЕРСТКА
+# Блок автора (SIDEBAR БОТТОМ)
+st.sidebar.markdown("---")
+st.sidebar.markdown("""<div style='text-align:center; color:gray; font-size:11px;'>
+    <p style='margin:0;'><b>Розробка та супровід:</b></p>
+    <p style='margin:2px 0; color:#00ff7f;'>С.О. Колесник (Автоматика та СЕС)</p>
+    <p style='margin:2px 0; color:#1f77b4;'>SkyGrid AI (Алгоритми)</p>
+</div>""", unsafe_allow_html=True)
+
+# 4. ІНТЕРФЕЙС
 st.markdown(f"""
 <div style="display:flex; align-items:center; margin-bottom:20px;">
-    <img src="https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/nzf_logo.png" style="width:60px; border-radius:10px; margin-right:20px;">
     <div>
-        <h1 style='margin:0; font-size:32px;'>SkyGrid Solar AI v14.5</h1>
-        <p style='margin:0; color:gray;'>Нікополь • Енергомоніторинг NZF</p>
+        <h1 style='margin:0; font-size:32px;'>SkyGrid Solar AI</h1>
+        <p style='margin:0; color:gray;'>Локація: Нікополь • Енергомоніторинг NZF</p>
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -102,15 +120,16 @@ with t1:
     s_raw = df_f[df_f['Time'].dt.date == now_ua.date()]['Raw_MW'].sum()
     
     c1.metric("ПРОГНОЗ AI", f"{s_ai:.1f} MWh", delta=f"{final_bias:.2f}x")
-    c2.metric("ПРОГНОЗ САЙТУ", f"{s_raw:.1f} MWh")
+    c2.metric("ПРОГНОЗ VISUAL CROSSING", f"{s_raw:.1f} MWh")
     c3.metric("БАЗА ДОСВІДУ", f"{exp_hours} год")
     c4.metric("КОЕФІЦІЄНТ AI", f"{ai_bias:.2f}x")
 
+    # Основний графік (З ПРАВИЛЬНИМ ПОРЯДКОМ СТОВПЧИКІВ)
     if not daily_stats.empty:
         fig_d = go.Figure()
-        fig_d.add_trace(go.Bar(x=daily_stats['Date'], y=daily_stats['Fact_MW'], name="Факт АСКОЕ", marker_color='#00ff7f', text=daily_stats['Fact_MW'].round(1), textposition='outside'))
         fig_d.add_trace(go.Bar(x=daily_stats['Date'], y=daily_stats['Forecast_MW'], name="Прогноз сайту", marker_color='gray', opacity=0.5))
         fig_d.add_trace(go.Bar(x=daily_stats['Date'], y=daily_stats['Forecast_MW']*final_bias, name="План AI", marker_color='#1f77b4'))
+        fig_d.add_trace(go.Bar(x=daily_stats['Date'], y=daily_stats['Fact_MW'], name="Факт АСКОЕ", marker_color='#00ff7f', text=daily_stats['Fact_MW'].round(1), textposition='outside'))
         fig_d.update_layout(barmode='group', height=350, template="plotly_dark", margin=dict(l=0,r=0,t=30,b=0), legend=dict(orientation="h", y=1.1))
         st.plotly_chart(fig_d, use_container_width=True)
 
@@ -145,15 +164,13 @@ with t2:
                 # Підсвітка критичних днів (Вітер > 12)
                 bg_color = "rgba(255, 75, 75, 0.2)" if d['Вітер'] > 12 else "rgba(255, 255, 255, 0.05)"
                 border_color = "rgba(255, 75, 75, 0.5)" if d['Вітер'] > 12 else "rgba(255, 255, 255, 0.1)"
-                
                 st.markdown(f"""
                 <div style='background:{bg_color}; padding:10px; border-radius:12px; text-align:center; border:1px solid {border_color};'>
                     <p style='margin:0; font-size:12px; color:gray;'>{d['Дата']}</p>
                     <p style='margin:5px 0; font-size:25px;'>{get_icon(d['Icon'])}</p>
                     <p style='margin:0; font-weight:bold; font-size:16px;'>{d['Макс']:.0f}°</p>
                     <p style='margin:0; font-size:11px; color:#00d4ff;'>{d['Вітер']:.0f} м/с</p>
-                </div>
-                """, unsafe_allow_html=True)
+                </div>""", unsafe_allow_html=True)
 
         st.markdown("---")
         df_10 = pd.DataFrame(day_forecast)
