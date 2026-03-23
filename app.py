@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
+import plotly.express as px
 import requests
 from datetime import datetime, timedelta
 import time
@@ -8,7 +9,7 @@ import pytz
 import io
 
 # 1. КОНФІГУРАЦІЯ
-st.set_page_config(page_title="SkyGrid: Solar AI v11.6", layout="wide")
+st.set_page_config(page_title="SkyGrid: Solar AI v12.0", layout="wide")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 
 if 'weather_cache' not in st.session_state: st.session_state.weather_cache = None
@@ -75,7 +76,7 @@ df_f['Raw_MW'] = df_f['Rad'] * 11.4 * 0.001
 # 3. ІНТЕРФЕЙС
 st.markdown(f"""<div style="display:flex; align-items:center; margin-bottom:15px;">
     <img src="https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/nzf_logo.png" style="width:55px; border-radius:8px; margin-right:15px;">
-    <h1 style='margin:0;'>SkyGrid Solar AI v11.6</h1>
+    <h1 style='margin:0;'>SkyGrid Solar AI v12.0</h1>
 </div>""", unsafe_allow_html=True)
 
 t1, t2 = st.tabs(["📊 АНАЛІТИКА ТА ПРОГНОЗ", "🌦 МЕТЕОУМОВИ НІКОПОЛЬ"])
@@ -100,20 +101,31 @@ with t1:
         fig_d.update_layout(barmode='group', height=330, template="plotly_dark", margin=dict(l=0,r=0,t=30,b=0), xaxis=dict(type='category'))
         st.plotly_chart(fig_d, use_container_width=True)
 
-    with st.expander("🧠 AI Training Center & Data Audit"):
+    with st.expander("🧠 AI Training Center: Теплова карта навчання"):
         if not df_h.empty:
-            st.subheader("Поточний стан бази")
+            df_heat = df_h.dropna(subset=['Fact_MW', 'Forecast_MW']).copy()
+            if not df_heat.empty:
+                df_heat['Hour'] = df_heat['Time'].dt.hour
+                df_heat['Day'] = df_heat['Time'].dt.strftime('%d.%m')
+                df_heat['Error'] = df_heat['Fact_MW'] - df_heat['Forecast_MW']
+                
+                # Фільтруємо тільки світловий день для наочності
+                df_heat = df_heat[(df_heat['Hour'] >= 6) & (df_heat['Hour'] <= 19)]
+                
+                pivot = df_heat.pivot(index='Day', columns='Hour', values='Error')
+                
+                fig_hm = px.imshow(pivot, 
+                                   labels=dict(x="Година доби", y="Дата", color="Похибка МВт"),
+                                   x=pivot.columns,
+                                   y=pivot.index,
+                                   color_continuous_scale="RdBu_r", # Червоний - перебір, Синій - недобір
+                                   aspect="auto")
+                fig_hm.update_layout(height=400, template="plotly_dark", title="Матриця похибок ШІ (Аналіз патернів)")
+                st.plotly_chart(fig_hm, use_container_width=True)
+                st.caption("💡 Чим ближче колір до білого, тим краще ШІ вивчив патерн виробки в ці години.")
+
+            st.subheader("Сирі дані аудиту")
             st.dataframe(df_h.tail(15), use_container_width=True)
-            
-            df_err = df_h.dropna(subset=['Fact_MW', 'Forecast_MW']).copy()
-            if not df_err.empty:
-                df_err['Hour'] = df_err['Time'].dt.hour
-                df_err['Error'] = df_err['Fact_MW'] - df_err['Forecast_MW']
-                hourly_err = df_err.groupby('Hour')['Error'].mean().reset_index()
-                fig_err = go.Figure()
-                fig_err.add_trace(go.Bar(x=hourly_err['Hour'], y=hourly_err['Error'], marker_color='#eb4034'))
-                fig_err.update_layout(height=250, template="plotly_dark", title="Середня похибка (Факт - Сайт)")
-                st.plotly_chart(fig_err, use_container_width=True)
 
     st.markdown("---")
     st.subheader("⏱ Оперативний прогноз (72 години)")
@@ -132,6 +144,7 @@ with t1:
     st.download_button("📥 Скачати Excel План", output.getvalue(), f"Solar_Plan_{now_ua.strftime('%d%m')}.xlsx")
 
 with t2:
+    # --- ДРУГА СТОРІНКА (v4.6 FIXED) ---
     df_t = df_f[df_f['Time'].dt.date == now_ua.date()]
     if not df_t.empty:
         cur = df_t[df_t['Time'].dt.hour == now_ua.hour].iloc[0] if now_ua.hour in df_t['Time'].dt.hour.values else df_t.iloc[0]
