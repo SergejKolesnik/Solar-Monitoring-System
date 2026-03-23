@@ -8,7 +8,7 @@ import pytz
 import io
 
 # 1. КОНФІГУРАЦІЯ
-st.set_page_config(page_title="SkyGrid: Solar AI v10.1", layout="wide")
+st.set_page_config(page_title="SkyGrid: Solar AI v11.1", layout="wide")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 
 if 'weather_cache' not in st.session_state: st.session_state.weather_cache = None
@@ -16,6 +16,7 @@ if 'weather_cache' not in st.session_state: st.session_state.weather_cache = Non
 @st.cache_data(ttl=1800)
 def fetch_weather():
     api_key = st.secrets["WEATHER_API_KEY"]
+    # Твої точні координати
     url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/47.631494,34.348690/next7days?unitGroup=metric&elements=datetime,temp,cloudcover,solarradiation,windspeed,winddir,precipprob&key={api_key}&contentType=json"
     try:
         res = requests.get(url, timeout=10)
@@ -53,14 +54,14 @@ try:
     df_h = pd.read_csv(repo_url)
     df_h['Time'] = pd.to_datetime(df_h['Time'])
     
-    # ЖОРСТКИЙ ФІЛЬТР: Тільки поточний місяць та рік (Видаляємо грудень!)
+    # ФІЛЬТР: Тільки поточний місяць та рік
     df_h = df_h[(df_h['Time'].dt.year == now_ua.year) & (df_h['Time'].dt.month == now_ua.month)]
     
     df_v = df_h.dropna(subset=['Fact_MW', 'Forecast_MW']).tail(72)
     if not df_v.empty: ai_bias = df_v['Fact_MW'].sum() / df_v['Forecast_MW'].sum()
     
     df_h['Date'] = df_h['Time'].dt.date
-    daily_stats = df_h.groupby('Date').agg({'Fact_MW':'sum','Forecast_MW':'sum'}).reset_index().tail(10)
+    daily_stats = df_h.groupby('Date').agg({'Fact_MW':'sum','Forecast_MW':'sum'}).reset_index()
 except: 
     df_h = pd.DataFrame(); daily_stats = pd.DataFrame()
 
@@ -75,7 +76,7 @@ df_f['Raw_MW'] = df_f['Rad'] * 11.4 * 0.001
 # 3. ІНТЕРФЕЙС
 st.markdown(f"""<div style="display:flex; align-items:center; margin-bottom:15px;">
     <img src="https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/nzf_logo.png" style="width:55px; border-radius:8px; margin-right:15px;">
-    <h1 style='margin:0;'>SkyGrid Solar AI v10.1</h1>
+    <h1 style='margin:0;'>SkyGrid Solar AI v11.1</h1>
 </div>""", unsafe_allow_html=True)
 
 t1, t2 = st.tabs(["📊 АНАЛІТИКА ТА ПРОГНОЗ", "🌦 МЕТЕОУМОВИ НІКОПОЛЬ"])
@@ -100,8 +101,18 @@ with t1:
         fig_d.update_layout(barmode='group', height=330, template="plotly_dark", margin=dict(l=0,r=0,t=30,b=0), xaxis=dict(type='category'))
         st.plotly_chart(fig_d, use_container_width=True)
 
-    with st.expander("🧠 AI Training Center (Погодинна похибка)"):
-        if not df_h.empty and 'Fact_MW' in df_h.columns:
+    with st.expander("🧠 AI Training Center & Data Audit"):
+        if not df_h.empty:
+            st.subheader("Поточний стан бази навчання")
+            # Показуємо останні 10 записів з новими параметрами
+            audit_df = df_h.dropna(subset=['CloudCover']).tail(10) if 'CloudCover' in df_h.columns else pd.DataFrame()
+            if not audit_df.empty:
+                st.dataframe(audit_df[['Time', 'Forecast_MW', 'Fact_MW', 'CloudCover', 'Temp', 'WindSpeed']], use_container_width=True)
+                st.info(f"✅ В базі накопичено {len(df_h.dropna(subset=['CloudCover']))} годин з детальними метеоданими.")
+            else:
+                st.warning("⚠️ Погодні дані (хмари, темп) ще не завантажені в базу. Очікуйте оновлення collector.py.")
+
+            # Аналіз похибки
             df_err = df_h.dropna(subset=['Fact_MW', 'Forecast_MW']).copy()
             if not df_err.empty:
                 df_err['Hour'] = df_err['Time'].dt.hour
@@ -109,7 +120,7 @@ with t1:
                 hourly_err = df_err.groupby('Hour')['Error'].mean().reset_index()
                 fig_err = go.Figure()
                 fig_err.add_trace(go.Bar(x=hourly_err['Hour'], y=hourly_err['Error'], marker_color='#eb4034'))
-                fig_err.update_layout(height=250, template="plotly_dark", title="Середня похибка МВт (Факт - Сайт)")
+                fig_err.update_layout(height=250, template="plotly_dark", title="Аналіз відхилення (Факт - Сайт)")
                 st.plotly_chart(fig_err, use_container_width=True)
 
     st.markdown("---")
@@ -122,12 +133,14 @@ with t1:
     fig_h.update_layout(height=350, template="plotly_dark", margin=dict(l=0,r=0,t=20,b=0))
     st.plotly_chart(fig_h, use_container_width=True)
     
+    # КНОПКА EXCEL
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df_p[['Time', 'AI_MW', 'Raw_MW']].to_excel(writer, index=False)
     st.download_button("📥 Скачати Excel План", output.getvalue(), f"Solar_Plan_{now_ua.strftime('%d%m')}.xlsx")
 
 with t2:
+    # --- ДРУГА СТОРІНКА (v4.6 FIXED) ---
     df_t = df_f[df_f['Time'].dt.date == now_ua.date()]
     if not df_t.empty:
         cur = df_t[df_t['Time'].dt.hour == now_ua.hour].iloc[0] if now_ua.hour in df_t['Time'].dt.hour.values else df_t.iloc[0]
