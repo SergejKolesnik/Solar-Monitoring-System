@@ -8,7 +8,7 @@ import pytz
 import io
 
 # 1. КОНФІГУРАЦІЯ
-st.set_page_config(page_title="SkyGrid: Solar AI v11.2", layout="wide")
+st.set_page_config(page_title="SkyGrid: Solar AI v11.5", layout="wide")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 
 if 'weather_cache' not in st.session_state: st.session_state.weather_cache = None
@@ -53,8 +53,8 @@ try:
     df_h = pd.read_csv(repo_url)
     df_h['Time'] = pd.to_datetime(df_h['Time'])
     
-    # ЖОРСТКИЙ ФІЛЬТР: Тільки березень 2026 (Кінець грудню!)
-    df_h = df_h[(df_h['Time'].dt.year == 2026) & (df_h['Time'].dt.month == 3)]
+    # Фільтр: Тільки 2026 рік, щоб прибрати грудневий фантом
+    df_h = df_h[df_h['Time'].dt.year == 2026]
     
     df_v = df_h.dropna(subset=['Fact_MW', 'Forecast_MW']).tail(72)
     if not df_v.empty: ai_bias = df_v['Fact_MW'].sum() / df_v['Forecast_MW'].sum()
@@ -75,7 +75,7 @@ df_f['Raw_MW'] = df_f['Rad'] * 11.4 * 0.001
 # 3. ІНТЕРФЕЙС
 st.markdown(f"""<div style="display:flex; align-items:center; margin-bottom:15px;">
     <img src="https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/nzf_logo.png" style="width:55px; border-radius:8px; margin-right:15px;">
-    <h1 style='margin:0;'>SkyGrid Solar AI v11.2</h1>
+    <h1 style='margin:0;'>SkyGrid Solar AI v11.5</h1>
 </div>""", unsafe_allow_html=True)
 
 t1, t2 = st.tabs(["📊 АНАЛІТИКА ТА ПРОГНОЗ", "🌦 МЕТЕОУМОВИ НІКОПОЛЬ"])
@@ -101,25 +101,23 @@ with t1:
         st.plotly_chart(fig_d, use_container_width=True)
 
     with st.expander("🧠 AI Training Center & Data Audit"):
+        st.subheader("Поточний стан бази")
         if not df_h.empty:
-            st.subheader("Поточний стан бази навчання")
-            # Аудит даних: дивимось на майбутні дати, чи заповнені вони
             audit_df = df_h[df_h['Time'] >= pd.Timestamp(now_ua.date())].tail(15)
-            if not audit_df.empty:
-                st.dataframe(audit_df, use_container_width=True)
+            st.dataframe(audit_df, use_container_width=True)
             
-            df_err = df_h.dropna(subset=['Fact_MW', 'Forecast_MW']).copy()
-            if not df_err.empty:
-                df_err['Hour'] = df_err['Time'].dt.hour
-                df_err['Error'] = df_err['Fact_MW'] - df_err['Forecast_MW']
-                hourly_err = df_err.groupby('Hour')['Error'].mean().reset_index()
-                fig_err = go.Figure()
-                fig_err.add_trace(go.Bar(x=hourly_err['Hour'], y=hourly_err['Error'], marker_color='#eb4034'))
-                fig_err.update_layout(height=250, template="plotly_dark", title="Середня похибка (Факт - Сайт)")
-                st.plotly_chart(fig_err, use_container_width=True)
+            # --- ТЕСТОВА КНОПКА API ---
+            if st.button("🔍 Перевірити прогноз 26.03 (Тест API)"):
+                test_url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/47.631494,34.348690/2026-03-26?unitGroup=metric&elements=datetime,temp,cloudcover,solarradiation&key={st.secrets['WEATHER_API_KEY']}&contentType=json"
+                t_res = requests.get(test_url)
+                if t_res.status_code == 200:
+                    t_data = t_res.json()
+                    st.write("Сайт відповів успішно! Перші години 26-го числа:")
+                    st.write(t_data['days'][0]['hours'][:5])
+                else:
+                    st.error(f"Сайт видав помилку: {t_res.status_code}")
 
     st.markdown("---")
-    st.subheader("⏱ Оперативний прогноз (72 години)")
     df_p = df_f[df_f['Time'] >= pd.Timestamp(now_ua.date())].head(72)
     fig_h = go.Figure()
     fig_h.add_trace(go.Scatter(x=df_p['Time'], y=df_p['AI_MW'], fill='tozeroy', name="AI План", line=dict(color='#00ff7f', width=3)))
