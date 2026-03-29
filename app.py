@@ -9,18 +9,17 @@ import pytz
 import io
 
 # 1. КОНФІГУРАЦІЯ
-st.set_page_config(page_title="SkyGrid: Solar AI v14.6", layout="wide")
+st.set_page_config(page_title="SkyGrid: Solar AI v14.8", layout="wide")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 
 if 'weather_cache' not in st.session_state: st.session_state.weather_cache = None
 
-@st.cache_data(ttl=1800)
+@st.cache_data(ttl=3600)
 def fetch_weather():
     api_key = st.secrets["WEATHER_API_KEY"]
-    # Прогноз Visual Crossing
     url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/47.631494,34.348690/next10days?unitGroup=metric&elements=datetime,temp,tempmax,tempmin,cloudcover,solarradiation,windspeed,winddir,precipprob,conditions,icon&key={api_key}&contentType=json"
     try:
-        res = requests.get(url, timeout=10)
+        res = requests.get(url, timeout=15)
         if res.status_code == 200:
             data = res.json()
             h_list, d_list = [], []
@@ -44,9 +43,8 @@ def fetch_weather():
                         'WindSpd': hr.get('windspeed', 0)
                     })
             df = pd.DataFrame(h_list)
-            st.session_state.weather_cache = (df, d_list)
             return df, d_list, "OK"
-        return None, None, f"Помилка API {res.status_code}"
+        return None, None, f"API Error {res.status_code}"
     except Exception as e: return None, None, str(e)
 
 # 2. ДАНІ ТА AI
@@ -55,8 +53,9 @@ if df_raw is None and st.session_state.weather_cache:
     df_f, day_forecast = st.session_state.weather_cache
 else:
     df_f = df_raw
+    st.session_state.weather_cache = (df_raw, day_forecast)
 
-if df_f is None: st.error(f"📡 Збій зв'язку: {status}"); st.stop()
+if df_f is None: st.error("🔌 Система відновлюється... Натисніть кнопку Wake Up у браузері."); st.stop()
 
 now_ua = datetime.now(UA_TZ).replace(tzinfo=None)
 ai_bias, exp_hours = 1.0, 0
@@ -67,73 +66,67 @@ try:
     df_h = pd.read_csv(repo_url)
     df_h['Time'] = pd.to_datetime(df_h['Time'])
     if 'CloudCover' in df_h.columns: df_h = df_h.rename(columns={'CloudCover': 'Clouds'})
-    
     df_h = df_h[(df_h['Time'].dt.year == 2026) & (df_h['Time'].dt.month == 3)]
     exp_hours = len(df_h.dropna(subset=['Fact_MW']))
-    
     df_v = df_h.dropna(subset=['Fact_MW', 'Forecast_MW']).tail(72)
     if not df_v.empty: ai_bias = df_v['Fact_MW'].sum() / df_v['Forecast_MW'].sum()
-    
     df_h['Date'] = df_h['Time'].dt.date
     daily_stats = df_h.groupby('Date').agg({'Fact_MW':'sum','Forecast_MW':'sum'}).reset_index()
 except: daily_stats = pd.DataFrame()
 
-# 3. КЕРУВАННЯ ТА БРЕНДУВАННЯ
-st.sidebar.markdown(f"""<div style="text-align:center; margin-bottom:20px;">
+# 3. SIDEBAR (КЕРУВАННЯ ТА ЕКСПОРТ)
+st.sidebar.markdown(f"""
+<div style="text-align:center;">
     <a href="https://www.nzf.com.ua/main.aspx" target="_blank">
-        <img src="https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/nzf_logo.png" style="width:110px; border-radius:15px; border:2px solid rgba(255,255,255,0.1);">
+        <img src="https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/nzf_logo.png" style="width:120px; border-radius:15px;">
     </a>
-    <h3 style='margin-top:10px;'>SkyGrid: Solar AI</h3>
-    <p style='color:gray; font-size:12px;'>v14.6 | Нікополь NZF</p>
-</div>""", unsafe_allow_html=True)
+    <h3 style='margin-bottom:0;'>SkyGrid Solar AI</h3>
+    <p style='color:gray; font-size:12px;'>v14.8 | Нікополь NZF</p>
+</div>
+""", unsafe_allow_html=True)
 
-st.sidebar.header("⚙️ Керування")
 boost = st.sidebar.slider("Ручна корекція (%)", 50, 300, 100) / 100
 final_bias = ai_bias * boost
 df_f['AI_MW'] = df_f['Rad'] * 11.4 * 0.001 * final_bias
 df_f['Raw_MW'] = df_f['Rad'] * 11.4 * 0.001
 
-# Блок автора (SIDEBAR БОТТОМ)
+# ПІДГОТОВКА EXCEL
+df_p = df_f[df_f['Time'] >= pd.Timestamp(now_ua.date())].head(72)
+output = io.BytesIO()
+with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+    df_p[['Time', 'AI_MW', 'Raw_MW']].to_excel(writer, index=False)
+st.sidebar.download_button("📥 ЗАВАНТАЖИТИ EXCEL ПЛАН", output.getvalue(), f"Solar_Plan_{now_ua.strftime('%d%m')}.xlsx", use_container_width=True)
+
 st.sidebar.markdown("---")
 st.sidebar.markdown("""<div style='text-align:center; color:gray; font-size:11px;'>
-    <p style='margin:0;'><b>Розробка та супровід:</b></p>
-    <p style='margin:2px 0; color:#00ff7f;'>С.О. Колесник (Автоматика та СЕС)</p>
-    <p style='margin:2px 0; color:#1f77b4;'>SkyGrid AI (Алгоритми)</p>
+    <p style='margin:0;'><b>Розробка проєкту:</b></p>
+    <p style='margin:2px 0; color:#00ff7f; font-weight:bold;'>С.О. Колесник</p>
+    <p style='margin:8px 0 2px 0; color:#1f77b4; font-weight:bold;'>SkyGrid AI</p>
 </div>""", unsafe_allow_html=True)
 
-# 4. ІНТЕРФЕЙС
-st.markdown(f"""
-<div style="display:flex; align-items:center; margin-bottom:20px;">
-    <div>
-        <h1 style='margin:0; font-size:32px;'>SkyGrid Solar AI</h1>
-        <p style='margin:0; color:gray;'>Локація: Нікополь • Енергомоніторинг NZF</p>
-    </div>
-</div>
-""", unsafe_allow_html=True)
-
+# 4. ГОЛОВНИЙ ЕКРАН
+st.markdown(f"### ☀️ SkyGrid: Прогноз на **{now_ua.strftime('%d.%m.%Y')}**")
 t1, t2 = st.tabs(["📊 АНАЛІТИКА ТА ПРОГНОЗ", "🌦 МЕТЕОЦЕНТР НІКОПОЛЬ"])
 
 with t1:
-    st.markdown(f"#### 📅 Прогноз на сьогодні: **{now_ua.strftime('%d.%m.%Y')}**")
     c1, c2, c3, c4 = st.columns(4)
     s_ai = df_f[df_f['Time'].dt.date == now_ua.date()]['AI_MW'].sum()
     s_raw = df_f[df_f['Time'].dt.date == now_ua.date()]['Raw_MW'].sum()
     
     c1.metric("ПРОГНОЗ AI", f"{s_ai:.1f} MWh", delta=f"{final_bias:.2f}x")
-    c2.metric("ПРОГНОЗ VISUAL CROSSING", f"{s_raw:.1f} MWh")
+    c2.metric("ПРОГНОЗ САЙТУ", f"{s_raw:.1f} MWh")
     c3.metric("БАЗА ДОСВІДУ", f"{exp_hours} год")
     c4.metric("КОЕФІЦІЄНТ AI", f"{ai_bias:.2f}x")
 
-    # Основний графік (З ПРАВИЛЬНИМ ПОРЯДКОМ СТОВПЧИКІВ)
     if not daily_stats.empty:
         fig_d = go.Figure()
-        fig_d.add_trace(go.Bar(x=daily_stats['Date'], y=daily_stats['Forecast_MW'], name="Прогноз сайту", marker_color='gray', opacity=0.5))
+        fig_d.add_trace(go.Bar(x=daily_stats['Date'], y=daily_stats['Forecast_MW'], name="Сайт", marker_color='gray', opacity=0.4))
         fig_d.add_trace(go.Bar(x=daily_stats['Date'], y=daily_stats['Forecast_MW']*final_bias, name="План AI", marker_color='#1f77b4'))
         fig_d.add_trace(go.Bar(x=daily_stats['Date'], y=daily_stats['Fact_MW'], name="Факт АСКОЕ", marker_color='#00ff7f', text=daily_stats['Fact_MW'].round(1), textposition='outside'))
-        fig_d.update_layout(barmode='group', height=350, template="plotly_dark", margin=dict(l=0,r=0,t=30,b=0), legend=dict(orientation="h", y=1.1))
+        fig_d.update_layout(barmode='group', height=380, template="plotly_dark", margin=dict(l=0,r=0,t=30,b=0), legend=dict(orientation="h", y=1.1, x=1, xanchor="right"))
         st.plotly_chart(fig_d, use_container_width=True)
 
-    with st.expander("🧠 AI Training Center (Аналіз похибок)"):
+    with st.expander("🧠 AI Training Center (Теплова карта похибок)"):
         if not df_h.empty:
             df_heat = df_h.dropna(subset=['Fact_MW', 'Forecast_MW']).copy()
             if not df_heat.empty:
@@ -141,36 +134,26 @@ with t1:
                 df_heat['Дата'] = df_heat['Time'].dt.strftime('%d.%m')
                 df_heat['Похибка_МВт'] = df_heat['Fact_MW'] - (df_heat['Forecast_MW'] * ai_bias)
                 pivot = df_heat[(df_heat['Година']>=6) & (df_heat['Година']<=19)].pivot(index='Дата', columns='Година', values='Похибка_МВт')
-                fig_hm = px.imshow(pivot, labels=dict(x="Година доби", y="Дата", color="Похибка (МВт)"), color_continuous_scale="RdBu_r", aspect="auto")
+                fig_hm = px.imshow(pivot, labels=dict(x="Година", y="Дата", color="Δ МВт"), color_continuous_scale="RdBu_r", aspect="auto")
                 fig_hm.update_layout(height=350, template="plotly_dark")
                 st.plotly_chart(fig_hm, use_container_width=True)
 
 with t2:
     st.subheader("🌦 Прогноз погоди: Нікополь (10 днів)")
     if day_forecast:
-        # Попередження
         for d in day_forecast[:3]:
-            if d['Вітер'] > 12: st.error(f"🚩 **{d['Дата']}**: Увага! Сильний вітер {d['Вітер']:.1f} м/с")
+            if d['Вітер'] > 12: st.error(f"🚩 **{d['Дата']}**: Сильний вітер {d['Вітер']:.1f} м/с!")
 
-        # Плиточки
         st.markdown("<br>", unsafe_allow_html=True)
         def get_icon(name):
-            icons = {"rain": "🌧️", "cloudy": "☁️", "partly-cloudy-day": "⛅", "clear-day": "☀️", "wind": "💨", "snow": "❄️"}
+            icons = {"rain": "🌧️", "cloudy": "☁️", "partly-cloudy-day": "⛅", "clear-day": "☀️", "wind": "💨"}
             return icons.get(name, "🌡️")
 
         cols = st.columns(len(day_forecast))
         for i, d in enumerate(day_forecast):
             with cols[i]:
-                # Підсвітка критичних днів (Вітер > 12)
-                bg_color = "rgba(255, 75, 75, 0.2)" if d['Вітер'] > 12 else "rgba(255, 255, 255, 0.05)"
-                border_color = "rgba(255, 75, 75, 0.5)" if d['Вітер'] > 12 else "rgba(255, 255, 255, 0.1)"
-                st.markdown(f"""
-                <div style='background:{bg_color}; padding:10px; border-radius:12px; text-align:center; border:1px solid {border_color};'>
-                    <p style='margin:0; font-size:12px; color:gray;'>{d['Дата']}</p>
-                    <p style='margin:5px 0; font-size:25px;'>{get_icon(d['Icon'])}</p>
-                    <p style='margin:0; font-weight:bold; font-size:16px;'>{d['Макс']:.0f}°</p>
-                    <p style='margin:0; font-size:11px; color:#00d4ff;'>{d['Вітер']:.0f} м/с</p>
-                </div>""", unsafe_allow_html=True)
+                bg = "rgba(255, 75, 75, 0.15)" if d['Вітер'] > 12 else "rgba(255, 255, 255, 0.05)"
+                st.markdown(f"""<div style='background:{bg}; padding:10px; border-radius:12px; text-align:center; border:1px solid rgba(255,255,255,0.1);'><p style='margin:0; font-size:12px; color:gray;'>{d['Дата']}</p><p style='margin:5px 0; font-size:25px;'>{get_icon(d['Icon'])}</p><p style='margin:0; font-weight:bold;'>{d['Макс']:.0f}°</p><p style='margin:0; font-size:11px; color:#00d4ff;'>{d['Вітер']:.0f} м/с</p></div>""", unsafe_allow_html=True)
 
         st.markdown("---")
         df_10 = pd.DataFrame(day_forecast)
@@ -179,7 +162,7 @@ with t2:
             st.dataframe(df_10[['Дата', 'Умови', 'Мін', 'Макс', 'Опади', 'Вітер']], hide_index=True, use_container_width=True)
         with c_graph:
             fig_w = go.Figure()
-            fig_w.add_trace(go.Bar(x=df_10['Дата'], y=df_10['Вітер'], name="Вітер (м/с)", marker_color='#00d4ff'))
-            fig_w.add_trace(go.Scatter(x=df_10['Дата'], y=df_10['Опади'], name="Опади (%)", yaxis="y2", line=dict(color='#ff4b4b')))
+            fig_w.add_trace(go.Bar(x=df_10['Дата'], y=df_10['Вітер'], name="Вітер", marker_color='#00d4ff'))
+            fig_w.add_trace(go.Scatter(x=df_10['Дата'], y=df_10['Опади'], name="Опади %", yaxis="y2", line=dict(color='#ff4b4b')))
             fig_w.update_layout(height=280, template="plotly_dark", yaxis2=dict(overlaying='y', side='right', range=[0,100]), margin=dict(l=0,r=0,t=10,b=0), legend=dict(orientation="h", y=1.1))
             st.plotly_chart(fig_w, use_container_width=True)
