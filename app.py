@@ -108,7 +108,7 @@ with t1:
         fig.update_layout(barmode='group', height=400, template="plotly_dark", margin=dict(l=0,r=0,t=30,b=0), legend=dict(orientation="h", y=1.1, x=1, xanchor="right"))
         st.plotly_chart(fig, use_container_width=True)
 
-    # --- ТЕПЛОВА КАРТА ПОХИБОК (М'ЯКІ КОЛЬОРИ) ---
+    # --- ТЕПЛОВА КАРТА З БІЛИМ ЦЕНТРОМ (0%) ---
     if not df_h_mar.empty:
         st.markdown("### 🌡️ Аналіз погодинних відхилень (Error Heatmap)")
         
@@ -116,29 +116,38 @@ with t1:
         df_hm['Hour'] = df_hm['Time'].dt.hour
         df_hm['Day'] = df_hm['Time'].dt.strftime('%d.%m')
         
-        # Розрахунок відхилення у %
+        # Розрахунок відхилення
         df_hm['Error'] = ((df_hm['Fact_MW'] - (df_hm['Forecast_MW'] * ai_bias)) / (df_hm['Fact_MW'] + 0.1)) * 100
         df_hm['Error'] = df_hm['Error'].clip(-100, 100)
         
         pivot_error = df_hm.pivot(index='Day', columns='Hour', values='Error').fillna(0)
         
-        # Використовуємо м'яку палітру Spectral
+        # Створюємо heatmap з фіксованим центром на 0 (білий колір)
         fig_hp = px.imshow(
             pivot_error,
             labels=dict(x="Година доби", y="Дата", color="Похибка %"),
             x=list(range(24)),
-            color_continuous_scale=px.colors.diverging.Spectral, 
+            # RdBu_r: Синій (позитив), Білий (0), Червоний (негатив)
+            color_continuous_scale='RdBu_r', 
             aspect="auto",
-            template="plotly_dark"
+            template="plotly_dark",
+            zmin=-100, # Мінімальне значення для симетрії
+            zmax=100,  # Максимальне значення для симетрії
         )
         
         fig_hp.update_layout(
             height=400, 
             margin=dict(l=0, r=0, t=10, b=0),
-            coloraxis_colorbar=dict(title="Δ %", ticksuffix="%")
+            coloraxis_colorbar=dict(
+                title="Δ %", 
+                ticksuffix="%",
+                tickvals=[-100, -50, 0, 50, 100]
+            )
         )
         
-        # Покращений hover
+        # Додатково фіксуємо, щоб 0 був точно посередині шкали
+        fig_hp.update_coloraxes(cmid=0)
+        
         fig_hp.update_traces(hovertemplate='Дата: %{y}<br>Година: %{x}<br>Похибка: %{z:.1f}%<extra></extra>')
         
         st.plotly_chart(fig_hp, use_container_width=True)
@@ -149,8 +158,4 @@ with t2:
         for i, d in enumerate(day_forecast):
             with cols[i]:
                 bg = "rgba(255, 75, 75, 0.2)" if float(d['Вітер']) > 12 else "rgba(255, 255, 255, 0.05)"
-                st.markdown(f"<div style='background:{bg}; padding:10px; border-radius:12px; text-align:center; border:1px solid rgba(255,255,255,0.1);'><p style='margin:0; font-size:12px;'>{d['Дата']}</p><p style='font-size:25px;'>☀️</p><p style='margin:0; font-weight:bold;'>{d['Макс']:.0f}°</p><p style='margin:0; font-size:11px; color:#00d4ff;'>{d['Вітер']:.0f} м/с</p></div>", unsafe_allow_html=True)
-        st.dataframe(pd.DataFrame(day_forecast)[['Дата', 'Умови', 'Мін', 'Макс', 'Опади', 'Вітер']], hide_index=True, use_container_width=True)
-
-st.markdown("---")
-st.markdown("<div style='text-align:center; color:gray; font-size:12px;'><b>Розробка:</b> С.О. Колесник & SkyGrid AI • 2026</div>", unsafe_allow_html=True)
+                st.markdown(f"<div style='background:{bg}; padding:10px; border-radius:12px; text-align:center; border:1px solid rgba(255,255,255
