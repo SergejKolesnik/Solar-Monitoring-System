@@ -9,7 +9,7 @@ import pytz
 import io
 
 # 1. КОНФІГУРАЦІЯ
-st.set_page_config(page_title="SkyGrid: Solar AI v14.9", layout="wide")
+st.set_page_config(page_title="SkyGrid: Solar AI v15.0", layout="wide")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 
 if 'weather_cache' not in st.session_state: st.session_state.weather_cache = None
@@ -84,29 +84,30 @@ with col_logo:
     <img src="https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/nzf_logo.png" style="width:100px; border-radius:10px; float:right;">
     </a>""", unsafe_allow_html=True)
 
-# 4. ВКЛАДКИ
+# 4. РОЗРАХУНОК ПОТОЧНИХ ПОКАЗНИКІВ
+df_f['AI_MW'] = df_f['Rad'] * 11.4 * 0.001 * ai_bias
+df_f['Raw_MW'] = df_f['Rad'] * 11.4 * 0.001
+
+s_ai_sum = df_f[df_f['Time'].dt.date == now_ua.date()]['AI_MW'].sum()
+s_raw_sum = df_f[df_f['Time'].dt.date == now_ua.date()]['Raw_MW'].sum()
+
+# 5. ВКЛАДКИ
 t1, t2 = st.tabs(["📊 АНАЛІТИКА ТА ПРОГНОЗ", "🌦 МЕТЕОЦЕНТР НІКОПОЛЬ"])
 
 with t1:
     c1, c2, c3, c4 = st.columns(4)
-    s_ai = df_f[df_f['Time'].dt.date == now_ua.date()]['AI_MW'] = df_f['Rad'] * 11.4 * 0.001 * ai_bias
-    s_ai_sum = df_f[df_f['Time'].dt.date == now_ua.date()]['AI_MW'].sum()
-    s_raw_sum = (df_f[df_f['Time'].dt.date == now_ua.date()]['Rad'] * 11.4 * 0.001).sum()
-    
     c1.metric("ПРОГНОЗ AI", f"{s_ai_sum:.1f} MWh", delta=f"{ai_bias:.2f}x")
     c2.metric("ПРОГНОЗ САЙТУ", f"{s_raw_sum:.1f} MWh")
     c3.metric("БАЗА ДОСВІДУ", f"{exp_hours} год")
     c4.metric("КОЕФІЦІЄНТ AI", f"{ai_bias:.2f}x")
 
-    # --- КНОПКА EXCEL ТЕПЕР ТУТ! ---
+    # --- КНОПКА EXCEL ---
     st.markdown("<br>", unsafe_allow_html=True)
     df_p = df_f[df_f['Time'] >= pd.Timestamp(now_ua.date())].head(72).copy()
-    df_p['План AI (MWh)'] = df_p['Rad'] * 11.4 * 0.001 * ai_bias
-    df_p['Сайт (MWh)'] = df_p['Rad'] * 11.4 * 0.001
     
     excel_io = io.BytesIO()
     with pd.ExcelWriter(excel_io, engine='xlsxwriter') as writer:
-        df_p[['Time', 'План AI (MWh)', 'Сайт (MWh)']].to_excel(writer, index=False)
+        df_p[['Time', 'AI_MW', 'Raw_MW']].rename(columns={'AI_MW': 'План AI (MWh)', 'Raw_MW': 'Сайт (MWh)'}).to_excel(writer, index=False)
     
     st.download_button(
         label="📥 ЗАВАНТАЖИТИ ПЛАН В EXCEL",
@@ -124,6 +125,18 @@ with t1:
         fig_d.update_layout(barmode='group', height=400, template="plotly_dark", margin=dict(l=0,r=0,t=30,b=0), legend=dict(orientation="h", y=1.1, x=1, xanchor="right"))
         st.plotly_chart(fig_d, use_container_width=True)
 
+    with st.expander("🧠 AI Training Center (Теплова карта похибок)"):
+        if not df_h.empty:
+            df_heat = df_h.dropna(subset=['Fact_MW', 'Forecast_MW']).copy()
+            if not df_heat.empty:
+                df_heat['Година'] = df_heat['Time'].dt.hour
+                df_heat['Дата'] = df_heat['Time'].dt.strftime('%d.%m')
+                df_heat['Похибка_МВт'] = df_heat['Fact_MW'] - (df_heat['Forecast_MW'] * ai_bias)
+                pivot = df_heat[(df_heat['Година']>=6) & (df_heat['Година']<=19)].pivot(index='Дата', columns='Година', values='Похибка_МВт')
+                fig_hm = px.imshow(pivot, labels=dict(x="Година", y="Дата", color="Δ МВт"), color_continuous_scale="RdBu_r", aspect="auto")
+                fig_hm.update_layout(height=350, template="plotly_dark")
+                st.plotly_chart(fig_hm, use_container_width=True)
+
 with t2:
     st.subheader("🌦 Прогноз погоди: Нікополь (10 днів)")
     if day_forecast:
@@ -140,8 +153,5 @@ with t2:
         df_10 = pd.DataFrame(day_forecast)
         st.dataframe(df_10[['Дата', 'Умови', 'Мін', 'Макс', 'Опади', 'Вітер']], hide_index=True, use_container_width=True)
 
-# ФУТЕР
 st.markdown("---")
-st.markdown(f"""<div style='text-align:center; color:gray; font-size:12px;'>
-    <b>Розробка:</b> С.О. Колесник & Gemini SkyGrid AI • 2026
-</div>""", unsafe_allow_html=True)
+st.markdown("<div style='text-align:center; color:gray; font-size:12px;'><b>Розробка:</b> С.О. Колесник & SkyGrid AI • 2026</div>", unsafe_allow_html=True)
