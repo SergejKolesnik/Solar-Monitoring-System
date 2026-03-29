@@ -9,7 +9,7 @@ import pytz
 import io
 
 # 1. КОНФІГУРАЦІЯ
-st.set_page_config(page_title="SkyGrid: Solar AI v15.1", layout="wide")
+st.set_page_config(page_title="SkyGrid: Solar AI v15.2", layout="wide")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 
 if 'weather_cache' not in st.session_state: st.session_state.weather_cache = None
@@ -55,7 +55,7 @@ else:
     df_f = df_raw
     st.session_state.weather_cache = (df_raw, day_forecast)
 
-if df_f is None: st.error("🔌 Відновлення системи... Почекайте."); st.stop()
+if df_f is None: st.error("🔌 Система відновлюється... Зачекайте."); st.stop()
 
 now_ua = datetime.now(UA_TZ).replace(tzinfo=None)
 ai_bias, exp_hours = 1.0, 0
@@ -74,7 +74,7 @@ try:
     daily_stats = df_h.groupby('Date').agg({'Fact_MW':'sum','Forecast_MW':'sum'}).reset_index()
 except: daily_stats = pd.DataFrame()
 
-# 3. РОЗРАХУНОК
+# 3. РОЗРАХУНОК AI
 df_f['AI_MW'] = df_f['Rad'] * 11.4 * 0.001 * ai_bias
 df_f['Raw_MW'] = df_f['Rad'] * 11.4 * 0.001
 s_ai_sum = df_f[df_f['Time'].dt.date == now_ua.date()]['AI_MW'].sum()
@@ -83,12 +83,10 @@ s_raw_sum = df_f[df_f['Time'].dt.date == now_ua.date()]['Raw_MW'].sum()
 # 4. ВЕРСТКА ВЕРХУ
 col_h, col_l = st.columns([4, 1])
 with col_h:
-    st.title(f"☀️ SkyGrid Solar AI")
+    st.title("☀️ SkyGrid Solar AI")
     st.caption(f"Прогноз на {now_ua.strftime('%d.%m.%Y')} • Нікополь • NZF")
 with col_l:
-    st.markdown(f"""<a href="https://www.nzf.com.ua/main.aspx" target="_blank">
-    <img src="https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/nzf_logo.png" style="width:100px; border-radius:10px; float:right;">
-    </a>""", unsafe_allow_html=True)
+    st.markdown(f'<a href="https://www.nzf.com.ua/main.aspx" target="_blank"><img src="https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/nzf_logo.png" style="width:100px; border-radius:10px; float:right;"></a>', unsafe_allow_html=True)
 
 t1, t2 = st.tabs(["📊 АНАЛІТИКА ТА ПРОГНОЗ", "🌦 МЕТЕОЦЕНТР НІКОПОЛЬ"])
 
@@ -109,11 +107,24 @@ with t1:
 
     if not daily_stats.empty:
         fig_d = go.Figure()
+        # Послідовність: Сайт, AI, Факт
         fig_d.add_trace(go.Bar(x=daily_stats['Date'], y=daily_stats['Forecast_MW'], name="Сайт", marker_color='gray', opacity=0.4))
         fig_d.add_trace(go.Bar(x=daily_stats['Date'], y=daily_stats['Forecast_MW']*ai_bias, name="План AI", marker_color='#1f77b4'))
         fig_d.add_trace(go.Bar(x=daily_stats['Date'], y=daily_stats['Fact_MW'], name="Факт АСКОЕ", marker_color='#00ff7f', text=daily_stats['Fact_MW'].round(1), textposition='outside'))
         fig_d.update_layout(barmode='group', height=400, template="plotly_dark", margin=dict(l=0,r=0,t=30,b=0), legend=dict(orientation="h", y=1.1, x=1, xanchor="right"))
         st.plotly_chart(fig_d, use_container_width=True)
+
+    with st.expander("🧠 AI Training Center (Теплова карта похибок)"):
+        if not df_h.empty:
+            df_heat = df_h.dropna(subset=['Fact_MW', 'Forecast_MW']).copy()
+            if not df_heat.empty:
+                df_heat['Година'] = df_heat['Time'].dt.hour
+                df_heat['Дата'] = df_heat['Time'].dt.strftime('%d.%m')
+                df_heat['Похибка_МВт'] = df_heat['Fact_MW'] - (df_heat['Forecast_MW'] * ai_bias)
+                pivot = df_heat[(df_heat['Година']>=6) & (df_heat['Година']<=19)].pivot(index='Дата', columns='Година', values='Похибка_МВт')
+                fig_hm = px.imshow(pivot, labels=dict(x="Година", y="Дата", color="Δ МВт"), color_continuous_scale="RdBu_r", aspect="auto")
+                fig_hm.update_layout(height=350, template="plotly_dark")
+                st.plotly_chart(fig_hm, use_container_width=True)
 
 with t2:
     st.subheader("🌦 Прогноз погоди: Нікополь (10 днів)")
@@ -122,12 +133,11 @@ with t2:
             icons = {"rain": "🌧️", "cloudy": "☁️", "partly-cloudy-day": "⛅", "clear-day": "☀️", "wind": "💨", "snow": "❄️"}
             return icons.get(name, "🌡️")
 
-        # ПЛИТОЧКИ
+        # КРАСИВІ ПЛИТОЧКИ
         st.markdown("<br>", unsafe_allow_html=True)
         cols = st.columns(len(day_forecast))
         for i, d in enumerate(day_forecast):
             with cols[i]:
-                # Повертаємо підсвітку критичних днів
                 bg = "rgba(255, 75, 75, 0.2)" if d['Вітер'] > 12 else "rgba(255, 255, 255, 0.05)"
                 border = "rgba(255, 75, 75, 0.5)" if d['Вітер'] > 12 else "rgba(255, 255, 255, 0.1)"
                 st.markdown(f"""
@@ -144,4 +154,4 @@ with t2:
         st.dataframe(df_10[['Дата', 'Умови', 'Мін', 'Макс', 'Опади', 'Вітер']], hide_index=True, use_container_width=True)
 
 st.markdown("---")
-st.markdown("<div style='text-align:center; color:gray; font-size:12px;'><b>Розробка:
+st.markdown("<div style='text-align:center; color:gray; font-size:12px;'><b>Розробка:</b> С.О. Колесник & SkyGrid AI • 2026</div>", unsafe_allow_html=True)
