@@ -8,10 +8,16 @@ from datetime import datetime
 import time
 import pytz
 import io
-from sklearn.ensemble import RandomForestRegressor
 
-# 1. Конфігурація
-st.set_page_config(page_title="SkyGrid Solar AI v16.2", layout="wide")
+# Спроба імпорту моделі
+try:
+    from sklearn.ensemble import RandomForestRegressor
+    SKLEARN_READY = True
+except ImportError:
+    SKLEARN_READY = False
+
+# 1. КОНФІГУРАЦІЯ
+st.set_page_config(page_title="SkyGrid Solar AI v16.4", layout="wide")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 
 @st.cache_data(ttl=3600)
@@ -35,20 +41,21 @@ def fetch_weather():
                     })
             return pd.DataFrame(h_list), "OK"
     except: pass
-    return None, "Error"
+    return None, "Помилка API"
 
 def train_solar_model(df_base):
-    # Визначаємо СТРОГИЙ список ознак
+    if not SKLEARN_READY: return None, None, []
+    # Ознаки для навчання
     features = ['Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb']
     df_train = df_base.dropna(subset=['Fact_MW', 'Forecast_MW']).copy()
     
-    # Перевіряємо наявність колонок у файлі
+    # Вибираємо тільки ті колонки, що є в наявності
     actual_features = [f for f in features if f in df_train.columns]
     
-    if len(df_train) < 10:
+    if len(df_train) < 15: # Мінімум 15 годин досвіду для першого запуску
         return None, None, []
 
-    X = df_train[actual_features].fillna(df_train.mean(numeric_only=True))
+    X = df_train[actual_features].fillna(0)
     y = df_train['Fact_MW']
     
     model = RandomForestRegressor(n_estimators=100, random_state=42)
@@ -57,62 +64,60 @@ def train_solar_model(df_base):
     importance = dict(zip(actual_features, model.feature_importances_))
     return model, importance, actual_features
 
-# --- ЛОГІКА ---
-df_f, status = fetch_weather()
+# --- ОСНОВНА ЛОГІКА ---
+df_f, weather_status = fetch_weather()
 now_ua = datetime.now(UA_TZ).replace(tzinfo=None)
+model_status = "Очікування даних..."
 
 try:
     v_tag = int(time.time() / 60)
     repo_url = f"https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/solar_ai_base.csv?v={v_tag}"
     df_h = pd.read_csv(repo_url)
     
+    # Виправляємо назви колонок якщо треба
+    if 'Clouds' in df_h.columns: df_h = df_h.rename(columns={'Clouds': 'CloudCover'})
+    
     model, importance, model_features = train_solar_model(df_h)
     
     if df_f is not None:
-        # 1. Рахуємо базовий прогноз
+        # Базовий розрахунок (11.4 МВт потужність станції)
         df_f['Forecast_MW'] = df_f['Rad'] * 11.4 * 0.001
         
         if model:
-            # 2. Готуємо дані СУВОРО за списком model_features
-            X_input = df_f.copy()
-            
-            # Переконуємось, що всі потрібні моделі колонки існують
-            for col in model_features:
-                if col not in X_input.columns:
-                    X_input[col] = 0
-            
-            # Відфільтровуємо лише потрібні колонки у правильному порядку
-            X_final = X_input[model_features]
-            
-            # 3. Прогноз AI
-            df_f['AI_MW'] = model.predict(X_final.fillna(0))
-            model_status = "AI Engine Active"
+            X_input = df_f[model_features].fillna(0)
+            df_f['AI_MW'] = model.predict(X_input)
+            model_status = "🤖 AI Модель Активна"
         else:
-            df_f['AI_MW'] = df_f['Forecast_MW']
-            model_status = "Basic Mode (Low Data)"
+            df_f['AI_MW'] = df_f['Forecast_MW'] # План Б
+            model_status = "📈 Накопичення бази (Базовий план)"
 except Exception as e:
-    st.error(f"Помилка: {e}")
-    model_status = "Error"
+    model_status = f"⚠️ Помилка: {str(e)}"
 
 # --- ВІЗУАЛІЗАЦІЯ ---
-st.title("☀️ SkyGrid Solar AI")
-st.caption(f"Статус: {model_status}")
+st.title("☀️ SkyGrid Solar AI v16.4")
+st.caption(f"Статус: {model_status} | Погода: {weather_status}")
 
 if df_f is not None:
-    t1, t2 = st.tabs(["📊 ГРАФІК", "🧠 АНАЛІЗ"])
+    t1, t2 = st.tabs(["📊 ГРАФІК ПРОГНОЗУ", "🧠 АНАЛІТИКА"])
     
     with t1:
-        today_data = df_f[df_f['Time'].dt.date == now_ua.date()]
-        st.metric("ПРОГНОЗ НА СЬОГОДНІ", f"{today_data['AI_MW'].sum():.1f} MWh")
+        today_df = df_f[df_f['Time'].dt.date == now_ua.date()]
+        st.metric("ПРОГНОЗ НА СЬОГОДНІ", f"{today_df['AI_MW'].sum():.1f} MWh")
         
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=df_f['Time'], y=df_f['Forecast_MW'], name="План", line=dict(dash='dash')))
-        fig.add_trace(go.Scatter(x=df_f['Time'], y=df_f['AI_MW'], name="AI Корекція", fill='tozeroy'))
-        fig.update_layout(template="plotly_dark", height=400)
+        fig.add_trace(go.Scatter(x=df_f['Time'], y=df_f['Forecast_MW'], name="Базовий план (Сайт)", line=dict(dash='dash', color='gray')))
+        fig.add_trace(go.Scatter(x=df_f['Time'], y=df_f['AI_MW'], name="AI Корекція", fill='tozeroy', line=dict(color='#00ff7f', width=3)))
+        
+        fig.update_layout(template="plotly_dark", height=450, margin=dict(l=0,r=0,t=20,b=0), legend=dict(orientation="h", y=1.1))
         st.plotly_chart(fig, use_container_width=True)
 
     with t2:
         if 'importance' in locals() and importance:
-            st.write("### Вплив факторів")
-            imp_df = pd.DataFrame(list(importance.items()), columns=['Параметр', 'Вплив']).sort_values('Вплив')
-            st.plotly_chart(px.bar(imp_df, x='Вплив', y='Параметр', orientation='h'))
+            st.subheader("Вплив погодних факторів")
+            imp_df = pd.DataFrame(list(importance.items()), columns=['Фактор', 'Вага']).sort_values('Вага')
+            st.plotly_chart(px.bar(imp_df, x='Вага', y='Фактор', orientation='h', color_discrete_sequence=['#1f77b4']))
+        else:
+            st.info("📊 Аналіз факторів буде доступний після накопичення 15 годин фактичних даних у файлі solar_ai_base.csv")
+
+st.markdown("---")
+st.markdown("<div style='text-align:center; color:gray; font-size:12px;'><b>Розробка:</b> С.О. Колесник & SkyGrid AI</div>", unsafe_allow_html=True)
