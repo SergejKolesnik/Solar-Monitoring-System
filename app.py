@@ -7,7 +7,7 @@ from datetime import datetime
 import time
 import pytz
 import io
-from sklearn.ensemble import RandomForestRegressor
+
 
 # 1. Конфігурація сторінки
 st.set_page_config(page_title="SkyGrid Solar AI v15.5", layout="wide")
