@@ -40,10 +40,10 @@ def fetch_weather():
                     h_list.append({
                         'Time': pd.to_datetime(f"{d['datetime']} {hr['datetime']}"), 
                         'Rad': hr.get('solarradiation', 0), 
-                        'Clouds': hr.get('cloudcover', 0), 
+                        'CloudCover': hr.get('cloudcover', 0), # Уніфіковано назву
                         'Temp': hr.get('temp', 0), 
-                        'WindSpd': hr.get('windspeed', 0),
-                        'Precip': hr.get('precipprob', 0)
+                        'WindSpeed': hr.get('windspeed', 0), # Уніфіковано назву
+                        'PrecipProb': hr.get('precipprob', 0) # Уніфіковано назву
                     })
             return pd.DataFrame(h_list), d_list, "OK"
         return None, None, f"Error: {res.status_code}"
@@ -53,38 +53,28 @@ def fetch_weather():
 # 3. Блок AI Моделювання
 def train_solar_model(df_base):
     """Навчає Random Forest на основі історії відхилень"""
-    # Очищення даних
+    # Очищення даних: беремо тільки там, де є факт і прогноз
     df_train = df_base.dropna(subset=['Fact_MW', 'Forecast_MW']).copy()
     
-    # Спроба знайти потрібні колонки (гнучкий пошук назв)
-    mapping = {
-        'CloudCover': ['CloudCover', 'Clouds', 'cloudcover'],
-        'Temp': ['Temp', 'temp', 'Temperature'],
-        'WindSpeed': ['WindSpeed', 'WindSpd', 'windspeed'],
-        'PrecipProb': ['PrecipProb', 'precipprob', 'Precip']
-    }
+    # Визначаємо ознаки, на яких будемо вчитись
+    features = ['Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb']
     
-    features = ['Forecast_MW']
-    for feat, variants in mapping.items():
-        for v in variants:
-            if v in df_train.columns:
-                df_train[feat] = df_train[v]
-                features.append(feat)
-                break
+    # Перевіряємо, чи всі потрібні колонки є в наявності у файлі CSV
+    available_features = [f for f in features if f in df_train.columns]
     
-    if len(df_train) < 15: # Мінімум 15 годин історії для навчання
+    if len(df_train) < 10: # Мінімальна кількість даних для старту
         return None, None
 
-    # Заповнюємо пропуски середнім, щоб модель не видавала помилку
+    # Заповнюємо пропуски, щоб модель не "падала"
     df_train = df_train.fillna(df_train.mean(numeric_only=True))
 
-    X = df_train[features]
+    X = df_train[available_features]
     y = df_train['Fact_MW']
 
     model = RandomForestRegressor(n_estimators=100, random_state=42)
     model.fit(X, y)
     
-    importance = dict(zip(features, model.feature_importances_))
+    importance = dict(zip(available_features, model.feature_importances_))
     return model, importance
 
 # --- ЛОГІКА ЗАВАНТАЖЕННЯ ---
@@ -102,24 +92,20 @@ try:
     model, importance = train_solar_model(df_h)
     
     if model and df_f is not None:
-        # Підготовка даних для прогнозу
+        # Базовий розрахунок (без коригування)
         df_f['Raw_MW'] = df_f['Rad'] * 11.4 * 0.001
         
-        # Створюємо вхідний масив для моделі з тими ж колонками, на яких вчили
-        # Мапимо колонки прогнозу погоди на колонки моделі
-        X_input = pd.DataFrame({
-            'Forecast_MW': df_f['Raw_MW'],
-            'CloudCover': df_f['Clouds'],
-            'Temp': df_f['Temp'],
-            'WindSpeed': df_f['WindSpd'],
-            'PrecipProb': df_f['Precip']
-        })
+        # Підготовка даних для передбачення (назви мають СТРОГО збігатися з навчанням)
+        X_input = df_f[['Raw_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb']].copy()
+        X_input.columns = ['Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb'] # Перейменування для моделі
         
+        # Запуск передбачення AI
         df_f['AI_MW'] = model.predict(X_input.fillna(0))
         model_status = "ML Engine Active (Random Forest)"
     else:
-        df_f['Raw_MW'] = df_f['Rad'] * 11.4 * 0.001
-        df_f['AI_MW'] = df_f['Raw_MW'] # Fallback
+        if df_f is not None:
+            df_f['Raw_MW'] = df_f['Rad'] * 11.4 * 0.001
+            df_f['AI_MW'] = df_f['Raw_MW'] 
         model_status = "Simple Calculation (Low Data)"
 
 except Exception as e:
@@ -132,6 +118,7 @@ with col_t:
     st.caption(f"Прогноз на {now_ua.strftime('%d.%m.%Y')} • {model_status}")
 
 if df_f is not None:
+    # Сума прогнозу на сьогодні
     s_ai_sum = df_f[df_f['Time'].dt.date == now_ua.date()]['AI_MW'].sum()
     
     t1, t2, t3 = st.tabs(["📊 АНАЛІТИКА", "🌦 МЕТЕОЦЕНТР", "🧠 ПАРАМЕТРИ AI"])
@@ -142,25 +129,28 @@ if df_f is not None:
         c2.metric("СТАТУС AI", "ACTIVE", delta="Machine Learning")
         c3.metric("МЕТЕО", "OK" if status == "OK" else "Error")
 
-        # Графік прогнозу
+        # Основний графік
         df_p = df_f[df_f['Time'] >= pd.Timestamp(now_ua.date())].head(24)
-        fig = px.area(df_p, x='Time', y='AI_MW', title="Погодинний прогноз генерації (AI Коригування)",
-                      color_discrete_sequence=['#00ff7f'])
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=df_p['Time'], y=df_p['Raw_MW'], name="Сирий прогноз", line=dict(dash='dash', color='gray')))
+        fig.add_trace(go.Scatter(x=df_p['Time'], y=df_p['AI_MW'], name="AI Коригування", fill='tozeroy', line=dict(color='#00ff7f')))
+        
+        fig.update_layout(template="plotly_dark", height=400, margin=dict(l=0,r=0,t=30,b=0))
         st.plotly_chart(fig, use_container_width=True)
 
         # Кнопка Excel
         excel_io = io.BytesIO()
         with pd.ExcelWriter(excel_io, engine='xlsxwriter') as writer:
-            df_p[['Time', 'AI_MW', 'Raw_MW', 'Clouds', 'Temp']].to_excel(writer, index=False)
-        st.download_button("📥 Завантажити План (Excel)", excel_io.getvalue(), "Solar_Plan.xlsx", use_container_width=True)
+            df_p.to_excel(writer, index=False)
+        st.download_button("📥 Завантажити Excel", excel_io.getvalue(), "Solar_Plan.xlsx", use_container_width=True)
 
     with t3:
         if 'importance' in locals() and importance:
             st.subheader("Аналіз впливу метеоумов на точність")
             imp_df = pd.DataFrame(list(importance.items()), columns=['Параметр', 'Вплив']).sort_values('Вплив')
-            st.plotly_chart(px.bar(imp_df, x='Вплив', y='Параметр', orientation='h', color='Вплив'))
+            st.plotly_chart(px.bar(imp_df, x='Вплив', y='Параметр', orientation='h', color='Вплив', template="plotly_dark"))
             st.info("Цей графік показує, які параметри погоди модель вважає найважливішими для корекції помилок.")
         else:
             st.warning("Недостатньо історичних даних для аналізу моделі.")
 else:
-    st.error("Помилка завантаження даних погоди.")
+    st.error("Помилка завантаження даних.")
