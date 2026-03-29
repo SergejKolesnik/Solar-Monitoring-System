@@ -125,4 +125,4 @@ if df_f is not None:
                 st.info("💡 Модель тепер враховує годину доби. Це дозволяє розділяти 'ранкові' та 'денні' патерни хмарності.")
 
 st.markdown("---")
-st.markdown("<div style='text-align:center; color:gray; font-size:12px;'><b>Розробка:</b> С.О. Колесник & SkyGrid AI</div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align:center; color:gray; font-size:12px;'><b>Розробка:</b> С.І. Колесник & SkyGrid AI</div>", unsafe_allow_html=True)
