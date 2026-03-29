@@ -22,9 +22,24 @@ def fetch_weather():
             data = res.json()
             h_list, d_list = [], []
             for d in data['days']:
-                d_list.append({'Дата': pd.to_datetime(d['datetime']).strftime('%d.%m'), 'Макс': d.get('tempmax'), 'Мін': d.get('tempmin'), 'Опади': d.get('precipprob'), 'Вітер': d.get('windspeed'), 'Напрямок': d.get('winddir'), 'Умови': d.get('conditions'), 'Icon': d.get('icon')})
+                d_list.append({
+                    'Дата': pd.to_datetime(d['datetime']).strftime('%d.%m'), 
+                    'Макс': d.get('tempmax'), 
+                    'Мін': d.get('tempmin'), 
+                    'Опади': d.get('precipprob'), 
+                    'Вітер': d.get('windspeed'), 
+                    'Напрямок': d.get('winddir'), 
+                    'Умови': d.get('conditions'), 
+                    'Icon': d.get('icon')
+                })
                 for hr in d['hours']:
-                    h_list.append({'Time': pd.to_datetime(f"{d['datetime']} {hr['datetime']}"), 'Rad': hr.get('solarradiation', 0), 'Clouds': hr.get('cloudcover', 0), 'Temp': hr.get('temp', 0), 'WindSpd': hr.get('windspeed', 0)})
+                    h_list.append({
+                        'Time': pd.to_datetime(f"{d['datetime']} {hr['datetime']}"), 
+                        'Rad': hr.get('solarradiation', 0), 
+                        'Clouds': hr.get('cloudcover', 0), 
+                        'Temp': hr.get('temp', 0), 
+                        'WindSpd': hr.get('windspeed', 0)
+                    })
             return pd.DataFrame(h_list), d_list, "OK"
         return None, None, "Error"
     except: return None, None, "Error"
@@ -56,7 +71,7 @@ try:
     daily_stats = daily_stats[(daily_stats['Fact_MW'] > 0) | (daily_stats['Forecast_MW'] > 0)]
 except: pass
 
-# Прогноз AI на сьогодні/майбутнє
+# Прогноз AI
 df_f['AI_MW'] = df_f['Rad'] * 11.4 * 0.001 * ai_bias
 df_f['Raw_MW'] = df_f['Rad'] * 11.4 * 0.001
 s_ai_sum = df_f[df_f['Time'].dt.date == now_ua.date()]['AI_MW'].sum()
@@ -93,29 +108,26 @@ with t1:
         fig.update_layout(barmode='group', height=400, template="plotly_dark", margin=dict(l=0,r=0,t=30,b=0), legend=dict(orientation="h", y=1.1, x=1, xanchor="right"))
         st.plotly_chart(fig, use_container_width=True)
 
-    # --- ТЕПЛОВА КАРТА ПОХИБОК ---
+    # --- ТЕПЛОВА КАРТА ПОХИБОК (М'ЯКІ КОЛЬОРИ) ---
     if not df_h_mar.empty:
         st.markdown("### 🌡️ Аналіз погодинних відхилень (Error Heatmap)")
         
-        # Підготовка даних для матриці
         df_hm = df_h_mar.copy()
         df_hm['Hour'] = df_hm['Time'].dt.hour
         df_hm['Day'] = df_hm['Time'].dt.strftime('%d.%m')
         
-        # Розрахунок відхилення у % (Факт vs Прогноз AI)
-        # Додаємо 0.1 щоб уникнути ділення на нуль вночі
+        # Розрахунок відхилення у %
         df_hm['Error'] = ((df_hm['Fact_MW'] - (df_hm['Forecast_MW'] * ai_bias)) / (df_hm['Fact_MW'] + 0.1)) * 100
-        
-        # Обмежимо похибку від -100% до +100% для кращої колірної шкали
         df_hm['Error'] = df_hm['Error'].clip(-100, 100)
         
         pivot_error = df_hm.pivot(index='Day', columns='Hour', values='Error').fillna(0)
         
+        # Використовуємо м'яку палітру Spectral
         fig_hp = px.imshow(
             pivot_error,
             labels=dict(x="Година доби", y="Дата", color="Похибка %"),
             x=list(range(24)),
-            color_continuous_scale='RdYlGn',  # Червоний (недобор) -> Жовтий -> Зелений (ок)
+            color_continuous_scale=px.colors.diverging.Spectral, 
             aspect="auto",
             template="plotly_dark"
         )
@@ -125,6 +137,9 @@ with t1:
             margin=dict(l=0, r=0, t=10, b=0),
             coloraxis_colorbar=dict(title="Δ %", ticksuffix="%")
         )
+        
+        # Покращений hover
+        fig_hp.update_traces(hovertemplate='Дата: %{y}<br>Година: %{x}<br>Похибка: %{z:.1f}%<extra></extra>')
         
         st.plotly_chart(fig_hp, use_container_width=True)
 
