@@ -10,14 +10,14 @@ import io
 from sklearn.ensemble import RandomForestRegressor
 
 # 1. КОНФІГУРАЦІЯ
-st.set_page_config(page_title="SkyGrid AI v17.4: Full Control", layout="wide")
+st.set_page_config(page_title="SkyGrid AI v17.5: Hourly Ratios", layout="wide")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 
 @st.cache_data(ttl=3600)
 def fetch_weather():
     try:
         api_key = st.secrets["WEATHER_API_KEY"]
-        url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/47.631494,34.348690/next10days?unitGroup=metric&elements=datetime,temp,tempmax,tempmin,cloudcover,solarradiation,windspeed,precipprob,conditions,icon&key={api_key}&contentType=json"
+        url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/47.631494,34.348690/next10days?unitGroup=metric&elements=datetime,temp,tempmax,tempmin,cloudcover,solarradiation,windspeed,winddir,precipprob,conditions,icon&key={api_key}&contentType=json"
         res = requests.get(url, timeout=15)
         if res.status_code == 200:
             data = res.json()
@@ -42,9 +42,10 @@ def fetch_weather():
                         'WindSpeed': hr.get('windspeed', 0),
                         'PrecipProb': hr.get('precipprob', 0)
                     })
-            return pd.DataFrame(h_list), d_list, "OK"
+            df = pd.DataFrame(h_list)
+            return df, d_list, "OK"
     except: pass
-    return None, None, "Помилка API"
+    return None, None, "API Error"
 
 def train_solar_engine(df_base):
     df_base['Time'] = pd.to_datetime(df_base['Time'])
@@ -76,51 +77,59 @@ try:
             df_f['AI_MW'] = model.predict(df_f[features].fillna(0))
             df_f.loc[(df_f['Hour'] < 5) | (df_f['Hour'] > 20), 'AI_MW'] = 0
             df_f['AI_MW'] = df_f['AI_MW'].clip(lower=0)
+            
+            # Розрахунок погодинного коефіцієнта (AI_MW / Forecast_MW)
+            df_f['AI_Ratio'] = (df_f['AI_MW'] / df_f['Forecast_MW']).fillna(0).replace([np.inf, -np.inf], 0)
+            df_f.loc[df_f['Forecast_MW'] < 0.05, 'AI_Ratio'] = 0
+            
             model_status = f"✅ ШІ активний (База: {data_count} год)"
         else:
             df_f['AI_MW'] = df_f['Forecast_MW']
+            df_f['AI_Ratio'] = 1.0
             model_status = f"⏳ Навчання... ({data_count}/20 год)"
 except: model_status = "⚠️ Помилка бази"
 
-# --- ШАПКА ТА ЛОГО ---
-col_title, col_logo = st.columns([4, 1])
-with col_title:
-    st.title("☀️ SkyGrid Solar AI v17.4")
+# --- ШАПКА ---
+col_t, col_l = st.columns([4, 1])
+with col_t:
+    st.title("☀️ SkyGrid Solar AI v17.5")
     st.caption(f"Нікополь • NZF • Стан на {now_ua.strftime('%d.%m.%Y %H:%M')}")
-with col_logo:
+with col_l:
     st.markdown(f'<a href="https://www.nzf.com.ua/main.aspx" target="_blank"><img src="https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/nzf_logo.png" style="width:100px; border-radius:10px; float:right;"></a>', unsafe_allow_html=True)
 
-# --- ВКЛАДКИ ---
-t1, t2, t3, t4 = st.tabs(["📊 ПРОГНОЗ", "🌦 МЕТЕОЦЕНТР", "🧠 НАВЧАННЯ", "📑 БАЗА"])
+t1, t2, t3, t4 = st.tabs(["📊 ПРОГНОЗ ТА КОЕФІЦІЄНТИ", "🌦 МЕТЕОЦЕНТР", "🧠 НАВЧАННЯ", "📑 БАЗА"])
 
 with t1:
-    # МЕТРИКИ
     today_df = df_f[df_f['Time'].dt.date == now_ua.date()]
     c1, c2, c3 = st.columns(3)
     c1.metric("ПРОГНОЗ AI (СЬОГОДНІ)", f"{today_df['AI_MW'].sum():.1f} MWh")
-    c2.metric("ПРОГНОЗ САЙТУ", f"{today_df['Forecast_MW'].sum():.1f} MWh")
+    c2.metric("СЕРЕДНІЙ КОЕФІЦІЄНТ", f"{today_df[today_df['AI_Ratio']>0]['AI_Ratio'].mean():.2f}x")
     c3.metric("СТАТУС МОДЕЛІ", model_status)
 
     # КНОПКА EXCEL
-    st.markdown("<br>", unsafe_allow_html=True)
-    df_excel = df_f[df_f['Time'] >= pd.Timestamp(now_ua.date())].head(72).copy()
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df_excel[['Time', 'AI_MW', 'Forecast_MW']].rename(columns={'AI_MW': 'План AI', 'Forecast_MW': 'Базовий План'}).to_excel(writer, index=False)
-    st.download_button("📥 ЗАВАНТАЖИТИ ПЛАН В EXCEL", output.getvalue(), f"Solar_Plan_{now_ua.strftime('%d%m')}.xlsx", use_container_width=True)
+        df_f[df_f['Time']>=pd.Timestamp(now_ua.date())].head(72)[['Time', 'AI_MW', 'Forecast_MW', 'AI_Ratio']].rename(columns={'AI_MW':'План AI', 'Forecast_MW':'Теорія', 'AI_Ratio':'Коефіцієнт'}).to_excel(writer, index=False)
+    st.download_button("📥 ЗАВАНТАЖИТИ ПЛАН + КОЕФІЦІЄНТИ (EXCEL)", output.getvalue(), f"Solar_Plan_{now_ua.strftime('%d%m')}.xlsx", use_container_width=True)
 
-    # ГРАФІК
-    fig_p = go.Figure()
-    fig_p.add_trace(go.Scatter(x=df_f['Time'], y=df_f['Forecast_MW'], name="Базовий план (Сайт)", line=dict(dash='dot', color='gray')))
-    fig_p.add_trace(go.Scatter(x=df_f['Time'], y=df_f['AI_MW'], name="AI Корекція (Реальний Факт)", fill='tozeroy', line=dict(color='#00ff7f', width=3)))
-    fig_p.update_layout(template="plotly_dark", height=450, margin=dict(l=0,r=0,t=20,b=0), legend=dict(orientation="h", y=1.1, x=1, xanchor="right"))
-    st.plotly_chart(fig_p, use_container_width=True)
+    # ГРАФІК З КОЕФІЦІЄНТОМ
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=df_f['Time'], y=df_f['Forecast_MW'], name="Теорія (Сайт)", line=dict(dash='dot', color='gray')))
+    fig.add_trace(go.Scatter(x=df_f['Time'], y=df_f['AI_MW'], name="План AI", fill='tozeroy', line=dict(color='#00ff7f', width=3)))
+    fig.add_trace(go.Scatter(x=df_f['Time'], y=df_f['AI_Ratio'], name="Коефіцієнт корекції (0-1)", yaxis="y2", line=dict(color='#ffeb3b', width=2)))
+    
+    fig.update_layout(
+        template="plotly_dark", height=500, margin=dict(l=0,r=0,t=20,b=0),
+        yaxis2=dict(title="Коефіцієнт", overlaying='y', side='right', range=[0, 1.2], showgrid=False),
+        legend=dict(orientation="h", y=1.1, x=1, xanchor="right")
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
 with t2:
     if day_forecast:
         st.subheader("Прогноз погоди Нікополь (10 днів)")
         def get_icon(name):
-            icons = {"rain": "🌧️", "cloudy": "☁️", "partly-cloudy-day": "⛅", "clear-day": "☀️", "wind": "💨"}
+            icons = {"rain": "🌧️", "cloudy": "☁️", "partly-cloudy-day": "⛅", "clear-day": "☀️", "wind": "💨", "snow": "❄️"}
             return icons.get(name, "🌡️")
         cols = st.columns(len(day_forecast))
         for i, d in enumerate(day_forecast):
@@ -132,13 +141,13 @@ with t2:
 
 with t3:
     if 'df_h' in locals() and not df_h.empty:
-        st.write("### Останні 3 дні навчання (Факт vs План)")
-        df_recent = df_h.dropna(subset=['Fact_MW']).tail(72)
-        fig_l = go.Figure()
-        fig_l.add_trace(go.Scatter(x=df_recent['Time'], y=df_recent['Forecast_MW'], name="Сайт", line=dict(color='orange')))
-        fig_l.add_trace(go.Scatter(x=df_recent['Time'], y=df_recent['Fact_MW'], name="Факт АСКОЕ", line=dict(color='#00ff7f', width=2)))
-        fig_l.update_layout(template="plotly_dark", height=350)
-        st.plotly_chart(fig_l, use_container_width=True)
+        st.write("### Погодинна карта похибок ШІ")
+        df_h['Ratio'] = (df_h['Fact_MW'] / df_h['Forecast_MW']).fillna(0).clip(0, 2)
+        # Матриця середніх коефіцієнтів по годинах
+        hourly_map = df_h[df_h['Hour'].between(7,19)].groupby('Hour')['Ratio'].mean().reset_index()
+        fig_m = go.Figure(go.Bar(x=hourly_map['Hour'], y=hourly_map['Ratio'], marker_color='#ffeb3b'))
+        fig_m.update_layout(template="plotly_dark", title="Середній реальний коефіцієнт виробітки по годинах (Факт/Теорія)", yaxis_title="Коефіцієнт")
+        st.plotly_chart(fig_m, use_container_width=True)
 
 with t4:
     if 'df_h' in locals(): st.dataframe(df_h.tail(20), use_container_width=True)
