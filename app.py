@@ -42,7 +42,8 @@ def fetch_weather():
                     })
             return pd.DataFrame(h_list), d_list, "OK"
         return None, None, "Error"
-    except: return None, None, "Error"
+    except:
+        return None, None, "Error"
 
 df_f, day_forecast, status = fetch_weather()
 now_ua = datetime.now(UA_TZ).replace(tzinfo=None)
@@ -55,7 +56,8 @@ try:
     repo_url = f"https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/solar_ai_base.csv?v={v_tag}"
     df_h = pd.read_csv(repo_url)
     df_h['Time'] = pd.to_datetime(df_h['Time'])
-    if 'CloudCover' in df_h.columns: df_h = df_h.rename(columns={'CloudCover': 'Clouds'})
+    if 'CloudCover' in df_h.columns: 
+        df_h = df_h.rename(columns={'CloudCover': 'Clouds'})
     
     # Фільтрація за березень 2026
     df_h_mar = df_h[(df_h['Time'].dt.year == 2026) & (df_h['Time'].dt.month == 3)].copy()
@@ -63,3 +65,77 @@ try:
     
     # Розрахунок коефіцієнта похибки за останні 72 записи
     df_v = df_h_mar.dropna(subset=['Fact_MW', 'Forecast_MW']).tail(72)
+    if not df_v.empty: 
+        ai_bias = df_v['Fact_MW'].sum() / df_v['Forecast_MW'].sum()
+    
+    df_h_mar['Date'] = df_h_mar['Time'].dt.date
+    daily_stats = df_h_mar.groupby('Date').agg({'Fact_MW':'sum','Forecast_MW':'sum'}).reset_index()
+    daily_stats = daily_stats[(daily_stats['Fact_MW'] > 0) | (daily_stats['Forecast_MW'] > 0)]
+except Exception as e:
+    st.error(f"Помилка завантаження бази даних: {e}")
+
+# Прогноз AI
+df_f['AI_MW'] = df_f['Rad'] * 11.4 * 0.001 * ai_bias
+df_f['Raw_MW'] = df_f['Rad'] * 11.4 * 0.001
+s_ai_sum = df_f[df_f['Time'].dt.date == now_ua.date()]['AI_MW'].sum()
+
+# ШАПКА ТА ЛОГО
+col_t, col_l = st.columns([4, 1])
+with col_t:
+    st.title("☀️ SkyGrid Solar AI")
+    st.caption(f"Нікополь • NZF • Прогноз на {now_ua.strftime('%d.%m.%Y')}")
+with col_l:
+    st.markdown(f'<a href="https://www.nzf.com.ua/main.aspx" target="_blank"><img src="https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/nzf_logo.png" style="width:100px; border-radius:10px; float:right;"></a>', unsafe_allow_html=True)
+
+t1, t2 = st.tabs(["📊 АНАЛІТИКА", "🌦 МЕТЕОЦЕНТР"])
+
+with t1:
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("ПРОГНОЗ AI", f"{s_ai_sum:.1f} MWh", delta=f"{ai_bias:.2f}x")
+    c2.metric("БАЗА ДОСВІДУ", f"{exp_hours} год")
+    c3.metric("КОЕФІЦІЄНТ", f"{ai_bias:.2f}x")
+    c4.metric("СТАТУС AI", "Active", delta_color="normal")
+    
+    df_p = df_f[df_f['Time'] >= pd.Timestamp(now_ua.date())].head(72).copy()
+    excel_io = io.BytesIO()
+    with pd.ExcelWriter(excel_io, engine='xlsxwriter') as writer:
+        df_p[['Time', 'AI_MW', 'Raw_MW']].to_excel(writer, index=False)
+    st.download_button("📥 EXCEL ПЛАН", excel_io.getvalue(), f"Solar_NZF_{now_ua.strftime('%d%m')}.xlsx", use_container_width=True)
+
+    # Головний графік План/Факт
+    if not daily_stats.empty:
+        fig = go.Figure()
+        fig.add_trace(go.Bar(x=daily_stats['Date'], y=daily_stats['Forecast_MW'], name="Сайт", marker_color='gray', opacity=0.4))
+        fig.add_trace(go.Bar(x=daily_stats['Date'], y=daily_stats['Forecast_MW']*ai_bias, name="План AI", marker_color='#1f77b4'))
+        fig.add_trace(go.Bar(x=daily_stats['Date'], y=daily_stats['Fact_MW'], name="Факт АСКОЕ", marker_color='#00ff7f', text=daily_stats['Fact_MW'].round(1), textposition='outside'))
+        fig.update_layout(barmode='group', height=400, template="plotly_dark", margin=dict(l=0,r=0,t=30,b=0), legend=dict(orientation="h", y=1.1, x=1, xanchor="right"))
+        st.plotly_chart(fig, use_container_width=True)
+
+    # --- ТЕПЛОВА КАРТА З БІЛИМ ЦЕНТРОМ (0%) ---
+    if not df_h_mar.empty:
+        st.markdown("### 🌡️ Аналіз погодинних відхилень (Error Heatmap)")
+        
+        df_hm = df_h_mar.copy()
+        df_hm['Hour'] = df_hm['Time'].dt.hour
+        df_hm['Day'] = df_hm['Time'].dt.strftime('%d.%m')
+        
+        # Розрахунок відхилення
+        df_hm['Error'] = ((df_hm['Fact_MW'] - (df_hm['Forecast_MW'] * ai_bias)) / (df_hm['Fact_MW'] + 0.1)) * 100
+        df_hm['Error'] = df_hm['Error'].clip(-100, 100)
+        
+        pivot_error = df_hm.pivot(index='Day', columns='Hour', values='Error').fillna(0)
+        
+        fig_hp = px.imshow(
+            pivot_error,
+            labels=dict(x="Година доби", y="Дата", color="Похибка %"),
+            x=list(range(24)),
+            color_continuous_scale='RdBu_r', 
+            aspect="auto",
+            template="plotly_dark",
+            zmin=-100, 
+            zmax=100
+        )
+        
+        fig_hp.update_layout(
+            height=400, 
+            margin=
