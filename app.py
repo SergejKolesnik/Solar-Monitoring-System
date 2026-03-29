@@ -8,14 +8,20 @@ import time
 import pytz
 import io
 
-# Конфігурація
+# 1. Конфігурація сторінки
 st.set_page_config(page_title="SkyGrid Solar AI v15.5", layout="wide")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 
 @st.cache_data(ttl=3600)
 def fetch_weather():
-    api_key = st.secrets["WEATHER_API_KEY"]
+    # Безпечне отримання ключа
+    try:
+        api_key = st.secrets["WEATHER_API_KEY"]
+    except KeyError:
+        return None, None, "Missing API Key"
+
     url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/47.631494,34.348690/next10days?unitGroup=metric&elements=datetime,temp,tempmax,tempmin,cloudcover,solarradiation,windspeed,winddir,precipprob,conditions,icon&key={api_key}&contentType=json"
+    
     try:
         res = requests.get(url, timeout=15)
         if res.status_code == 200:
@@ -41,45 +47,53 @@ def fetch_weather():
                         'WindSpd': hr.get('windspeed', 0)
                     })
             return pd.DataFrame(h_list), d_list, "OK"
-        return None, None, "Error"
-    except:
-        return None, None, "Error"
+        return None, None, f"API Error: {res.status_code}"
+    except Exception as e:
+        return None, None, f"Connection Error: {e}"
 
+# Ініціалізація даних
 df_f, day_forecast, status = fetch_weather()
 now_ua = datetime.now(UA_TZ).replace(tzinfo=None)
 ai_bias, exp_hours = 1.0, 0
 daily_stats = pd.DataFrame()
 df_h_mar = pd.DataFrame()
 
+# Завантаження бази даних (GitHub)
 try:
     v_tag = int(time.time() / 60)
     repo_url = f"https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/solar_ai_base.csv?v={v_tag}"
     df_h = pd.read_csv(repo_url)
     df_h['Time'] = pd.to_datetime(df_h['Time'])
+    
     if 'CloudCover' in df_h.columns: 
         df_h = df_h.rename(columns={'CloudCover': 'Clouds'})
     
-    # Фільтрація за березень 2026
+    # Фільтрація за березень 2026 (використовуємо поточний контекст)
     df_h_mar = df_h[(df_h['Time'].dt.year == 2026) & (df_h['Time'].dt.month == 3)].copy()
-    exp_hours = len(df_h_mar.dropna(subset=['Fact_MW']))
     
-    # Розрахунок коефіцієнта похибки за останні 72 записи
-    df_v = df_h_mar.dropna(subset=['Fact_MW', 'Forecast_MW']).tail(72)
-    if not df_v.empty: 
-        ai_bias = df_v['Fact_MW'].sum() / df_v['Forecast_MW'].sum()
-    
-    df_h_mar['Date'] = df_h_mar['Time'].dt.date
-    daily_stats = df_h_mar.groupby('Date').agg({'Fact_MW':'sum','Forecast_MW':'sum'}).reset_index()
-    daily_stats = daily_stats[(daily_stats['Fact_MW'] > 0) | (daily_stats['Forecast_MW'] > 0)]
+    if not df_h_mar.empty:
+        exp_hours = len(df_h_mar.dropna(subset=['Fact_MW']))
+        # Розрахунок коефіцієнта похибки
+        df_v = df_h_mar.dropna(subset=['Fact_MW', 'Forecast_MW']).tail(72)
+        if not df_v.empty and df_v['Forecast_MW'].sum() > 0: 
+            ai_bias = df_v['Fact_MW'].sum() / df_v['Forecast_MW'].sum()
+        
+        df_h_mar['Date'] = df_h_mar['Time'].dt.date
+        daily_stats = df_h_mar.groupby('Date').agg({'Fact_MW':'sum','Forecast_MW':'sum'}).reset_index()
+        daily_stats = daily_stats[(daily_stats['Fact_MW'] > 0) | (daily_stats['Forecast_MW'] > 0)]
 except Exception as e:
-    st.error(f"Помилка завантаження бази даних: {e}")
+    st.warning(f"Дані з GitHub не завантажені: {e}")
 
-# Прогноз AI
-df_f['AI_MW'] = df_f['Rad'] * 11.4 * 0.001 * ai_bias
-df_f['Raw_MW'] = df_f['Rad'] * 11.4 * 0.001
-s_ai_sum = df_f[df_f['Time'].dt.date == now_ua.date()]['AI_MW'].sum()
+# Перевірка чи отримано прогноз погоди перед розрахунками
+if df_f is not None:
+    df_f['AI_MW'] = df_f['Rad'] * 11.4 * 0.001 * ai_bias
+    df_f['Raw_MW'] = df_f['Rad'] * 11.4 * 0.001
+    s_ai_sum = df_f[df_f['Time'].dt.date == now_ua.date()]['AI_MW'].sum()
+else:
+    st.error("Неможливо отримати прогноз погоди. Перевірте WEATHER_API_KEY.")
+    st.stop()
 
-# ШАПКА ТА ЛОГО
+# --- ВІЗУАЛІЗАЦІЯ ---
 col_t, col_l = st.columns([4, 1])
 with col_t:
     st.title("☀️ SkyGrid Solar AI")
@@ -94,15 +108,17 @@ with t1:
     c1.metric("ПРОГНОЗ AI", f"{s_ai_sum:.1f} MWh", delta=f"{ai_bias:.2f}x")
     c2.metric("БАЗА ДОСВІДУ", f"{exp_hours} год")
     c3.metric("КОЕФІЦІЄНТ", f"{ai_bias:.2f}x")
-    c4.metric("СТАТУС AI", "Active", delta_color="normal")
+    c4.metric("СТАТУС AI", "Active" if status == "OK" else "Offline")
     
+    # Підготовка Excel
     df_p = df_f[df_f['Time'] >= pd.Timestamp(now_ua.date())].head(72).copy()
     excel_io = io.BytesIO()
+    # Важливо: ExcelWriter має завершити роботу ДО getvalue()
     with pd.ExcelWriter(excel_io, engine='xlsxwriter') as writer:
         df_p[['Time', 'AI_MW', 'Raw_MW']].to_excel(writer, index=False)
+    
     st.download_button("📥 EXCEL ПЛАН", excel_io.getvalue(), f"Solar_NZF_{now_ua.strftime('%d%m')}.xlsx", use_container_width=True)
 
-    # Головний графік План/Факт
     if not daily_stats.empty:
         fig = go.Figure()
         fig.add_trace(go.Bar(x=daily_stats['Date'], y=daily_stats['Forecast_MW'], name="Сайт", marker_color='gray', opacity=0.4))
@@ -111,15 +127,13 @@ with t1:
         fig.update_layout(barmode='group', height=400, template="plotly_dark", margin=dict(l=0,r=0,t=30,b=0), legend=dict(orientation="h", y=1.1, x=1, xanchor="right"))
         st.plotly_chart(fig, use_container_width=True)
 
-    # --- ТЕПЛОВА КАРТА З БІЛИМ ЦЕНТРОМ (0%) ---
     if not df_h_mar.empty:
         st.markdown("### 🌡️ Аналіз погодинних відхилень (Error Heatmap)")
-        
         df_hm = df_h_mar.copy()
         df_hm['Hour'] = df_hm['Time'].dt.hour
         df_hm['Day'] = df_hm['Time'].dt.strftime('%d.%m')
         
-        # Розрахунок відхилення
+        # Захист від ділення на нуль
         df_hm['Error'] = ((df_hm['Fact_MW'] - (df_hm['Forecast_MW'] * ai_bias)) / (df_hm['Fact_MW'] + 0.1)) * 100
         df_hm['Error'] = df_hm['Error'].clip(-100, 100)
         
@@ -132,10 +146,7 @@ with t1:
             color_continuous_scale='RdBu_r', 
             aspect="auto",
             template="plotly_dark",
-            zmin=-100, 
-            zmax=100
+            zmin=-100, zmax=100
         )
-        
-        fig_hp.update_layout(
-            height=400, 
-            margin=
+        fig_hp.update_layout(height=400, margin=dict(l=0,r=0,t=30,b=0))
+        st.plotly_chart(fig_hp, use_container_width=True)
