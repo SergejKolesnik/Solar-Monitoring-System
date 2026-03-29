@@ -5,3 +5,4 @@ openmeteo-requests
 openpyxl
 plotly
 xlsxwriter
+scikit-learn
