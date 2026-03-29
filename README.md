@@ -1,3 +1,4 @@
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_svg)](https://solar-monitoring-system.streamlit.app/)
 # ☀️ SkyGrid Solar AI: Система прогнозування СЕС (НЗФ)
 
 Проєкт з моніторингу та інтелектуального прогнозування сонячної генерації для Нікопольського феросплавного заводу.
