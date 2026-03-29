@@ -4,14 +4,14 @@ import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 import pytz
 import io
 from sklearn.ensemble import RandomForestRegressor
 
 # 1. КОНФІГУРАЦІЯ
-st.set_page_config(page_title="SkyGrid AI v17.6: Error Heatmap", layout="wide")
+st.set_page_config(page_title="SkyGrid AI v17.7: Multi-Day Forecast", layout="wide")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 
 @st.cache_data(ttl=3600)
@@ -57,21 +57,19 @@ def train_solar_engine(df_base):
     y = df_train['Fact_MW']
     model = RandomForestRegressor(n_estimators=100, max_depth=8, random_state=42)
     model.fit(X, y)
-    
     importance = dict(zip(features, model.feature_importances_))
     return model, importance, len(df_train)
 
 # --- ЛОГІКА ЗАВАНТАЖЕННЯ ---
 df_f, day_forecast, weather_status = fetch_weather()
 now_ua = datetime.now(UA_TZ).replace(tzinfo=None)
+tomorrow_ua = now_ua + timedelta(days=1)
 
 try:
     v_tag = int(time.time() / 60)
     repo_url = f"https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/solar_ai_base.csv?v={v_tag}"
     df_h = pd.read_csv(repo_url)
     if 'Clouds' in df_h.columns: df_h = df_h.rename(columns={'Clouds': 'CloudCover'})
-    
-    # Навчання та отримання важності
     model, importance, data_count = train_solar_engine(df_h)
     
     if df_f is not None:
@@ -81,16 +79,16 @@ try:
             df_f['AI_MW'] = model.predict(df_f[features].fillna(0))
             df_f.loc[(df_f['Hour'] < 5) | (df_f['Hour'] > 20), 'AI_MW'] = 0
             df_f['AI_MW'] = df_f['AI_MW'].clip(lower=0)
-            model_status = f"✅ ШІ активний (База: {data_count} год)"
+            model_status = f"✅ ШІ активний ({data_count} год)"
         else:
             df_f['AI_MW'] = df_f['Forecast_MW']
-            model_status = f"⏳ Навчання... ({data_count}/20 год)"
+            model_status = f"⏳ Навчання... ({data_count}/20)"
 except: model_status = "⚠️ Помилка бази"
 
 # --- ШАПКА ---
 col_t, col_l = st.columns([4, 1])
 with col_t:
-    st.title("☀️ SkyGrid Solar AI v17.6")
+    st.title("☀️ SkyGrid Solar AI v17.7")
     st.caption(f"Нікополь • NZF • Стан на {now_ua.strftime('%d.%m.%Y %H:%M')}")
 with col_l:
     st.markdown(f'<a href="https://www.nzf.com.ua/main.aspx" target="_blank"><img src="https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/nzf_logo.png" style="width:100px; border-radius:10px; float:right;"></a>', unsafe_allow_html=True)
@@ -98,24 +96,34 @@ with col_l:
 t1, t2, t3, t4 = st.tabs(["📊 ПРОГНОЗ", "🌦 МЕТЕОЦЕНТР", "🧠 НАВЧАННЯ", "📑 БАЗА"])
 
 with t1:
+    # МЕТРИКИ СЬОГОДНІ ТА ЗАВТРА
     today_df = df_f[df_f['Time'].dt.date == now_ua.date()]
-    c1, c2, c3 = st.columns(3)
-    c1.metric("ПРОГНОЗ AI (СЬОГОДНІ)", f"{today_df['AI_MW'].sum():.1f} MWh")
-    c2.metric("БАЗОВИЙ ПЛАН (САЙТ)", f"{today_df['Forecast_MW'].sum():.1f} MWh")
-    c3.metric("СТАТУС МОДЕЛІ", model_status)
-
-    # КНОПКА EXCEL
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df_f[df_f['Time']>=pd.Timestamp(now_ua.date())].head(72)[['Time', 'AI_MW', 'Forecast_MW']].rename(columns={'AI_MW':'План AI', 'Forecast_MW':'Базовий План'}).to_excel(writer, index=False)
-    st.download_button("📥 ЗАВАНТАЖИТИ ПЛАН В EXCEL", output.getvalue(), f"Solar_Plan_{now_ua.strftime('%d%m')}.xlsx", use_container_width=True)
-
-    # ЧИСТИЙ ГРАФІК (БЕЗ ЖОВТОЇ ЛІНІЇ)
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df_f['Time'], y=df_f['Forecast_MW'], name="Теорія (Сайт)", line=dict(dash='dot', color='gray')))
-    fig.add_trace(go.Scatter(x=df_f['Time'], y=df_f['AI_MW'], name="План AI (Факт)", fill='tozeroy', line=dict(color='#00ff7f', width=3)))
+    tmrw_df = df_f[df_f['Time'].dt.date == tomorrow_ua.date()]
     
-    fig.update_layout(template="plotly_dark", height=500, margin=dict(l=0,r=0,t=20,b=0), legend=dict(orientation="h", y=1.1, x=1, xanchor="right"))
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.subheader(f"📅 Сьогодні ({now_ua.strftime('%d.%m')})")
+        st.metric("План AI", f"{today_df['AI_MW'].sum():.1f} MWh")
+        st.metric("Сайт", f"{today_df['Forecast_MW'].sum():.1f} MWh")
+    with c2:
+        st.subheader(f"📅 Завтра ({tomorrow_ua.strftime('%d.%m')})")
+        st.metric("План AI", f"{tmrw_df['AI_MW'].sum():.1f} MWh")
+        st.metric("Сайт", f"{tmrw_df['Forecast_MW'].sum():.1f} MWh")
+    with c3:
+        st.subheader("⚙️ Статус")
+        st.write(f"**Модель:** {model_status}")
+        # КНОПКА EXCEL
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            df_f[df_f['Time']>=pd.Timestamp(now_ua.date())].head(48)[['Time', 'AI_MW', 'Forecast_MW']].to_excel(writer, index=False)
+        st.download_button("📥 EXCEL ПЛАН (48 год)", output.getvalue(), f"Solar_Plan_{now_ua.strftime('%d%m')}.xlsx", use_container_width=True)
+
+    # ГРАФІК
+    st.write("---")
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=df_f['Time'].head(48), y=df_f['Forecast_MW'].head(48), name="Теорія (Сайт)", line=dict(dash='dot', color='gray')))
+    fig.add_trace(go.Scatter(x=df_f['Time'].head(48), y=df_f['AI_MW'].head(48), name="План AI (Корекція)", fill='tozeroy', line=dict(color='#00ff7f', width=3)))
+    fig.update_layout(template="plotly_dark", height=450, margin=dict(l=0,r=0,t=20,b=0), legend=dict(orientation="h", y=1.1, x=1, xanchor="right"))
     st.plotly_chart(fig, use_container_width=True)
 
 with t2:
@@ -135,35 +143,19 @@ with t2:
 with t3:
     if 'df_h' in locals() and not df_h.empty:
         st.write("### Теплова карта похибок (Δ МВт, Березень 2026)")
-        
-        # Підготовка даних для теплової карти
         df_heat = df_h[(df_h['Time'].dt.year == 2026) & (df_h['Time'].dt.month == 3)].copy()
         if not df_heat.empty:
             df_heat['Година'] = df_heat['Time'].dt.hour
             df_heat['Дата'] = df_heat['Time'].dt.strftime('%d.%m')
-            
-            # Похибка: Факт АСКОЕ - Прогноз ШІ
             df_heat['Error'] = df_heat['Fact_MW'] - df_heat['Forecast_MW']
-            
-            # Фільтруємо денні години
             pivot_data = df_heat[(df_heat['Година'] >= 7) & (df_heat['Година'] <= 19)].pivot(index='Дата', columns='Година', values='Error')
-            
             if not pivot_data.empty:
-                # Побудова теплової карти (Heatmap)
-                fig_hm = px.imshow(
-                    pivot_data,
-                    labels=dict(x="Година доби", y="Дата місяця", color="Δ МВт (Факт-План)"),
-                    color_continuous_scale="RdBu_r", # Білий - ідеал, Червоний - Факт>План, Синій - Факт<План
-                    aspect="auto"
-                )
+                fig_hm = px.imshow(pivot_data, labels=dict(x="Година", y="Дата", color="Δ МВт"), color_continuous_scale="RdBu_r", aspect="auto")
                 fig_hm.update_layout(template="plotly_dark", height=450, margin=dict(l=0,r=0,t=10,b=0))
                 st.plotly_chart(fig_hm, use_container_width=True)
-                st.info("💡 Червоні зони: АСКОЕ показала вищу генерацію, ніж передбачав ШІ. Сині зони: Реальна генерація була нижчою за прогноз.")
-            else:
-                st.warning("Недостатньо денних даних для побудови карти за березень.")
 
 with t4:
     if 'df_h' in locals(): st.dataframe(df_h.tail(20), use_container_width=True)
 
 st.markdown("---")
-st.markdown("<div style='text-align:center; color:gray; font-size:12px;'><b>Розробка:</b> С.О. Колесник & SkyGrid AI</div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align:center; color:gray; font-size:12px;'><b>Розробка:</b> С.І. Колесник & SkyGrid AI</div>", unsafe_allow_html=True)
