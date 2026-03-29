@@ -33,6 +33,7 @@ df_f, day_forecast, status = fetch_weather()
 now_ua = datetime.now(UA_TZ).replace(tzinfo=None)
 ai_bias, exp_hours = 1.0, 0
 daily_stats = pd.DataFrame()
+df_h_mar = pd.DataFrame()
 
 try:
     v_tag = int(time.time() / 60)
@@ -40,15 +41,22 @@ try:
     df_h = pd.read_csv(repo_url)
     df_h['Time'] = pd.to_datetime(df_h['Time'])
     if 'CloudCover' in df_h.columns: df_h = df_h.rename(columns={'CloudCover': 'Clouds'})
+    
+    # Фільтрація за березень 2026
     df_h_mar = df_h[(df_h['Time'].dt.year == 2026) & (df_h['Time'].dt.month == 3)].copy()
     exp_hours = len(df_h_mar.dropna(subset=['Fact_MW']))
+    
+    # Розрахунок коефіцієнта похибки за останні 72 записи
     df_v = df_h_mar.dropna(subset=['Fact_MW', 'Forecast_MW']).tail(72)
-    if not df_v.empty: ai_bias = df_v['Fact_MW'].sum() / df_v['Forecast_MW'].sum()
+    if not df_v.empty: 
+        ai_bias = df_v['Fact_MW'].sum() / df_v['Forecast_MW'].sum()
+    
     df_h_mar['Date'] = df_h_mar['Time'].dt.date
     daily_stats = df_h_mar.groupby('Date').agg({'Fact_MW':'sum','Forecast_MW':'sum'}).reset_index()
     daily_stats = daily_stats[(daily_stats['Fact_MW'] > 0) | (daily_stats['Forecast_MW'] > 0)]
 except: pass
 
+# Прогноз AI на сьогодні/майбутнє
 df_f['AI_MW'] = df_f['Rad'] * 11.4 * 0.001 * ai_bias
 df_f['Raw_MW'] = df_f['Rad'] * 11.4 * 0.001
 s_ai_sum = df_f[df_f['Time'].dt.date == now_ua.date()]['AI_MW'].sum()
@@ -68,6 +76,7 @@ with t1:
     c1.metric("ПРОГНОЗ AI", f"{s_ai_sum:.1f} MWh", delta=f"{ai_bias:.2f}x")
     c2.metric("БАЗА ДОСВІДУ", f"{exp_hours} год")
     c3.metric("КОЕФІЦІЄНТ", f"{ai_bias:.2f}x")
+    c4.metric("СТАТУС AI", "Active", delta_color="normal")
     
     df_p = df_f[df_f['Time'] >= pd.Timestamp(now_ua.date())].head(72).copy()
     excel_io = io.BytesIO()
@@ -75,6 +84,7 @@ with t1:
         df_p[['Time', 'AI_MW', 'Raw_MW']].to_excel(writer, index=False)
     st.download_button("📥 EXCEL ПЛАН", excel_io.getvalue(), f"Solar_NZF_{now_ua.strftime('%d%m')}.xlsx", use_container_width=True)
 
+    # Головний графік План/Факт
     if not daily_stats.empty:
         fig = go.Figure()
         fig.add_trace(go.Bar(x=daily_stats['Date'], y=daily_stats['Forecast_MW'], name="Сайт", marker_color='gray', opacity=0.4))
@@ -82,6 +92,41 @@ with t1:
         fig.add_trace(go.Bar(x=daily_stats['Date'], y=daily_stats['Fact_MW'], name="Факт АСКОЕ", marker_color='#00ff7f', text=daily_stats['Fact_MW'].round(1), textposition='outside'))
         fig.update_layout(barmode='group', height=400, template="plotly_dark", margin=dict(l=0,r=0,t=30,b=0), legend=dict(orientation="h", y=1.1, x=1, xanchor="right"))
         st.plotly_chart(fig, use_container_width=True)
+
+    # --- ТЕПЛОВА КАРТА ПОХИБОК ---
+    if not df_h_mar.empty:
+        st.markdown("### 🌡️ Аналіз погодинних відхилень (Error Heatmap)")
+        
+        # Підготовка даних для матриці
+        df_hm = df_h_mar.copy()
+        df_hm['Hour'] = df_hm['Time'].dt.hour
+        df_hm['Day'] = df_hm['Time'].dt.strftime('%d.%m')
+        
+        # Розрахунок відхилення у % (Факт vs Прогноз AI)
+        # Додаємо 0.1 щоб уникнути ділення на нуль вночі
+        df_hm['Error'] = ((df_hm['Fact_MW'] - (df_hm['Forecast_MW'] * ai_bias)) / (df_hm['Fact_MW'] + 0.1)) * 100
+        
+        # Обмежимо похибку від -100% до +100% для кращої колірної шкали
+        df_hm['Error'] = df_hm['Error'].clip(-100, 100)
+        
+        pivot_error = df_hm.pivot(index='Day', columns='Hour', values='Error').fillna(0)
+        
+        fig_hp = px.imshow(
+            pivot_error,
+            labels=dict(x="Година доби", y="Дата", color="Похибка %"),
+            x=list(range(24)),
+            color_continuous_scale='RdYlGn',  # Червоний (недобор) -> Жовтий -> Зелений (ок)
+            aspect="auto",
+            template="plotly_dark"
+        )
+        
+        fig_hp.update_layout(
+            height=400, 
+            margin=dict(l=0, r=0, t=10, b=0),
+            coloraxis_colorbar=dict(title="Δ %", ticksuffix="%")
+        )
+        
+        st.plotly_chart(fig_hp, use_container_width=True)
 
 with t2:
     if day_forecast:
