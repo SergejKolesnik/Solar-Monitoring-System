@@ -11,7 +11,7 @@ import io
 from sklearn.ensemble import RandomForestRegressor
 
 # 1. КОНФІГУРАЦІЯ
-st.set_page_config(page_title="SkyGrid Solar AI v18.3", layout="wide")
+st.set_page_config(page_title="SkyGrid Solar AI v18.4", layout="wide")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 
 @st.cache_data(ttl=3600)
@@ -27,7 +27,11 @@ def fetch_weather():
                 d_list.append({
                     'Дата': pd.to_datetime(d['datetime']).strftime('%d.%m'),
                     'Макс': d.get('tempmax'),
-                    'Icon': d.get('icon', 'clear-day')
+                    'Вітер': d.get('windspeed'),
+                    'Icon': d.get('icon', 'clear-day'),
+                    'Умови': d.get('conditions'),
+                    'Мін': d.get('tempmin'),
+                    'Опади': d.get('precipprob')
                 })
                 for hr in d['hours']:
                     h_list.append({
@@ -80,20 +84,8 @@ try:
 except: model_status = "⚠️ Помилка бази"
 
 # --- ШАПКА ---
-col_t, col_l = st.columns([4, 1])
-with col_t:
-    st.title("☀️ SkyGrid Solar AI v18.3")
-    st.caption(f"С.І. Колесник • Нікополь • Стан на {now_ua.strftime('%d.%m.%Y %H:%M')}")
-with col_l:
-    # Оновлене посилання на логотип
-    logo_url = "https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/nzf_logo.png"
-    st.markdown(f"""
-        <div style="text-align: right;">
-            <a href="https://www.nzf.com.ua/" target="_blank">
-                <img src="{logo_url}" width="120" style="border-radius: 10px; background: white; padding: 5px; box-shadow: 0 4px 8px rgba(0,0,0,0.2);">
-            </a>
-        </div>
-    """, unsafe_allow_html=True)
+st.title("☀️ SkyGrid Solar AI v18.4")
+st.caption(f"С.І. Колесник • Нікополь • Стан на {now_ua.strftime('%d.%m.%Y %H:%M')}")
 
 t1, t2, t3, t4 = st.tabs(["📊 ПРОГНОЗ 3 ДНІ", "🌦 МЕТЕОЦЕНТР", "🧠 МОНІТОР НАВЧАННЯ", "📑 БАЗА"])
 
@@ -123,13 +115,35 @@ with t1:
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             df_f.head(72)[['Time', 'AI_MW', 'Forecast_MW']].to_excel(writer, index=False)
-        st.download_button("📥 EXCEL ПЛАН (72 год)", output.getvalue(), f"Solar_Plan_18.3.xlsx", use_container_width=True)
+        st.download_button("📥 EXCEL ПЛАН (72 год)", output.getvalue(), f"Solar_Plan_18.4.xlsx", use_container_width=True)
 
     fig_main = go.Figure()
     fig_main.add_trace(go.Scatter(x=df_f['Time'].head(72), y=df_f['Forecast_MW'].head(72), name="Теорія (Сайт)", line=dict(dash='dot', color='gray')))
     fig_main.add_trace(go.Scatter(x=df_f['Time'].head(72), y=df_f['AI_MW'].head(72), name="План AI", fill='tozeroy', line=dict(color='#00ff7f', width=3)))
     fig_main.update_layout(template="plotly_dark", height=400, margin=dict(l=0,r=0,t=10,b=0), legend=dict(orientation="h", y=1.1, x=1, xanchor="right"))
     st.plotly_chart(fig_main, use_container_width=True)
+
+with t2:
+    if day_forecast:
+        st.subheader("Прогноз по Нікополю (10 днів)")
+        def get_icon(name):
+            icons = {"rain": "🌧️", "cloudy": "☁️", "partly-cloudy-day": "⛅", "clear-day": "☀️", "wind": "💨", "snow": "❄️"}
+            return icons.get(name, "🌡️")
+        
+        f_cols = st.columns(len(day_forecast))
+        for i, d in enumerate(day_forecast):
+            with f_cols[i]:
+                bg = "rgba(255, 75, 75, 0.15)" if d['Вітер'] > 12 else "rgba(255, 255, 255, 0.05)"
+                st.markdown(f"""
+                <div style='background:{bg}; padding:10px; border-radius:12px; text-align:center; border:1px solid rgba(255,255,255,0.1);'>
+                    <p style='margin:0; font-size:12px; color:gray;'>{d['Дата']}</p>
+                    <p style='margin:5px 0; font-size:25px;'>{get_icon(d['Icon'])}</p>
+                    <p style='margin:0; font-weight:bold;'>{d['Макс']:.0f}°</p>
+                    <p style='margin:0; font-size:11px; color:#00d4ff;'>{d['Вітер']:.0f} м/с</p>
+                </div>
+                """, unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.dataframe(pd.DataFrame(day_forecast)[['Дата', 'Умови', 'Мін', 'Макс', 'Опади', 'Вітер']], hide_index=True, use_container_width=True)
 
 with t3:
     if 'df_h' in locals() and not df_h.empty:
@@ -153,16 +167,19 @@ with t3:
         fig_battle.update_layout(template="plotly_dark", barmode='group', height=400, legend=dict(orientation="h", y=1.1))
         st.plotly_chart(fig_battle, use_container_width=True)
 
-with t2:
-    if day_forecast:
-        cols = st.columns(len(day_forecast))
-        for i, d in enumerate(day_forecast):
-            with cols[i]:
-                st.markdown(f"<div style='background:rgba(255,255,255,0.05); padding:10px; border-radius:12px; text-align:center; border:1px solid gray;'><p style='margin:0; font-size:12px;'>{d['Дата']}</p><p style='font-size:25px;'>☀️</p><p style='margin:0; font-weight:bold;'>{d['Макс']:.0f}°</p></div>", unsafe_allow_html=True)
+        st.write("---")
+        st.write("### Теплова карта похибок Δ (Факт - План)")
+        df_heat = df_h.tail(168).copy()
+        df_heat['Error'] = df_heat['Fact_MW'] - df_heat['Forecast_MW']
+        df_heat['Дата'] = df_heat['Time'].dt.strftime('%d.%m')
+        pivot = df_heat[df_heat['Hour'].between(7,19)].pivot(index='Дата', columns='Hour', values='Error')
+        fig_hm = px.imshow(pivot, labels=dict(x="Година", y="Дата", color="Δ МВт"), color_continuous_scale="RdBu_r")
+        fig_hm.update_layout(template="plotly_dark", height=400)
+        st.plotly_chart(fig_hm, use_container_width=True)
 
 with t4:
     if 'df_h' in locals():
-        st.dataframe(df_h.tail(20), use_container_width=True)
+        st.dataframe(df_h.tail(50), use_container_width=True)
 
 st.markdown("---")
 st.markdown("<div style='text-align:center; color:gray; font-size:12px;'><b>Розробка:</b> С.І. Колесник & SkyGrid AI • 2026</div>", unsafe_allow_html=True)
