@@ -11,7 +11,7 @@ import io
 from sklearn.ensemble import RandomForestRegressor
 
 # 1. КОНФІГУРАЦІЯ
-st.set_page_config(page_title="SkyGrid AI v18.0: Forecast Battle", layout="wide")
+st.set_page_config(page_title="SkyGrid Solar AI v18.1", layout="wide")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 
 @st.cache_data(ttl=3600)
@@ -27,7 +27,6 @@ def fetch_weather():
                 d_list.append({
                     'Дата': pd.to_datetime(d['datetime']).strftime('%d.%m'),
                     'Макс': d.get('tempmax'),
-                    'Мін': d.get('tempmin'),
                     'Icon': d.get('icon', 'clear-day')
                 })
                 for hr in d['hours']:
@@ -56,7 +55,7 @@ def train_solar_engine(df_base):
     model.fit(X, y)
     return model, df_train, len(df_train)
 
-# --- ЛОГІКА ---
+# --- ЛОГІКА ЗАВАНТАЖЕННЯ ---
 df_f, day_forecast, weather_status = fetch_weather()
 now_ua = datetime.now(UA_TZ).replace(tzinfo=None)
 
@@ -83,7 +82,7 @@ except: model_status = "⚠️ Помилка бази"
 # --- ШАПКА ---
 col_t, col_l = st.columns([4, 1])
 with col_t:
-    st.title("☀️ SkyGrid Solar AI v18.0")
+    st.title("☀️ SkyGrid Solar AI v18.1")
     st.caption(f"С.І. Колесник • Нікополь • Стан на {now_ua.strftime('%d.%m.%Y %H:%M')}")
 with col_l:
     st.markdown(f'<a href="https://www.nzf.com.ua/" target="_blank"><img src="https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/nzf_logo.png" style="width:100px; border-radius:10px; float:right;"></a>', unsafe_allow_html=True)
@@ -91,23 +90,34 @@ with col_l:
 t1, t2, t3, t4 = st.tabs(["📊 ПРОГНОЗ 3 ДНІ", "🌦 МЕТЕОЦЕНТР", "🧠 МОНІТОР НАВЧАННЯ", "📑 БАЗА"])
 
 with t1:
+    # МЕТРИКИ З КНОПКАМИ ДЕТАЛІЗАЦІЇ
     c1, c2, c3, c4 = st.columns([1, 1, 1, 1.2])
     days_list = [now_ua.date(), (now_ua + timedelta(days=1)).date(), (now_ua + timedelta(days=2)).date()]
     labels = ["СЬОГОДНІ", "ЗАВТРА", "ПІСЛЯЗАВТРА"]
     
+    # Функція для діалогового вікна
+    @st.dialog("Погодинна деталізація")
+    def show_details(day_date, data):
+        st.write(f"### Прогноз на {day_date.strftime('%d.%m.%Y')}")
+        df_day = data[data['Time'].dt.date == day_date].copy()
+        df_day['Година'] = df_day['Time'].dt.strftime('%H:00')
+        st.table(df_day[['Година', 'AI_MW', 'Forecast_MW']].rename(columns={'AI_MW': 'План ШІ (МВт)', 'Forecast_MW': 'Сайт (МВт)'}))
+
     for i, col in enumerate([c1, c2, c3]):
         d_data = df_f[df_f['Time'].dt.date == days_list[i]]
         with col:
             st.info(f"📅 {labels[i]} ({days_list[i].strftime('%d.%m')})")
             st.metric("План AI", f"{d_data['AI_MW'].sum():.1f} MWh")
             st.metric("Сайт", f"{d_data['Forecast_MW'].sum():.1f} MWh")
+            if st.button(f"👁️ Детально ({labels[i]})", key=f"btn_{i}"):
+                show_details(days_list[i], df_f)
 
     with c4:
         st.write("**Статус:**", model_status)
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             df_f.head(72)[['Time', 'AI_MW', 'Forecast_MW']].to_excel(writer, index=False)
-        st.download_button("📥 EXCEL ПЛАН (72 год)", output.getvalue(), f"Solar_Plan_3D_{now_ua.strftime('%d%m')}.xlsx", use_container_width=True)
+        st.download_button("📥 EXCEL ПЛАН (72 год)", output.getvalue(), f"Solar_Plan_18.1.xlsx", use_container_width=True)
 
     fig_main = go.Figure()
     fig_main.add_trace(go.Scatter(x=df_f['Time'].head(72), y=df_f['Forecast_MW'].head(72), name="Теорія (Сайт)", line=dict(dash='dot', color='gray')))
@@ -119,14 +129,12 @@ with t3:
     if 'df_h' in locals() and not df_h.empty:
         st.subheader("📊 Порівняння результатів за останні 7 днів (MWh)")
         
-        # Розраховуємо історичний прогноз ШІ для минулих днів
         hist_data = df_h.copy()
         if model:
             features = ['Hour', 'Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb']
             hist_data['AI_MW'] = model.predict(hist_data[features].fillna(0))
             hist_data.loc[(hist_data['Hour'] < 5) | (hist_data['Hour'] > 20), 'AI_MW'] = 0
         
-        # Групуємо по днях
         daily_stats = hist_data.groupby(hist_data['Time'].dt.date).agg({
             'Forecast_MW': 'sum',
             'AI_MW': 'sum' if model else 'mean',
@@ -134,9 +142,9 @@ with t3:
         }).tail(7).reset_index()
 
         fig_battle = go.Figure()
-        fig_battle.add_trace(go.Bar(x=daily_stats['Time'], y=daily_stats['Forecast_MW'], name="Сайт (Очікування)", marker_color='orange'))
-        fig_battle.add_trace(go.Bar(x=daily_stats['Time'], y=daily_stats['AI_MW'], name="План ШІ (Корекція)", marker_color='#1f77b4'))
-        fig_battle.add_trace(go.Bar(x=daily_stats['Time'], y=daily_stats['Fact_MW'], name="Факт АСКОЕ (Реальність)", marker_color='#00ff7f'))
+        fig_battle.add_trace(go.Bar(x=daily_stats['Time'], y=daily_stats['Forecast_MW'], name="Сайт", marker_color='orange'))
+        fig_battle.add_trace(go.Bar(x=daily_stats['Time'], y=daily_stats['AI_MW'], name="План ШІ", marker_color='#1f77b4'))
+        fig_battle.add_trace(go.Bar(x=daily_stats['Time'], y=daily_stats['Fact_MW'], name="Факт АСКОЕ", marker_color='#00ff7f'))
         
         fig_battle.update_layout(template="plotly_dark", barmode='group', height=400, legend=dict(orientation="h", y=1.1))
         st.plotly_chart(fig_battle, use_container_width=True)
@@ -151,19 +159,6 @@ with t3:
         fig_hm.update_layout(template="plotly_dark", height=400)
         st.plotly_chart(fig_hm, use_container_width=True)
 
-with t2:
-    if day_forecast:
-        st.subheader("Прогноз по Нікополю")
-        f_cols = st.columns(len(day_forecast))
-        for i, d in enumerate(day_forecast):
-            with f_cols[i]:
-                st.markdown(f"<div style='background:rgba(255,255,255,0.05); padding:5px; border-radius:8px; text-align:center; border:1px solid gray;'><p style='margin:0; font-size:11px;'>{d['Дата']}</p><p style='font-size:20px; margin:5px 0;'>☀️</p><p style='margin:0; font-weight:bold;'>{d['Макс']:.0f}°</p></div>", unsafe_allow_html=True)
-        st.dataframe(pd.DataFrame(day_forecast), hide_index=True, use_container_width=True)
-
 with t4:
     if 'df_h' in locals():
-        st.write("### Останні записи бази даних")
         st.dataframe(df_h.tail(50), use_container_width=True)
-
-st.markdown("---")
-st.markdown("<div style='text-align:center; color:gray; font-size:12px;'><b>Розробка:</b> С.І. Колесник & SkyGrid AI • 2026</div>", unsafe_allow_html=True)
