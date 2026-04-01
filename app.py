@@ -12,7 +12,7 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import r2_score
 
 # 1. КОНФІГУРАЦІЯ
-st.set_page_config(page_title="SkyGrid Solar AI v18.5", layout="wide")
+st.set_page_config(page_title="SkyGrid Solar AI v18.6", layout="wide")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 
 @st.cache_data(ttl=3600)
@@ -28,11 +28,11 @@ def fetch_weather():
                 d_list.append({
                     'Дата': pd.to_datetime(d['datetime']).strftime('%d.%m'),
                     'Макс': d.get('tempmax'),
-                    'Вітер': d.get('windspeed'),
-                    'Icon': d.get('icon', 'clear-day'),
-                    'Умови': d.get('conditions'),
                     'Мін': d.get('tempmin'),
-                    'Опади': d.get('precipprob')
+                    'Опади': d.get('precipprob'),
+                    'Вітер': d.get('windspeed'),
+                    'Умови': d.get('conditions'),
+                    'Icon': d.get('icon', 'clear-day')
                 })
                 for hr in d['hours']:
                     h_list.append({
@@ -61,7 +61,6 @@ def train_solar_engine(df_base):
     model = RandomForestRegressor(n_estimators=100, max_depth=8, random_state=42)
     model.fit(X, y)
     
-    # Розрахунок точності (R2 score)
     y_pred = model.predict(X)
     accuracy = r2_score(y, y_pred) * 100
     
@@ -85,16 +84,16 @@ try:
             df_f['AI_MW'] = model.predict(df_f[features].fillna(0))
             df_f.loc[(df_f['Hour'] < 5) | (df_f['Hour'] > 20), 'AI_MW'] = 0
             df_f['AI_MW'] = df_f['AI_MW'].clip(lower=0)
-            model_status = f"✅ Модель навчена ({data_count} год)"
+            model_status = f"✅ Модель активна ({data_count} год)"
         else:
             df_f['AI_MW'] = df_f['Forecast_MW']
-            model_status = f"⏳ Накопичення даних..."
+            model_status = f"⏳ Навчання... ({data_count}/24)"
 except: 
-    model_status = "⚠️ База недоступна"
+    model_status = "⚠️ Помилка бази"
     data_count, model_acc = 0, 0
 
 # --- ІНТЕРФЕЙС ---
-st.title("☀️ SkyGrid Solar AI v18.5")
+st.title("☀️ SkyGrid Solar AI v18.6")
 st.caption(f"С.І. Колесник • Нікополь • {now_ua.strftime('%d.%m.%Y %H:%M')}")
 
 t1, t2, t3, t4 = st.tabs(["📊 ПРОГНОЗ 3 ДНІ", "🌦 МЕТЕОЦЕНТР", "🧠 МОНІТОР НАВЧАННЯ", "📑 БАЗА"])
@@ -125,7 +124,7 @@ with t1:
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             df_f.head(72)[['Time', 'AI_MW', 'Forecast_MW']].to_excel(writer, index=False)
-        st.download_button("📥 EXCEL ПЛАН (72 год)", output.getvalue(), f"Solar_Plan_v18.5.xlsx", use_container_width=True)
+        st.download_button("📥 EXCEL ПЛАН (72 год)", output.getvalue(), f"Solar_Plan_v18.6.xlsx", use_container_width=True)
 
     fig_main = go.Figure()
     fig_main.add_trace(go.Scatter(x=df_f['Time'].head(72), y=df_f['Forecast_MW'].head(72), name="Теорія (Сайт)", line=dict(dash='dot', color='gray')))
@@ -153,35 +152,52 @@ with t2:
                 """, unsafe_allow_html=True)
         
         st.markdown("<br>", unsafe_allow_html=True)
-        st.info("ℹ️ Дані надано сервісом [Visual Crossing Weather](https://www.visualcrossing.com/weather-data)")
+        # ПОВЕРНУЛИ ТАБЛИЦЮ
+        st.dataframe(pd.DataFrame(day_forecast)[['Дата', 'Умови', 'Мін', 'Макс', 'Опади', 'Вітер']], hide_index=True, use_container_width=True)
+        st.caption("ℹ️ Дані надано сервісом [Visual Crossing Weather](https://www.visualcrossing.com/weather-data)")
 
 with t3:
     st.subheader("🧠 Стан нейронної мережі")
     m1, m2, m3 = st.columns(3)
-    with m1:
-        st.metric("Обсяг знань", f"{data_count} год", help="Кількість годин з історичними даними в базі")
-    with m2:
-        st.metric("Глибина досвіду", f"{data_count/24:.1f} днів", help="Скільки повних діб ШІ аналізував ситуацію")
-    with m3:
-        st.metric("Точність навчання", f"{model_acc:.1f}%", help="Коефіцієнт відповідності моделі реальним даним (R2)")
+    with m1: st.metric("Обсяг знань", f"{data_count} год")
+    with m2: st.metric("Глибина досвіду", f"{data_count/24:.1f} днів")
+    with m3: st.metric("Точність навчання", f"{model_acc:.1f}%")
     
-    st.write("**Прогрес формування інтелекту:**")
-    progress = min(data_count / 500, 1.0) # 500 годин як еталон первинного навчання
-    st.progress(progress)
+    st.write("**Прогрес формування інтелекту (зрілість бази):**")
+    progress_val = min(data_count / 500, 1.0)
+    # ЗРОБИЛИ ШИРШЕ ЧЕРЕЗ HTML
+    st.markdown(f"""
+        <div style="width: 100%; background-color: #333; border-radius: 10px; height: 25px; margin-bottom: 20px;">
+            <div style="width: {progress_val*100}%; background-color: #00ff7f; height: 100%; border-radius: 10px; transition: width 0.5s;"></div>
+        </div>
+    """, unsafe_allow_html=True)
     
     st.write("---")
     if 'df_h' in locals() and not df_h.empty:
-        # Стовпчики 7 днів
-        daily_stats = df_h.groupby(pd.to_datetime(df_h['Time']).dt.date).agg({'Forecast_MW': 'sum', 'Fact_MW': 'sum'}).tail(7).reset_index()
+        # ПОВЕРНУЛИ 3 СТОВПЧИКИ (7 ДНІВ)
+        st.subheader("📊 Порівняння: Сайт vs План ШІ vs Факт АСКОЕ (7 днів)")
+        hist_data = df_h.copy()
+        if model:
+            feats = ['Hour', 'Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb']
+            hist_data['AI_MW'] = model.predict(hist_data[feats].fillna(0))
+            hist_data.loc[(hist_data['Hour'] < 5) | (hist_data['Hour'] > 20), 'AI_MW'] = 0
+        
+        daily_perf = hist_data.groupby(hist_data['Time'].dt.date).agg({
+            'Forecast_MW': 'sum',
+            'AI_MW': 'sum' if model else 'mean',
+            'Fact_MW': 'sum'
+        }).tail(7).reset_index()
+
         fig_battle = go.Figure()
-        fig_battle.add_trace(go.Bar(x=daily_stats['Time'], y=daily_stats['Forecast_MW'], name="Сайт", marker_color='orange'))
-        fig_battle.add_trace(go.Bar(x=daily_stats['Time'], y=daily_stats['Fact_MW'], name="Факт АСКОЕ", marker_color='#00ff7f'))
-        fig_battle.update_layout(template="plotly_dark", barmode='group', height=350, title="Порівняння Сайт vs Факт (7 днів)")
+        fig_battle.add_trace(go.Bar(x=daily_perf['Time'], y=daily_perf['Forecast_MW'], name="Сайт", marker_color='orange'))
+        fig_battle.add_trace(go.Bar(x=daily_perf['Time'], y=daily_perf['AI_MW'], name="План ШІ", marker_color='#1f77b4'))
+        fig_battle.add_trace(go.Bar(x=daily_perf['Time'], y=daily_perf['Fact_MW'], name="Факт АСКОЕ", marker_color='#00ff7f'))
+        
+        fig_battle.update_layout(template="plotly_dark", barmode='group', height=400, legend=dict(orientation="h", y=1.1))
         st.plotly_chart(fig_battle, use_container_width=True)
 
 with t4:
     if 'df_h' in locals():
-        st.write("### Останні 20 записів бази")
         st.dataframe(df_h.tail(20), use_container_width=True)
 
 st.markdown("---")
