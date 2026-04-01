@@ -1,8 +1,8 @@
 streamlit
 pandas
-matplotlib
-openmeteo-requests
-openpyxl
+numpy
 plotly
-xlsxwriter
+requests
 scikit-learn
+pytz
+xlsxwriter
