@@ -11,7 +11,7 @@ import io
 from sklearn.ensemble import RandomForestRegressor
 
 # 1. КОНФІГУРАЦІЯ
-st.set_page_config(page_title="SkyGrid Solar AI v18.2", layout="wide")
+st.set_page_config(page_title="SkyGrid Solar AI v18.3", layout="wide")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 
 @st.cache_data(ttl=3600)
@@ -61,7 +61,6 @@ now_ua = datetime.now(UA_TZ).replace(tzinfo=None)
 
 try:
     v_tag = int(time.time() / 60)
-    # Оновлене посилання на базу
     repo_url = f"https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/solar_ai_base.csv?v={v_tag}"
     df_h = pd.read_csv(repo_url)
     if 'Clouds' in df_h.columns: df_h = df_h.rename(columns={'Clouds': 'CloudCover'})
@@ -83,15 +82,17 @@ except: model_status = "⚠️ Помилка бази"
 # --- ШАПКА ---
 col_t, col_l = st.columns([4, 1])
 with col_t:
-    st.title("☀️ SkyGrid Solar AI v18.2")
+    st.title("☀️ SkyGrid Solar AI v18.3")
     st.caption(f"С.І. Колесник • Нікополь • Стан на {now_ua.strftime('%d.%m.%Y %H:%M')}")
 with col_l:
-    # Оновлене пряме посилання на логотип з вашого GitHub
+    # Оновлене посилання на логотип
     logo_url = "https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/nzf_logo.png"
     st.markdown(f"""
-        <a href="https://www.nzf.com.ua/" target="_blank">
-            <img src="{logo_url}" alt="НЗФ Лого" style="width:100px; border-radius:10px; float:right; background-color: white; padding: 2px;">
-        </a>
+        <div style="text-align: right;">
+            <a href="https://www.nzf.com.ua/" target="_blank">
+                <img src="{logo_url}" width="120" style="border-radius: 10px; background: white; padding: 5px; box-shadow: 0 4px 8px rgba(0,0,0,0.2);">
+            </a>
+        </div>
     """, unsafe_allow_html=True)
 
 t1, t2, t3, t4 = st.tabs(["📊 ПРОГНОЗ 3 ДНІ", "🌦 МЕТЕОЦЕНТР", "🧠 МОНІТОР НАВЧАННЯ", "📑 БАЗА"])
@@ -122,7 +123,7 @@ with t1:
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             df_f.head(72)[['Time', 'AI_MW', 'Forecast_MW']].to_excel(writer, index=False)
-        st.download_button("📥 EXCEL ПЛАН (72 год)", output.getvalue(), f"Solar_Plan_18.2.xlsx", use_container_width=True)
+        st.download_button("📥 EXCEL ПЛАН (72 год)", output.getvalue(), f"Solar_Plan_18.3.xlsx", use_container_width=True)
 
     fig_main = go.Figure()
     fig_main.add_trace(go.Scatter(x=df_f['Time'].head(72), y=df_f['Forecast_MW'].head(72), name="Теорія (Сайт)", line=dict(dash='dot', color='gray')))
@@ -133,7 +134,6 @@ with t1:
 with t3:
     if 'df_h' in locals() and not df_h.empty:
         st.subheader("📊 Порівняння результатів за останні 7 днів (MWh)")
-        
         hist_data = df_h.copy()
         if model:
             features = ['Hour', 'Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb']
@@ -150,30 +150,19 @@ with t3:
         fig_battle.add_trace(go.Bar(x=daily_stats['Time'], y=daily_stats['Forecast_MW'], name="Сайт", marker_color='orange'))
         fig_battle.add_trace(go.Bar(x=daily_stats['Time'], y=daily_stats['AI_MW'], name="План ШІ", marker_color='#1f77b4'))
         fig_battle.add_trace(go.Bar(x=daily_stats['Time'], y=daily_stats['Fact_MW'], name="Факт АСКОЕ", marker_color='#00ff7f'))
-        
         fig_battle.update_layout(template="plotly_dark", barmode='group', height=400, legend=dict(orientation="h", y=1.1))
         st.plotly_chart(fig_battle, use_container_width=True)
-
-        st.write("---")
-        st.write("### Теплова карта похибок Δ (Факт - План)")
-        df_heat = df_h.tail(168).copy()
-        df_heat['Error'] = df_heat['Fact_MW'] - df_heat['Forecast_MW']
-        df_heat['Дата'] = df_heat['Time'].dt.strftime('%d.%m')
-        pivot = df_heat[df_heat['Hour'].between(7,19)].pivot(index='Дата', columns='Hour', values='Error')
-        fig_hm = px.imshow(pivot, labels=dict(x="Година", y="Дата", color="Δ МВт"), color_continuous_scale="RdBu_r")
-        fig_hm.update_layout(template="plotly_dark", height=400)
-        st.plotly_chart(fig_hm, use_container_width=True)
 
 with t2:
     if day_forecast:
         cols = st.columns(len(day_forecast))
         for i, d in enumerate(day_forecast):
             with cols[i]:
-                st.markdown(f"<div style='background:rgba(255,255,255,0.05); padding:5px; border-radius:8px; text-align:center; border:1px solid gray;'><p style='margin:0; font-size:11px;'>{d['Дата']}</p><p style='font-size:20px; margin:5px 0;'>☀️</p><p style='margin:0; font-weight:bold;'>{d['Макс']:.0f}°</p></div>", unsafe_allow_html=True)
+                st.markdown(f"<div style='background:rgba(255,255,255,0.05); padding:10px; border-radius:12px; text-align:center; border:1px solid gray;'><p style='margin:0; font-size:12px;'>{d['Дата']}</p><p style='font-size:25px;'>☀️</p><p style='margin:0; font-weight:bold;'>{d['Макс']:.0f}°</p></div>", unsafe_allow_html=True)
 
 with t4:
     if 'df_h' in locals():
         st.dataframe(df_h.tail(20), use_container_width=True)
 
 st.markdown("---")
-st.markdown(f"<div style='text-align:center; color:gray; font-size:12px;'><b>Розробка:</b> С.І. Колесник & SkyGrid AI • 2026</div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align:center; color:gray; font-size:12px;'><b>Розробка:</b> С.І. Колесник & SkyGrid AI • 2026</div>", unsafe_allow_html=True)
