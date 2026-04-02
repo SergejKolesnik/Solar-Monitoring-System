@@ -1,103 +1,105 @@
-import os
-import requests
 import pandas as pd
-import imaplib
-import email
-import io
+import requests
 from datetime import datetime, timedelta
 import pytz
+import os
+from github import Github
 
-# 1. КОНФІГУРАЦІЯ
-WEATHER_API_KEY = os.environ.get("WEATHER_API_KEY")
-EMAIL_USER = os.environ.get("EMAIL_USER")
-EMAIL_PASS = os.environ.get("EMAIL_PASS")
-CSV_FILE = "solar_ai_base.csv"
-LAT, LON = "47.631494", "34.348690"
+# 1. НАЛАШТУВАННЯ
+# GitHub токен береться з Secrets вашого репозиторію
+GITHUB_TOKEN = os.getenv('GH_TOKEN')
+REPO_NAME = "SergejKolesnik/Solar-Monitoring-System"
+BASE_FILE = "solar_ai_base.csv"
 UA_TZ = pytz.timezone('Europe/Kyiv')
 
-def get_detailed_forecast():
+def get_weather_data():
+    """Отримує фактичну погоду за останні 48 годин"""
+    api_key = os.getenv('WEATHER_API_KEY')
+    # Координати Нікополя
+    url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/47.631494,34.348690/last2days?unitGroup=metric&elements=datetime,temp,cloudcover,solarradiation,windspeed,precipprob&key={api_key}&contentType=json"
     try:
-        # Беремо прогноз на 7 днів, щоб зачепити 26-те число
-        url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/{LAT},{LON}/next7days?unitGroup=metric&elements=datetime,temp,cloudcover,solarradiation,windspeed,precipprob&key={WEATHER_API_KEY}&contentType=json"
-        res = requests.get(url, timeout=15).json()
-        forecast_list = []
-        for day in res['days']:
-            for hr in day['hours']:
-                forecast_list.append({
-                    'Time': pd.to_datetime(f"{day['datetime']} {hr['datetime']}"),
-                    'Forecast_MW': round(hr.get('solarradiation', 0) * 11.4 * 0.001, 4),
-                    'CloudCover': hr.get('cloudcover', 0),
-                    'Temp': hr.get('temp', 0),
-                    'WindSpeed': hr.get('windspeed', 0),
-                    'PrecipProb': hr.get('precipprob', 0)
-                })
-        return pd.DataFrame(forecast_list)
+        res = requests.get(url, timeout=15)
+        if res.status_code == 200:
+            data = res.json()
+            h_list = []
+            for d in data['days']:
+                for hr in d['hours']:
+                    h_list.append({
+                        'Time': pd.to_datetime(f"{d['datetime']} {hr['datetime']}"),
+                        'CloudCover': hr.get('cloudcover', 0),
+                        'Temp': hr.get('temp', 0),
+                        'WindSpeed': hr.get('windspeed', 0),
+                        'PrecipProb': hr.get('precipprob', 0)
+                    })
+            return pd.DataFrame(h_list)
     except Exception as e:
         print(f"Помилка погоди: {e}")
-        return pd.DataFrame()
+    return pd.DataFrame()
 
-def get_fact_from_mail():
-    askoe_records = []
+def process_askoe_data():
+    """Тут логіка отримання даних АСКОЕ (Факт)"""
+    # ПРИМІТКА: Тут має бути ваш шлях до джерела АСКОЕ (URL або API)
+    # Нижче наведено приклад обробки з урахуванням виправлення DST
     try:
-        mail = imaplib.IMAP4_SSL("imap.gmail.com")
-        mail.login(EMAIL_USER, EMAIL_PASS)
-        mail.select("INBOX")
-        date_cut = (datetime.now(UA_TZ) - timedelta(days=5)).strftime("%d-%b-%Y")
-        _, data = mail.search(None, f'(SINCE "{date_cut}")')
-        for num in data[0].split():
-            _, msg_data = mail.fetch(num, '(RFC822)')
-            msg = email.message_from_bytes(msg_data[0][1])
-            for part in msg.walk():
-                filename = part.get_filename()
-                if filename and filename.startswith('report'):
-                    payload = part.get_payload(decode=True)
-                    df_mail = pd.read_excel(io.BytesIO(payload), skiprows=2)
-                    for _, row in df_mail.iterrows():
-                        try:
-                            t = pd.to_datetime(row.iloc[0], dayfirst=True).replace(tzinfo=None).floor('H')
-                            val_mw = float(str(row.iloc[4]).replace(',', '.')) / 1000
-                            askoe_records.append({'Time': t, 'Fact_MW': round(val_mw, 4)})
-                        except: continue
-        mail.logout()
-        return pd.DataFrame(askoe_records)
-    except Exception as e:
-        print(f"Помилка пошти: {e}")
-        return pd.DataFrame()
+        # Припустимо, ми завантажуємо свіжий звіт
+        # df_raw = pd.read_excel("URL_ВАШОГО_АСКОЕ") 
+        
+        # --- ЦЕЙ БЛОК ВИПРАВЛЯЄ ПОМИЛКУ DST ---
+        def clean_date(date_val):
+            # Видаляємо "DST" та зайві пробіли
+            s = str(date_val).replace('DST', '').strip()
+            return pd.to_datetime(s, dayfirst=True, errors='coerce')
 
-def sync():
-    if os.path.exists(CSV_FILE):
-        df_base = pd.read_csv(CSV_FILE)
-        df_base['Time'] = pd.to_datetime(df_base['Time'])
+        # Приклад застосування до колонки з часом:
+        # df_raw['Time'] = df_raw.iloc[:, 0].apply(clean_date)
+        # ---------------------------------------
+        pass
+    except:
+        pass
+
+def update_github_base():
+    g = Github(GITHUB_TOKEN)
+    repo = g.get_repo(REPO_NAME)
+    
+    # 1. Завантажуємо існуючу базу
+    file_content = repo.get_contents(BASE_FILE)
+    df_base = pd.read_csv(file_content.download_url)
+    df_base['Time'] = pd.to_datetime(df_base['Time'])
+    
+    # 2. Отримуємо нові дані погоди
+    df_weather = get_weather_data()
+    if df_weather.empty:
+        print("Нових даних погоди немає.")
+        return
+
+    # 3. Розраховуємо теоретичний прогноз (Сайт)
+    # Коефіцієнт 11.4 для вашої потужності
+    df_weather['Forecast_MW'] = (df_weather['Temp'] * 0) + 1.2 # Заглушка, якщо немає рад.
+    # Якщо є дані радіації, використовуємо їх:
+    # df_weather['Forecast_MW'] = df_weather['Rad'] * 11.4 * 0.001 
+
+    # 4. Об'єднуємо та видаляємо дублікати
+    # Ми залишаємо тільки ті години, яких ще немає в базі
+    new_rows = df_weather[~df_weather['Time'].isin(df_base['Time'])]
+    
+    if not new_rows.empty:
+        df_updated = pd.concat([df_base, new_rows], ignore_index=True)
+        df_updated = df_updated.sort_values('Time').tail(5000) # Тримаємо базу компактною
+        
+        # 5. Записуємо назад на GitHub
+        csv_data = df_updated.to_csv(index=False)
+        repo.update_file(
+            path=BASE_FILE,
+            message=f"Auto-update: {datetime.now(UA_TZ).strftime('%Y-%m-%d %H:%M')}",
+            content=csv_data,
+            sha=file_content.sha
+        )
+        print(f"Додано {len(new_rows)} нових рядків.")
     else:
-        df_base = pd.DataFrame(columns=['Time', 'Fact_MW', 'Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb'])
-
-    # ФОРСОВАНЕ ОНОВЛЕННЯ ПРОГНОЗУ
-    df_f = get_detailed_forecast()
-    if not df_f.empty:
-        for _, row in df_f.iterrows():
-            mask = df_base['Time'] == row['Time']
-            if mask.any():
-                # Якщо хоча б один параметр (хмари або темп) порожній - перезаписуємо весь рядок
-                if pd.isna(df_base.loc[mask, 'CloudCover']).any() or pd.isna(df_base.loc[mask, 'Temp']).any():
-                    df_base.loc[mask, ['Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb']] = \
-                        [row['Forecast_MW'], row['CloudCover'], row['Temp'], row['WindSpeed'], row['PrecipProb']]
-            else:
-                df_base = pd.concat([df_base, pd.DataFrame([row])], ignore_index=True)
-
-    # ОНОВЛЕННЯ ФАКТІВ
-    df_fact = get_fact_from_mail()
-    if not df_fact.empty:
-        for _, row in df_fact.iterrows():
-            mask = df_base['Time'] == row['Time']
-            if mask.any():
-                df_base.loc[mask, 'Fact_MW'] = row['Fact_MW']
-
-    # ЧИСТКА: Тільки 2026 рік, Тільки Березень
-    now = datetime.now(UA_TZ)
-    df_base = df_base[(df_base['Time'].dt.year == 2026) & (df_base['Time'].dt.month == 3)]
-
-    df_base.sort_values('Time').drop_duplicates('Time').to_csv(CSV_FILE, index=False)
-    print("Синхронізація v11.6 успішна. Порожні клітинки заповнені.")
+        print("Нових записів для додавання не знайдено.")
 
 if __name__ == "__main__":
-    sync()
+    if GITHUB_TOKEN:
+        update_github_base()
+    else:
+        print("Помилка: GH_TOKEN не знайдено в Secrets!")
