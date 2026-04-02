@@ -6,17 +6,21 @@ import os
 # 1. НАЛАШТУВАННЯ
 BASE_FILE = "solar_ai_base.csv"
 
-def clean_date_string(date_val):
-    """Видаляє DST та інші завади з дати"""
+def smart_date_parse(date_val):
+    """Універсальний конвертер дат: чистить DST і розуміє різні формати"""
     if pd.isna(date_val): return date_val
-    # Прибираємо "DST", пробіли та зайві символи
+    # Прибираємо текст "DST", "dst" та зайві пробіли
     s = str(date_val).replace('DST', '').replace('dst', '').strip()
-    return s
+    # Намагаємось розпізнати дату автоматично
+    try:
+        return pd.to_datetime(s, dayfirst=True)
+    except:
+        # Якщо не вийшло (наприклад, формат ISO), пробуємо ще раз без dayfirst
+        return pd.to_datetime(s)
 
 def get_weather_actual():
     """Отримує погоду через API Visual Crossing"""
     api_key = os.getenv('WEATHER_API_KEY')
-    # Нікополь: останні 2 дні
     url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/47.631494,34.348690/last2days?unitGroup=metric&elements=datetime,temp,cloudcover,solarradiation,windspeed,precipprob&key={api_key}&contentType=json"
     
     try:
@@ -43,9 +47,8 @@ def main():
     # 1. Завантажуємо існуючу базу
     if os.path.exists(BASE_FILE):
         df_base = pd.read_csv(BASE_FILE)
-        # Очищуємо дати в базі від DST перед перетворенням
-        df_base['Time'] = df_base['Time'].apply(clean_date_string)
-        df_base['Time'] = pd.to_datetime(df_base['Time'], dayfirst=True)
+        # Використовуємо наш розумний парсер для всієї колонки Time
+        df_base['Time'] = df_base['Time'].apply(smart_date_parse)
     else:
         print("Файл бази не знайдено!")
         return
@@ -58,25 +61,26 @@ def main():
 
     # 3. Розрахунок теоретичного прогнозу (Сайт)
     df_new['Forecast_MW'] = df_new['Rad'] * 11.4 * 0.001
-    df_new['Fact_MW'] = 0.0 # Заглушка для факту, якщо він не підтягнувся
+    if 'Fact_MW' not in df_base.columns: df_base['Fact_MW'] = 0.0
 
     # 4. Об'єднання
-    # Беремо тільки ті години, яких ще немає в базі
-    existing_times = df_base['Time'].unique()
+    existing_times = pd.to_datetime(df_base['Time']).unique()
     to_add = df_new[~df_new['Time'].isin(existing_times)].copy()
 
     if not to_add.empty:
-        # Прибираємо колонку Rad перед збереженням, щоб не міняти структуру CSV
+        # Вирівнюємо колонки
         if 'Rad' in to_add.columns: to_add = to_add.drop(columns=['Rad'])
+        to_add['Fact_MW'] = 0.0
         
         df_final = pd.concat([df_base, to_add], ignore_index=True)
-        df_final = df_final.sort_values('Time').tail(1000) # Обмежуємо розмір
+        # Сортуємо за часом і прибираємо можливі дублікати
+        df_final = df_final.sort_values('Time').drop_duplicates('Time').tail(1000)
         
-        # 5. Збереження у файл (GitHub Action сам зробить push)
+        # 5. Збереження
         df_final.to_csv(BASE_FILE, index=False)
-        print(f"Успішно додано {len(to_add)} нових записів за квітень.")
+        print(f"Додано нові записи за квітень: {len(to_add)}")
     else:
-        print("Нових даних не виявлено.")
+        print("Нових даних для додавання немає.")
 
 if __name__ == "__main__":
     main()
