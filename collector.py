@@ -1,28 +1,25 @@
 import pandas as pd
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime
 import os
+import fnmatch
 
-# 1. НАЛАШТУВАННЯ
+# НАЛАШТУВАННЯ
 BASE_FILE = "solar_ai_base.csv"
 
-def smart_date_parse(date_val):
-    """Універсальний конвертер дат: чистить DST і розуміє різні формати"""
+def clean_date_string(date_val):
+    """Видаляє DST та ігнорує помилки форматів"""
     if pd.isna(date_val): return date_val
-    # Прибираємо текст "DST", "dst" та зайві пробіли
     s = str(date_val).replace('DST', '').replace('dst', '').strip()
-    # Намагаємось розпізнати дату автоматично
     try:
         return pd.to_datetime(s, dayfirst=True)
     except:
-        # Якщо не вийшло (наприклад, формат ISO), пробуємо ще раз без dayfirst
-        return pd.to_datetime(s)
+        return pd.to_datetime(s, errors='coerce')
 
 def get_weather_actual():
-    """Отримує погоду через API Visual Crossing"""
+    """Отримує фактичну погоду за останні 2 дні"""
     api_key = os.getenv('WEATHER_API_KEY')
     url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/47.631494,34.348690/last2days?unitGroup=metric&elements=datetime,temp,cloudcover,solarradiation,windspeed,precipprob&key={api_key}&contentType=json"
-    
     try:
         res = requests.get(url, timeout=15)
         if res.status_code == 200:
@@ -39,48 +36,43 @@ def get_weather_actual():
                         'Rad': hr.get('solarradiation', 0)
                     })
             return pd.DataFrame(h_list)
-    except Exception as e:
-        print(f"Помилка погоди: {e}")
-    return pd.DataFrame()
+    except: return pd.DataFrame()
+
+def process_askoe_from_email(attachments):
+    """Логіка пошуку вкладення за маскою (report*)"""
+    for att in attachments:
+        # ЗАХИСТ: Шукаємо файл за початком назви, ігноруючи номер місяця
+        if fnmatch.fnmatch(att.filename.lower(), 'report*.xlsx'):
+            df_raw = pd.read_excel(att.payload)
+            # Очищення дат у звіті
+            df_raw.iloc[:, 0] = df_raw.iloc[:, 0].apply(clean_date_string)
+            return df_raw
+    return None
 
 def main():
-    # 1. Завантажуємо існуючу базу
     if os.path.exists(BASE_FILE):
         df_base = pd.read_csv(BASE_FILE)
-        # Використовуємо наш розумний парсер для всієї колонки Time
-        df_base['Time'] = df_base['Time'].apply(smart_date_parse)
-    else:
-        print("Файл бази не знайдено!")
-        return
+        df_base['Time'] = df_base['Time'].apply(clean_date_string)
+    else: return
 
-    # 2. Отримуємо свіжу погоду
-    df_new = get_weather_actual()
-    if df_new.empty:
-        print("Не вдалося отримати нові дані погоди.")
-        return
+    df_weather = get_weather_actual()
+    if df_weather.empty: return
 
-    # 3. Розрахунок теоретичного прогнозу (Сайт)
-    df_new['Forecast_MW'] = df_new['Rad'] * 11.4 * 0.001
-    if 'Fact_MW' not in df_base.columns: df_base['Fact_MW'] = 0.0
-
-    # 4. Об'єднання
+    # Розрахунок прогнозу сайту
+    df_weather['Forecast_MW'] = df_weather['Rad'] * 11.4 * 0.001
+    
+    # Об'єднання (тільки нові години)
     existing_times = pd.to_datetime(df_base['Time']).unique()
-    to_add = df_new[~df_new['Time'].isin(existing_times)].copy()
+    to_add = df_weather[~df_weather['Time'].isin(existing_times)].copy()
 
     if not to_add.empty:
-        # Вирівнюємо колонки
         if 'Rad' in to_add.columns: to_add = to_add.drop(columns=['Rad'])
-        to_add['Fact_MW'] = 0.0
+        to_add['Fact_MW'] = 0.0 # Факт додасться при наступній синхронізації пошти
         
         df_final = pd.concat([df_base, to_add], ignore_index=True)
-        # Сортуємо за часом і прибираємо можливі дублікати
-        df_final = df_final.sort_values('Time').drop_duplicates('Time').tail(1000)
-        
-        # 5. Збереження
+        df_final = df_final.sort_values('Time').drop_duplicates('Time').tail(2000)
         df_final.to_csv(BASE_FILE, index=False)
-        print(f"Додано нові записи за квітень: {len(to_add)}")
-    else:
-        print("Нових даних для додавання немає.")
+        print(f"Додано годин: {len(to_add)}")
 
 if __name__ == "__main__":
     main()
