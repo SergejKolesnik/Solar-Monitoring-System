@@ -4,73 +4,58 @@ from datetime import datetime
 import os
 import fnmatch
 
-# НАЛАШТУВАННЯ
 BASE_FILE = "solar_ai_base.csv"
 
-def smart_parse_date(date_val):
-    """Очищує дату від DST та перетворює її в об'єкт Python"""
-    if pd.isna(date_val): return date_val
-    # Видаляємо будь-який текст (DST), залишаючи лише цифри та роздільники
-    s = str(date_val).replace('DST', '').replace('dst', '').strip()
+def clean_datetime(val):
+    """Видаляє DST та виправляє формати для квітня"""
+    s = str(val).replace('DST', '').replace('dst', '').strip()
     try:
+        # Спершу пробуємо стандартний формат
         return pd.to_datetime(s, dayfirst=True)
     except:
+        # Якщо не виходить, пробуємо автоматичне розпізнавання
         return pd.to_datetime(s, errors='coerce')
-
-def get_weather_actual():
-    """Забирає фактичну погоду для заповнення бази"""
-    api_key = os.getenv('WEATHER_API_KEY')
-    url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/47.631494,34.348690/last2days?unitGroup=metric&elements=datetime,temp,cloudcover,solarradiation,windspeed,precipprob&key={api_key}&contentType=json"
-    try:
-        res = requests.get(url, timeout=15)
-        if res.status_code == 200:
-            data = res.json()
-            h_list = []
-            for d in data['days']:
-                for hr in d['hours']:
-                    h_list.append({
-                        'Time': pd.to_datetime(f"{d['datetime']} {hr['datetime']}"),
-                        'CloudCover': hr.get('cloudcover', 0),
-                        'Temp': hr.get('temp', 0),
-                        'WindSpeed': hr.get('windspeed', 0),
-                        'PrecipProb': hr.get('precipprob', 0),
-                        'Rad': hr.get('solarradiation', 0)
-                    })
-            return pd.DataFrame(h_list)
-    except: return pd.DataFrame()
 
 def main():
     if not os.path.exists(BASE_FILE): return
     
-    # 1. Завантаження бази
+    # 1. Читаємо базу
     df_base = pd.read_csv(BASE_FILE)
-    df_base['Time'] = df_base['Time'].apply(smart_parse_date)
+    df_base['Time'] = df_base['Time'].apply(clean_datetime)
     
-    # 2. Отримання погоди
-    df_weather = get_weather_actual()
-    if df_weather.empty: return
+    # 2. Отримуємо погоду (вона зазвичай працює добре)
+    api_key = os.getenv('WEATHER_API_KEY')
+    w_url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/47.631494,34.348690/last2days?unitGroup=metric&elements=datetime,temp,cloudcover,solarradiation&key={api_key}&contentType=json"
     
-    # Розрахунок теоретичного прогнозу
-    df_weather['Forecast_MW'] = df_weather['Rad'] * 11.4 * 0.001
+    try:
+        res = requests.get(w_url, timeout=15).json()
+        weather_rows = []
+        for d in res['days']:
+            for hr in d['hours']:
+                weather_rows.append({
+                    'Time': pd.to_datetime(f"{d['datetime']} {hr['datetime']}"),
+                    'Forecast_MW': hr.get('solarradiation', 0) * 11.4 * 0.001,
+                    'CloudCover': hr.get('cloudcover', 0),
+                    'Temp': hr.get('temp', 0)
+                })
+        df_w = pd.DataFrame(weather_rows)
+    except: return
+
+    # 3. ТЕРМІНОВЕ ПИТАННЯ: ОНОВЛЕННЯ ФАКТУ ТА ПРОГНОЗУ САЙТУ
+    # Ми проходимо по всіх рядках бази, де зараз стоять нулі за квітень
+    # І замінюємо їх на свіжі дані з погодного сервера
+    df_base.set_index('Time', inplace=True)
+    df_w.set_index('Time', inplace=True)
     
-    # 3. Синхронізація з поштою (Захист назви файлу)
-    # ПРИМІТКА: Тут скрипт має шукати файл за маскою 'report*.xlsx'
-    # Це дозволяє ігнорувати зміну номерів місяців (03 -> 04)
+    # Оновлюємо прогноз сайту та метео (якщо в базі були нулі)
+    df_base.update(df_w)
     
-    # 4. Оновлення бази новим рядками
-    existing_times = pd.to_datetime(df_base['Time']).unique()
-    to_add = df_weather[~df_weather['Time'].isin(existing_times)].copy()
-    
-    if not to_add.empty:
-        if 'Rad' in to_add.columns: to_add = to_add.drop(columns=['Rad'])
-        # Тимчасово ставимо 0 для факту, він оновиться з пошти
-        if 'Fact_MW' not in df_base.columns: df_base['Fact_MW'] = 0.0
-        to_add['Fact_MW'] = 0.0
-        
-        df_final = pd.concat([df_base, to_add], ignore_index=True)
-        df_final = df_final.sort_values('Time').drop_duplicates('Time').tail(3000)
-        df_final.to_csv(BASE_FILE, index=False)
-        print(f"Синхронізація успішна. Додано: {len(to_add)} год.")
+    # 4. ЗБЕРЕЖЕННЯ
+    df_base.reset_index(inplace=True)
+    # Захист від дублікатів і сортування
+    df_base = df_base.drop_duplicates(subset=['Time']).sort_values('Time').tail(2000)
+    df_base.to_csv(BASE_FILE, index=False)
+    print("Дані за квітень синхронізовано.")
 
 if __name__ == "__main__":
     main()
