@@ -2,13 +2,12 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-import plotly.express as px
 import requests
 from datetime import datetime, timedelta
 import time, pytz
 
-# 1. КОНФІГУРАЦІЯ
-st.set_page_config(page_title="SkyGrid Solar AI v19.8", layout="wide")
+# 1. НАЛАШТУВАННЯ
+st.set_page_config(page_title="SkyGrid Solar AI v18.0", layout="wide")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 st.markdown("<style>.stApp {background-color: #0E1117; color: white;}</style>", unsafe_allow_html=True)
 
@@ -40,7 +39,7 @@ def fetch_weather():
 df_f, day_forecast = fetch_weather()
 now_ua = datetime.now(UA_TZ).replace(tzinfo=None)
 
-# 2. ДАНІ ТА ШІ
+# 2. ЗАВАНТАЖЕННЯ ДАНИХ ТА ШІ
 try:
     v = int(time.time() / 60)
     url = f"https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/solar_ai_base.csv?v={v}"
@@ -66,20 +65,15 @@ try:
 except:
     df_h, model_acc = pd.DataFrame(), 0
 
-# 3. ІНТЕРФЕЙС (ПОВЕРНЕННЯ СТАРОЇ СТРУКТУРИ)
-st.title("☀️ SkyGrid Solar AI (Стабільна)")
+# 3. ІНТЕРФЕЙС
+st.title("☀️ SkyGrid Solar AI (СТАБІЛЬНА)")
 st.caption(f"АТ «НЗФ» • С.І. Колесник • {now_ua.strftime('%d.%m.%Y %H:%M')}")
 
-# Повертаємо попередження на головну, щоб бачити помилки
-if not df_h.empty:
-    last_t = df_h['Time'].max()
-    diff = (now_ua - last_t).total_seconds() / 3600
-    if diff > 3:
-        st.warning(f"🔔 Дані АСКОЕ затримуються на {int(diff)} год. Останній запис: {last_t}")
+# Пряме визначення вкладок без зайвих списків
+t1, t2, t3, t4 = st.tabs(["📊 МОНІТОРИНГ", "🌦 МЕТЕО", "🧠 ШІ", "📑 БАЗА"])
 
-tabs = st.tabs(["📊 МОНІТОРИНГ", "🌦 МЕТЕО", "🧠 ШІ", "📑 БАЗА"])
-
-with tabs[0]:
+with t1:
+    # Метрики та графік
     c1, c2, c3 = st.columns(3)
     for i, col in enumerate([c1, c2, c3]):
         d_date = (now_ua + timedelta(days=i)).date()
@@ -94,5 +88,10 @@ with tabs[0]:
         fig.add_trace(go.Scatter(x=df_f['Time'].head(72), y=df_f['AI_MW'].head(72), name="План ШІ", fill='tozeroy', line=dict(color='#00ff7f', width=3)))
         st.plotly_chart(fig, use_container_width=True)
 
-with tabs[3]:
-    st.dataframe(df_h.tail(50), use_container_width=True)
+with t3:
+    st.write(f"Точність навчання: {model_acc:.1f}%")
+    if not df_h.empty:
+        st.write(f"Останні дані в базі: {df_h['Time'].max()}")
+
+with t4:
+    st.dataframe(df_h.tail(100), use_container_width=True)
