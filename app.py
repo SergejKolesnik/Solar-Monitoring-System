@@ -7,8 +7,8 @@ import requests
 from datetime import datetime, timedelta
 import time, pytz
 
-# 1. НАЛАШТУВАННЯ
-st.set_page_config(page_title="SkyGrid Solar AI v19.7", layout="wide")
+# 1. КОНФІГУРАЦІЯ
+st.set_page_config(page_title="SkyGrid Solar AI v19.8", layout="wide")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 st.markdown("<style>.stApp {background-color: #0E1117; color: white;}</style>", unsafe_allow_html=True)
 
@@ -40,7 +40,7 @@ def fetch_weather():
 df_f, day_forecast = fetch_weather()
 now_ua = datetime.now(UA_TZ).replace(tzinfo=None)
 
-# 2. ЗАВАНТАЖЕННЯ БАЗИ ТА ШІ
+# 2. ДАНІ ТА ШІ
 try:
     v = int(time.time() / 60)
     url = f"https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/solar_ai_base.csv?v={v}"
@@ -49,7 +49,6 @@ try:
     
     from sklearn.ensemble import RandomForestRegressor
     df_train = df_h.dropna(subset=['Fact_MW', 'Forecast_MW']).copy()
-    df_train = df_train[df_train['Fact_MW'] > 0]
     features = ['Hour', 'Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb']
     
     if len(df_train) > 24:
@@ -63,16 +62,22 @@ try:
         model_acc = 0
         if df_f is not None: 
             df_f['Forecast_MW'] = df_f['Rad'] * 11.4 * 0.001
-            df_f['AI_MW'] = df_f['Forecast_MW'] # Тимчасова заміна
+            df_f['AI_MW'] = df_f['Forecast_MW']
 except:
     df_h, model_acc = pd.DataFrame(), 0
-    if df_f is not None: df_f['AI_MW'] = 0
 
-# 3. ІНТЕРФЕЙС
-st.title("☀️ SkyGrid Solar AI v19.7")
+# 3. ІНТЕРФЕЙС (ПОВЕРНЕННЯ СТАРОЇ СТРУКТУРИ)
+st.title("☀️ SkyGrid Solar AI (Стабільна)")
 st.caption(f"АТ «НЗФ» • С.І. Колесник • {now_ua.strftime('%d.%m.%Y %H:%M')}")
 
-tabs = st.tabs(["📊 МОНІТОРИНГ", "🌦 МЕТЕОЦЕНТР", "🧠 НАВЧАННЯ ШІ", "📑 БАЗА ДАНИХ"])
+# Повертаємо попередження на головну, щоб бачити помилки
+if not df_h.empty:
+    last_t = df_h['Time'].max()
+    diff = (now_ua - last_t).total_seconds() / 3600
+    if diff > 3:
+        st.warning(f"🔔 Дані АСКОЕ затримуються на {int(diff)} год. Останній запис: {last_t}")
+
+tabs = st.tabs(["📊 МОНІТОРИНГ", "🌦 МЕТЕО", "🧠 ШІ", "📑 БАЗА"])
 
 with tabs[0]:
     c1, c2, c3 = st.columns(3)
@@ -81,29 +86,13 @@ with tabs[0]:
         if df_f is not None:
             d_data = df_f[df_f['Time'].dt.date == d_date]
             if not d_data.empty:
-                # БЕЗПЕЧНИЙ РОЗРАХУНОК СУМИ
-                ai_val = d_data['AI_MW'].sum() if 'AI_MW' in d_data.columns else 0.0
-                fc_val = d_data['Forecast_MW'].sum() if 'Forecast_MW' in d_data.columns else 0.0
-                col.metric(f"{d_date.strftime('%d.%m')}", f"{ai_val:.1f} MWh", f"Сайт: {fc_val:.1f}")
+                col.metric(f"{d_date.strftime('%d.%m')}", f"{d_data['AI_MW'].sum():.1f} MWh", f"Точність: {model_acc:.1f}%")
     
     if df_f is not None:
         fig = go.Figure()
-        if 'Forecast_MW' in df_f.columns:
-            fig.add_trace(go.Scatter(x=df_f['Time'].head(72), y=df_f['Forecast_MW'].head(72), name="Сайт", line=dict(dash='dot', color='gray')))
-        if 'AI_MW' in df_f.columns:
-            fig.add_trace(go.Scatter(x=df_f['Time'].head(72), y=df_f['AI_MW'].head(72), name="План ШІ", fill='tozeroy', line=dict(color='#00ff7f', width=3)))
+        fig.add_trace(go.Scatter(x=df_f['Time'].head(72), y=df_f['Forecast_MW'].head(72), name="Сайт", line=dict(dash='dot', color='gray')))
+        fig.add_trace(go.Scatter(x=df_f['Time'].head(72), y=df_f['AI_MW'].head(72), name="План ШІ", fill='tozeroy', line=dict(color='#00ff7f', width=3)))
         st.plotly_chart(fig, use_container_width=True)
-
-with tabs[2]:
-    st.subheader("Діагностика")
-    if model_acc == 0:
-        st.warning("⚠️ Модель ШІ ще не навчена. Показано базовий прогноз.")
-    else:
-        st.success(f"✅ Точність моделі: {model_acc:.1f}%")
-    
-    if not df_h.empty:
-        last_t = df_h['Time'].max()
-        st.write(f"Останні дані АСКОЕ: {last_t}")
 
 with tabs[3]:
     st.dataframe(df_h.tail(50), use_container_width=True)
