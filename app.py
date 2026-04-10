@@ -7,8 +7,8 @@ import requests
 from datetime import datetime, timedelta
 import time, pytz
 
-# 1. КОНФІГУРАЦІЯ СТОРІНКИ
-st.set_page_config(page_title="SkyGrid Solar AI v19.6", layout="wide")
+# 1. НАЛАШТУВАННЯ
+st.set_page_config(page_title="SkyGrid Solar AI v19.7", layout="wide")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 st.markdown("<style>.stApp {background-color: #0E1117; color: white;}</style>", unsafe_allow_html=True)
 
@@ -40,7 +40,7 @@ def fetch_weather():
 df_f, day_forecast = fetch_weather()
 now_ua = datetime.now(UA_TZ).replace(tzinfo=None)
 
-# 2. ПІДГОТОВКА ДАНИХ ТА МОДЕЛЮВАННЯ
+# 2. ЗАВАНТАЖЕННЯ БАЗИ ТА ШІ
 try:
     v = int(time.time() / 60)
     url = f"https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/solar_ai_base.csv?v={v}"
@@ -63,65 +63,47 @@ try:
         model_acc = 0
         if df_f is not None: 
             df_f['Forecast_MW'] = df_f['Rad'] * 11.4 * 0.001
-            df_f['AI_MW'] = df_f['Forecast_MW']
+            df_f['AI_MW'] = df_f['Forecast_MW'] # Тимчасова заміна
 except:
     df_h, model_acc = pd.DataFrame(), 0
+    if df_f is not None: df_f['AI_MW'] = 0
 
-# 3. ПОБУДОВА ІНТЕРФЕЙСУ
-st.title("☀️ SkyGrid Solar AI v19.6")
+# 3. ІНТЕРФЕЙС
+st.title("☀️ SkyGrid Solar AI v19.7")
 st.caption(f"АТ «НЗФ» • С.І. Колесник • {now_ua.strftime('%d.%m.%Y %H:%M')}")
 
-t1, t2, t3, t4 = st.tabs(["📊 МОНІТОРИНГ", "🌦 МЕТЕОЦЕНТР", "🧠 НАВЧАННЯ ШІ", "📑 БАЗА ДАНИХ"])
+tabs = st.tabs(["📊 МОНІТОРИНГ", "🌦 МЕТЕОЦЕНТР", "🧠 НАВЧАННЯ ШІ", "📑 БАЗА ДАНИХ"])
 
-with t1:
-    # Тільки чиста аналітика та графіки
+with tabs[0]:
     c1, c2, c3 = st.columns(3)
     for i, col in enumerate([c1, c2, c3]):
         d_date = (now_ua + timedelta(days=i)).date()
-        d_data = df_f[df_f['Time'].dt.date == d_date] if df_f is not None else pd.DataFrame()
-        if not d_data.empty:
-            col.metric(f"{d_date.strftime('%d.%m')}", f"{d_data['AI_MW'].sum():.1f} MWh", f"Сайт: {d_data['Forecast_MW'].sum():.1f}")
+        if df_f is not None:
+            d_data = df_f[df_f['Time'].dt.date == d_date]
+            if not d_data.empty:
+                # БЕЗПЕЧНИЙ РОЗРАХУНОК СУМИ
+                ai_val = d_data['AI_MW'].sum() if 'AI_MW' in d_data.columns else 0.0
+                fc_val = d_data['Forecast_MW'].sum() if 'Forecast_MW' in d_data.columns else 0.0
+                col.metric(f"{d_date.strftime('%d.%m')}", f"{ai_val:.1f} MWh", f"Сайт: {fc_val:.1f}")
     
     if df_f is not None:
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=df_f['Time'].head(72), y=df_f['Forecast_MW'].head(72), name="Сайт", line=dict(dash='dot', color='gray')))
-        fig.add_trace(go.Scatter(x=df_f['Time'].head(72), y=df_f['AI_MW'].head(72), name="План ШІ", fill='tozeroy', line=dict(color='#00ff7f', width=3)))
+        if 'Forecast_MW' in df_f.columns:
+            fig.add_trace(go.Scatter(x=df_f['Time'].head(72), y=df_f['Forecast_MW'].head(72), name="Сайт", line=dict(dash='dot', color='gray')))
+        if 'AI_MW' in df_f.columns:
+            fig.add_trace(go.Scatter(x=df_f['Time'].head(72), y=df_f['AI_MW'].head(72), name="План ШІ", fill='tozeroy', line=dict(color='#00ff7f', width=3)))
         st.plotly_chart(fig, use_container_width=True)
 
-with t2:
-    if day_forecast:
-        st.dataframe(pd.DataFrame(day_forecast), hide_index=True, use_container_width=True)
-
-with t3:
-    # ТЕХНІЧНИЙ ЦЕНТР: Сюди перенесено всі сповіщення та діагностику
-    st.subheader("Діагностика та аналіз навчання")
+with tabs[2]:
+    st.subheader("Діагностика")
+    if model_acc == 0:
+        st.warning("⚠️ Модель ШІ ще не навчена. Показано базовий прогноз.")
+    else:
+        st.success(f"✅ Точність моделі: {model_acc:.1f}%")
     
-    # 1. Попередження про затримку даних
     if not df_h.empty:
         last_t = df_h['Time'].max()
-        diff = (now_ua - last_t).total_seconds() / 3600
-        if diff > 3:
-            st.warning(f"🔔 Технічна затримка АСКОЕ: {int(diff)} год. Останні дані від {last_t.strftime('%d.%m %H:%M')}")
-        else:
-            st.success(f"✅ Дані АСКОЕ актуальні. Останнє оновлення: {last_t.strftime('%H:%M')}")
-    
-    # 2. Метрика точності
-    st.info(f"Поточна точність прогнозування ШІ: {model_acc:.1f}%")
-    
-    # 3. Теплова карта
-    if not df_h.empty and 'Fact_MW' in df_h.columns:
-        st.write("### 🔥 Карта відхилень (Факт - План ШІ)")
-        hist = df_h.tail(168).copy()
-        try:
-            hist['AI_MW'] = model.predict(hist[features].fillna(0))
-            hist['Error'] = hist['Fact_MW'] - hist['AI_MW']
-            pivot = hist[hist['Hour'].between(7,19)].pivot(index='Time', columns='Hour', values='Error')
-            st.plotly_chart(px.imshow(pivot, color_continuous_scale="RdBu_r", aspect="auto"), use_container_width=True)
-        except:
-            st.write("Аналіз похибок буде доступний після накопичення даних")
+        st.write(f"Останні дані АСКОЕ: {last_t}")
 
-with t4:
-    # Перегляд бази (останні записи зверху)
-    if not df_h.empty:
-        st.write("Останні дані в системі:")
-        st.dataframe(df_h.sort_values('Time', ascending=False).head(100), use_container_width=True)
+with tabs[3]:
+    st.dataframe(df_h.tail(50), use_container_width=True)
