@@ -8,19 +8,21 @@ BASE_FILE = "solar_ai_base.csv"
 START_DATE = "2026-03-23"
 
 def main():
-    # 1. Створюємо сітку часу
+    # 1. Створюємо часову сітку (округлюємо до години)
     end_date = datetime.now().strftime('%Y-%m-%d %H:00:00')
     full_range = pd.date_range(start=START_DATE, end=end_date, freq='h')
     df_main = pd.DataFrame({'Time': full_range})
     df_main['Time'] = df_main['Time'].dt.floor('h')
 
-    # 2. Завантажуємо існуючу базу (щоб не втратити вже зчитаний ФАКТ)
+    # 2. Завантажуємо існуючу базу
     if os.path.exists(BASE_FILE):
         df_old = pd.read_csv(BASE_FILE)
         df_old['Time'] = pd.to_datetime(df_old['Time']).dt.floor('h')
+        # Видаляємо дублікати, якщо вони є
+        df_old = df_old.drop_duplicates(subset=['Time'])
         df_main = pd.merge(df_main, df_old, on='Time', how='left')
 
-    # 3. Зчитування ФАКТУ з репортів (якщо з'явилися нові файли)
+    # 3. Зчитування ФАКТУ з репортів (якщо завантажено нові)
     files = [f for f in os.listdir('.') if f.lower().endswith('.xlsx') and 'report' in f.lower()]
     fact_data = []
     for f in files:
@@ -42,10 +44,11 @@ def main():
         df_main = pd.merge(df_main, df_all_facts, on='Time', how='left')
         if 'Fact_MW' not in df_main.columns: df_main['Fact_MW'] = 0.0
         if 'Fact_MW_new' in df_main.columns:
+            # Оновлюємо тільки порожні або нульові значення факту
             df_main['Fact_MW'] = df_main['Fact_MW_new'].combine_first(df_main['Fact_MW'])
             df_main.drop(columns=['Fact_MW_new'], inplace=True)
 
-    # 4. ВІДНОВЛЕННЯ ПРОГНОЗУ ТА МЕТЕО (Заповнюємо NaN)
+    # 4. ВІДНОВЛЕННЯ ПРОГНОЗУ ТА МЕТЕО (Заповнюємо дірки)
     api_key = os.getenv('WEATHER_API_KEY')
     w_url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/47.631494,34.348690/{START_DATE}/{datetime.now().strftime('%Y-%m-%d')}?unitGroup=metric&elements=datetime,temp,cloudcover,solarradiation,windspeed,precipprob&key={api_key}&contentType=json"
     
@@ -55,35 +58,35 @@ def main():
         for d in w_res['days']:
             for hr in d['hours']:
                 w_list.append({
-                    'Time': pd.to_datetime(f"{d['datetime']} {hr['datetime']}"),
+                    'Time': pd.to_datetime(f"{d['datetime']} {hr['datetime']}").floor('h'),
                     'Forecast_MW_api': hr.get('solarradiation', 0) * 11.4 * 0.001,
                     'CloudCover_api': hr.get('cloudcover', 0),
                     'Temp_api': hr.get('temp', 0),
                     'WindSpeed_api': hr.get('windspeed', 0),
                     'PrecipProb_api': hr.get('precipprob', 0)
                 })
-        df_w = pd.DataFrame(w_list)
+        df_w = pd.DataFrame(w_list).drop_duplicates(subset=['Time'])
         df_main = pd.merge(df_main, df_w, on='Time', how='left')
         
-        # Переносимо дані з API в основні колонки, якщо там порожньо (NaN)
         map_cols = {'Forecast_MW': 'Forecast_MW_api', 'CloudCover': 'CloudCover_api', 
                     'Temp': 'Temp_api', 'WindSpeed': 'WindSpeed_api', 'PrecipProb': 'PrecipProb_api'}
+        
         for target, source in map_cols.items():
             if target not in df_main.columns: df_main[target] = np.nan
+            # Заповнюємо порожні клітинки даними з API
             df_main[target] = df_main[target].combine_first(df_main[source])
             df_main.drop(columns=[source], inplace=True)
     except: pass
 
     # 5. ОКРУГЛЕННЯ ТА ЗБЕРЕЖЕННЯ
-    # Виконуємо округлення до 3 знаків для всіх числових колонок
-    cols_to_round = ['Fact_MW', 'Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb']
-    for col in cols_to_round:
+    numeric_cols = ['Fact_MW', 'Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb']
+    for col in numeric_cols:
         if col in df_main.columns:
-            df_main[col] = df_main[col].astype(float).round(3)
+            df_main[col] = pd.to_numeric(df_main[col], errors='coerce').round(3)
 
     df_main = df_main.sort_values('Time').drop_duplicates(subset=['Time'])
     df_main.to_csv(BASE_FILE, index=False)
-    print("✅ Базу оновлено: Факт збережено, Прогноз відновлено, дані округлено.")
+    print("✅ Базу відновлено: Факт і Прогноз заповнено, дані округлено.")
 
 if __name__ == "__main__":
     main()
