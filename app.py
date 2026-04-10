@@ -7,8 +7,8 @@ import requests
 from datetime import datetime, timedelta
 import time, pytz
 
-# 1. КОНФІГУРАЦІЯ
-st.set_page_config(page_title="SkyGrid Solar AI v19.5", layout="wide")
+# 1. КОНФІГУРАЦІЯ СТОРІНКИ
+st.set_page_config(page_title="SkyGrid Solar AI v19.6", layout="wide")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 st.markdown("<style>.stApp {background-color: #0E1117; color: white;}</style>", unsafe_allow_html=True)
 
@@ -40,7 +40,7 @@ def fetch_weather():
 df_f, day_forecast = fetch_weather()
 now_ua = datetime.now(UA_TZ).replace(tzinfo=None)
 
-# ПІДГОТОВКА ДАНИХ ТА МОДЕЛІ
+# 2. ПІДГОТОВКА ДАНИХ ТА МОДЕЛЮВАННЯ
 try:
     v = int(time.time() / 60)
     url = f"https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/solar_ai_base.csv?v={v}"
@@ -48,7 +48,6 @@ try:
     df_h['Time'] = pd.to_datetime(df_h['Time'].astype(str).str.replace('DST', '').str.strip())
     
     from sklearn.ensemble import RandomForestRegressor
-    # Навчання тільки на реальних даних
     df_train = df_h.dropna(subset=['Fact_MW', 'Forecast_MW']).copy()
     df_train = df_train[df_train['Fact_MW'] > 0]
     features = ['Hour', 'Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb']
@@ -68,14 +67,14 @@ try:
 except:
     df_h, model_acc = pd.DataFrame(), 0
 
-# ІНТЕРФЕЙС
-st.title("☀️ SkyGrid Solar AI v19.5")
+# 3. ПОБУДОВА ІНТЕРФЕЙСУ
+st.title("☀️ SkyGrid Solar AI v19.6")
 st.caption(f"АТ «НЗФ» • С.І. Колесник • {now_ua.strftime('%d.%m.%Y %H:%M')}")
 
 t1, t2, t3, t4 = st.tabs(["📊 МОНІТОРИНГ", "🌦 МЕТЕОЦЕНТР", "🧠 НАВЧАННЯ ШІ", "📑 БАЗА ДАНИХ"])
 
 with t1:
-    # Тільки чистий результат
+    # Тільки чиста аналітика та графіки
     c1, c2, c3 = st.columns(3)
     for i, col in enumerate([c1, c2, c3]):
         d_date = (now_ua + timedelta(days=i)).date()
@@ -94,21 +93,24 @@ with t2:
         st.dataframe(pd.DataFrame(day_forecast), hide_index=True, use_container_width=True)
 
 with t3:
-    st.subheader("Технічний статус системи")
+    # ТЕХНІЧНИЙ ЦЕНТР: Сюди перенесено всі сповіщення та діагностику
+    st.subheader("Діагностика та аналіз навчання")
     
-    # Сюди перенесено попередження про затримку АСКОЕ
+    # 1. Попередження про затримку даних
     if not df_h.empty:
         last_t = df_h['Time'].max()
         diff = (now_ua - last_t).total_seconds() / 3600
         if diff > 3:
-            st.warning(f"🔔 Дані АСКОЕ затримуються. Останнє оновлення: {last_t.strftime('%d.%m %H:%M')} (затримка {int(diff)} год.)")
+            st.warning(f"🔔 Технічна затримка АСКОЕ: {int(diff)} год. Останні дані від {last_t.strftime('%d.%m %H:%M')}")
+        else:
+            st.success(f"✅ Дані АСКОЕ актуальні. Останнє оновлення: {last_t.strftime('%H:%M')}")
     
-    # Сюди перенесено точність
-    st.info(f"Точність моделі (R² Score): {model_acc:.1f}%")
+    # 2. Метрика точності
+    st.info(f"Поточна точність прогнозування ШІ: {model_acc:.1f}%")
     
-    # Сюди перенесено теплову карту
+    # 3. Теплова карта
     if not df_h.empty and 'Fact_MW' in df_h.columns:
-        st.write("### 🔥 Теплова карта похибок (Факт - План ШІ)")
+        st.write("### 🔥 Карта відхилень (Факт - План ШІ)")
         hist = df_h.tail(168).copy()
         try:
             hist['AI_MW'] = model.predict(hist[features].fillna(0))
@@ -116,7 +118,10 @@ with t3:
             pivot = hist[hist['Hour'].between(7,19)].pivot(index='Time', columns='Hour', values='Error')
             st.plotly_chart(px.imshow(pivot, color_continuous_scale="RdBu_r", aspect="auto"), use_container_width=True)
         except:
-            st.write("Недостатньо даних для розрахунку похибок")
+            st.write("Аналіз похибок буде доступний після накопичення даних")
 
 with t4:
-    st.dataframe(df_h.tail(100).sort_values('Time', ascending=False), use_container_width=True)
+    # Перегляд бази (останні записи зверху)
+    if not df_h.empty:
+        st.write("Останні дані в системі:")
+        st.dataframe(df_h.sort_values('Time', ascending=False).head(100), use_container_width=True)
