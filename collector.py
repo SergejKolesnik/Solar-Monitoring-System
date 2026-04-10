@@ -130,6 +130,8 @@ def main():
 
     df_main.sort_values('Time').drop_duplicates(subset=['Time']).to_csv(BASE_FILE, index=False)
     print("✅ Автоматизацію відновлено: Пошта + API + Округлення.")
-
+# Створення локальної копії для безпеки
+df_main.to_csv("solar_ai_base_backup.csv", index=False)
+print("📂 Резервну копію бази створено автоматично.")
 if __name__ == "__main__":
     main()
