@@ -19,19 +19,20 @@ try:
     df_h = pd.read_csv(url)
     
     if not df_f.empty:
-        # ШІ робить прогноз
-        ai_preds, accuracy = train_and_predict(df_h, df_f)
-        
-        # Перейменовуємо для графіків та таблиці
-        df_f['Прогноз ШІ (МВт)'] = ai_preds
+        # ПЕРШИМ ДІЛОМ створюємо колонку сайту (копіюємо з Forecast_MW)
         df_f['Прогноз сайту (МВт)'] = df_f['Forecast_MW']
         
-        # Обнуляємо ніч
+        # ШІ робить прогноз
+        ai_preds, accuracy = train_and_predict(df_h, df_f)
+        df_f['Прогноз ШІ (МВт)'] = ai_preds
+        
+        # Обнуляємо ніч (з 21:00 до 05:00)
         night = (df_f['Time'].dt.hour < 5) | (df_f['Time'].dt.hour > 20)
         df_f.loc[night, ['Прогноз ШІ (МВт)', 'Прогноз сайту (МВт)']] = 0.0
     else:
         accuracy = 0
-except:
+except Exception as e:
+    st.error(f"Помилка: {e}")
     df_h, accuracy = pd.DataFrame(), 0
 
 # --- ІНТЕРФЕЙС ---
@@ -39,7 +40,6 @@ st.title("☀️ SkyGrid Solar AI")
 tabs = st.tabs(["📊 МОНІТОРИНГ", "🧠 НАВЧАННЯ", "📑 БАЗА"])
 
 with tabs[0]:
-    # Метрики
     if not df_f.empty:
         c1, c2, c3 = st.columns(3)
         for i, col in enumerate([c1, c2, c3]):
@@ -50,28 +50,21 @@ with tabs[0]:
                 si_s = d_data['Прогноз сайту (МВт)'].sum()
                 col.metric(f"{t_date.strftime('%d.%m')}", f"{ai_s:.2f} МВт·год", f"{ai_s-si_s:+.2f}")
 
-        # Графік
+        # Малюємо графік
         draw_main_chart(df_f)
 
-        # Кнопка Excel (тільки 2 колонки + Час)
+        # Кнопка Excel (тільки 3 колонки українською)
         st.write("---")
         output = io.BytesIO()
-        # Готуємо просту таблицю для людей
         excel_df = df_f.head(72)[['Time', 'Прогноз сайту (МВт)', 'Прогноз ШІ (МВт)']].copy()
         excel_df.columns = ['Дата та час', 'Прогноз сайту (МВт)', 'Прогноз ШІ (МВт)']
         
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            excel_df.to_excel(writer, index=False, sheet_name='План генерації')
+            excel_df.to_excel(writer, index=False, sheet_name='План')
         
         st.download_button(
-            label="📥 Завантажити ПЛАН ГЕНЕРАЦІЇ (Excel)",
+            label="📥 Завантажити ПЛАН (Excel)",
             data=output.getvalue(),
-            file_name=f"Solar_Plan_{now_ua.strftime('%d_%m')}.xlsx",
+            file_name=f"Plan_{now_ua.strftime('%d_%m')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-
-with tabs[1]:
-    draw_training_stats(df_h, accuracy)
-
-with tabs[2]:
-    st.dataframe(df_h.tail(50), use_container_width=True)
