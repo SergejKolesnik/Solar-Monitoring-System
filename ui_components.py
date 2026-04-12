@@ -4,20 +4,25 @@ import plotly.graph_objects as go
 def draw_main_chart(df):
     fig = go.Figure()
     
-    # Сірий пунктир - Прогноз сайту
-    if 'Прогноз сайту (МВт)' in df.columns:
+    # Визначаємо, яка колонка відповідає за прогноз сайту
+    site_col = 'Прогноз сайту (МВт)' if 'Прогноз сайту (МВт)' in df.columns else 'Forecast_MW'
+    # Визначаємо, яка колонка відповідає за прогноз ШІ
+    ai_col = 'Прогноз ШІ (МВт)' if 'Прогноз ШІ (МВт)' in df.columns else 'AI_MW'
+
+    # 1. Сірий пунктир (Прогноз сайту)
+    if site_col in df.columns:
         fig.add_trace(go.Scatter(
             x=df['Time'].head(72), 
-            y=df['Прогноз сайту (МВт)'].head(72), 
+            y=df[site_col].head(72), 
             name="Прогноз сайту", 
             line=dict(dash='dot', color='gray', width=2)
         ))
         
-    # Зелена область - Прогноз ШІ
-    if 'Прогноз ШІ (МВт)' in df.columns:
+    # 2. Зелена область (Прогноз ШІ)
+    if ai_col in df.columns:
         fig.add_trace(go.Scatter(
             x=df['Time'].head(72), 
-            y=df['Прогноз ШІ (МВт)'].head(72), 
+            y=df[ai_col].head(72), 
             name="Прогноз ШІ (коригований)", 
             fill='tozeroy', 
             line=dict(color='#00ff7f', width=3)
