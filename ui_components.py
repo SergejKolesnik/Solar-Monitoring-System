@@ -4,13 +4,16 @@ import plotly.graph_objects as go
 def draw_main_chart(df):
     fig = go.Figure()
     
-    # Визначаємо, яка колонка відповідає за прогноз сайту
-    site_col = 'Прогноз сайту (МВт)' if 'Прогноз сайту (МВт)' in df.columns else 'Forecast_MW'
-    # Визначаємо, яка колонка відповідає за прогноз ШІ
-    ai_col = 'Прогноз ШІ (МВт)' if 'Прогноз ШІ (МВт)' in df.columns else 'AI_MW'
+    # Автоматичний пошук колонки сайту (шукаємо всі можливі варіанти)
+    site_candidates = ['Прогноз сайту (МВт)', 'Forecast_MW', 'Прогноз сайту']
+    site_col = next((c for c in site_candidates if c in df.columns), None)
+    
+    # Автоматичний пошук колонки ШІ
+    ai_candidates = ['Прогноз ШІ (МВт)', 'AI_MW', 'Прогноз ШІ']
+    ai_col = next((c for c in ai_candidates if c in df.columns), None)
 
-    # 1. Сірий пунктир (Прогноз сайту)
-    if site_col in df.columns:
+    # 1. МАЛЮЄМО САЙТ (Сірий пунктир)
+    if site_col:
         fig.add_trace(go.Scatter(
             x=df['Time'].head(72), 
             y=df[site_col].head(72), 
@@ -18,8 +21,8 @@ def draw_main_chart(df):
             line=dict(dash='dot', color='gray', width=2)
         ))
         
-    # 2. Зелена область (Прогноз ШІ)
-    if ai_col in df.columns:
+    # 2. МАЛЮЄМО ШІ (Зелена область)
+    if ai_col:
         fig.add_trace(go.Scatter(
             x=df['Time'].head(72), 
             y=df[ai_col].head(72), 
