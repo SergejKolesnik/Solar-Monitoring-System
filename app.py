@@ -10,9 +10,9 @@ from ui_components import draw_main_chart, draw_training_stats
 st.set_page_config(page_title="SkyGrid Solar AI", layout="wide")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 
-# 1. ОТРИМУЄМО ДАНІ ТА ОБОВ'ЯЗКОВО РОБИМО КОПІЮ
-raw_df = fetch_weather_data()
-df_f = raw_df.copy() # Це розриває зв'язок із кешем
+# Отримуємо копію даних
+raw_data = fetch_weather_data()
+df_f = raw_data.copy()
 now_ua = datetime.now(UA_TZ).replace(tzinfo=None)
 
 try:
@@ -20,21 +20,20 @@ try:
     df_h = pd.read_csv(url)
     
     if not df_f.empty:
-        # ПРИМУСОВО створюємо колонки з точними назвами
-        df_f['Прогноз сайту (МВт)'] = df_f['Forecast_MW'].values
+        # ПРИМУСОВО створюємо колонку прогнозу сайту як числа
+        df_f['Прогноз сайту (МВт)'] = df_f['Forecast_MW'].astype(float)
         
         # Виклик ШІ
         ai_preds, accuracy = train_and_predict(df_h, df_f)
-        df_f['Прогноз ШІ (МВт)'] = ai_preds
+        df_f['Прогноз ШІ (МВт)'] = ai_preds.astype(float)
         
-        # Обнуляємо ніч (з 21:00 до 05:00)
+        # Обнуляємо ніч
         night = (df_f['Time'].dt.hour < 5) | (df_f['Time'].dt.hour > 20)
-        df_f.loc[night, 'Прогноз ШІ (МВт)'] = 0.0
-        df_f.loc[night, 'Прогноз сайту (МВт)'] = 0.0
+        df_f.loc[night, ['Прогноз ШІ (МВт)', 'Прогноз сайту (МВт)']] = 0.0
     else: 
         accuracy = 0
 except Exception as e:
-    st.error(f"Помилка даних: {e}")
+    st.error(f"Технічна помилка: {e}")
     df_h, accuracy = pd.DataFrame(), 0
 
 # --- ІНТЕРФЕЙС ---
@@ -53,7 +52,7 @@ with tabs[0]:
                 si_s = d_data['Прогноз сайту (МВт)'].sum()
                 col.metric(f"{t_date.strftime('%d.%m')}", f"{ai_s:.2f} МВт·год", f"{ai_s-si_s:+.2f}")
 
-        # ГРАФІК (тепер він точно побачить дані)
+        # ГРАФІК
         draw_main_chart(df_f)
 
         # EXCEL
