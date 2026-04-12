@@ -3,11 +3,9 @@ import pandas as pd
 import plotly.graph_objects as go
 import requests
 
-st.set_page_config(page_title="SkyGrid: ТЕСТ", layout="wide")
+st.set_page_config(page_title="SkyGrid: ТЕСТ ГРАФІКИ", layout="wide")
+st.title("🧪 Полігон: Перевірка двох ліній")
 
-st.title("🧪 Тестовий стенд")
-
-# 1. Спрощене отримання даних
 def get_data():
     try:
         api_key = st.secrets["WEATHER_API_KEY"]
@@ -22,7 +20,10 @@ def get_data():
                     'Rad': float(hr.get('solarradiation', 0))
                 })
         df = pd.DataFrame(h_list)
-        df['Power'] = df['Rad'] * 11.4 * 0.001
+        # Назви колонок точно як ми хочемо в фіналі
+        df['Прогноз сайту (МВт)'] = df['Rad'] * 11.4 * 0.001
+        # Імітуємо ШІ (просто трохи коригуємо дані для тесту)
+        df['Прогноз ШІ (МВт)'] = df['Прогноз сайту (МВт)'] * 1.1 
         return df
     except Exception as e:
         st.error(f"Помилка: {e}")
@@ -30,32 +31,29 @@ def get_data():
 
 df = get_data()
 
-# 2. Пряма перевірка
 if not df.empty:
-    st.success("Дані отримано успішно!")
-    
-    # Створюємо графік найпростішим способом
     fig = go.Figure()
     
+    # 1. СІРИЙ ПУНКТИР (Сайт)
     fig.add_trace(go.Scatter(
-        x=df['Time'], 
-        y=df['Power'], 
-        mode='lines+markers', # Додав точки, щоб було видно навіть поодинокі дані
-        name="Прогноз",
-        line=dict(color='red', width=3)
+        x=df['Time'], y=df['Прогноз сайту (МВт)'],
+        name="Прогноз сайту",
+        line=dict(dash='dot', color='gray', width=2)
+    ))
+
+    # 2. ЗЕЛЕНА ОБЛАСТЬ (ШІ)
+    fig.add_trace(go.Scatter(
+        x=df['Time'], y=df['Прогноз ШІ (МВт)'],
+        name="Прогноз ШІ (тест)",
+        fill='tozeroy',
+        line=dict(color='#00ff7f', width=3)
     ))
 
     fig.update_layout(
-        height=500,
-        margin=dict(l=20, r=20, t=20, b=20),
-        xaxis_title="Час",
-        yaxis_title="МВт"
+        hovermode="x unified",
+        legend=dict(orientation="h", y=1.1),
+        margin=dict(l=10, r=10, t=10, b=10)
     )
 
-    # Використовуємо спрощений виклик
-    st.plotly_chart(fig, use_container_width=True, theme=None)
-    
-    st.write("### Технічна таблиця (контроль):")
-    st.dataframe(df.head(10))
-else:
-    st.warning("Таблиця порожня. Перевірте WEATHER_API_KEY у Secrets.")
+    st.plotly_chart(fig, use_container_width=True)
+    st.success("Якщо ви бачите сірий пунктир ПІД зеленою зоною — графік повністю справний!")
