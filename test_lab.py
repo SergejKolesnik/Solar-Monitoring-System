@@ -2,54 +2,60 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import requests
-import time
 
-# ТЕСТОВА ЛАБОРАТОРІЯ - НЕ ВПЛИВАЄ НА ОСНОВНУ БАЗУ
-st.set_page_config(page_title="SkyGrid TEST LAB", layout="wide")
+st.set_page_config(page_title="SkyGrid: ТЕСТ", layout="wide")
 
-st.title("🧪 Полігон: Тестування графіку та Excel")
-st.info("Ця версія працює в ізольованому режимі і тільки читає дані.")
+st.title("🧪 Тестовий стенд")
 
-# 1. ТЕСТОВИЙ ЗБІР МЕТЕО (без запису в базу)
-def fetch_test_weather():
+# 1. Спрощене отримання даних
+def get_data():
     try:
         api_key = st.secrets["WEATHER_API_KEY"]
-        url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/47.631494,34.348690/next10days?unitGroup=metric&elements=datetime,temp,solarradiation&key={api_key}&contentType=json"
+        url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/47.631494,34.348690/next2days?unitGroup=metric&key={api_key}&contentType=json"
         res = requests.get(url, timeout=10)
-        if res.status_code == 200:
-            data = res.json()
-            h_list = []
-            for d in data['days']:
-                for hr in d['hours']:
-                    h_list.append({
-                        'Time': pd.to_datetime(f"{d['datetime']} {hr['datetime']}"),
-                        'Rad': float(hr.get('solarradiation', 0))
-                    })
-            df = pd.DataFrame(h_list)
-            # Розрахунок прогнозу сайту
-            df['Прогноз сайту (МВт)'] = (df['Rad'] * 11.4 * 0.001).astype(float)
-            return df
-    except: pass
-    return pd.DataFrame()
+        data = res.json()
+        h_list = []
+        for d in data['days']:
+            for hr in d['hours']:
+                h_list.append({
+                    'Time': pd.to_datetime(f"{d['datetime']} {hr['datetime']}"),
+                    'Rad': float(hr.get('solarradiation', 0))
+                })
+        df = pd.DataFrame(h_list)
+        df['Power'] = df['Rad'] * 11.4 * 0.001
+        return df
+    except Exception as e:
+        st.error(f"Помилка: {e}")
+        return pd.DataFrame()
 
-df_test = fetch_test_weather()
+df = get_data()
 
-# 2. ВІЗУАЛІЗАЦІЯ (Шукаємо, куди зникає лінія)
-if not df_test.empty:
-    st.write("### Перевірка наявності даних:")
-    st.write(df_test.head(5)) # Покаже нам, чи є цифри в колонці
-
+# 2. Пряма перевірка
+if not df.empty:
+    st.success("Дані отримано успішно!")
+    
+    # Створюємо графік найпростішим способом
     fig = go.Figure()
     
-    # Малюємо сірий пунктир
     fig.add_trace(go.Scatter(
-        x=df_test['Time'].head(72), 
-        y=df_test['Прогноз сайту (МВт)'].head(72), 
-        name="ТЕСТ: Прогноз сайту", 
-        line=dict(dash='dot', color='orange', width=3) # Помаранчевий, щоб відрізнити
+        x=df['Time'], 
+        y=df['Power'], 
+        mode='lines+markers', # Додав точки, щоб було видно навіть поодинокі дані
+        name="Прогноз",
+        line=dict(color='red', width=3)
     ))
+
+    fig.update_layout(
+        height=500,
+        margin=dict(l=20, r=20, t=20, b=20),
+        xaxis_title="Час",
+        yaxis_title="МВт"
+    )
+
+    # Використовуємо спрощений виклик
+    st.plotly_chart(fig, use_container_width=True, theme=None)
     
-    fig.update_layout(title="Тестовий графік (має бути помаранчева пунктирна лінія)")
-    st.plotly_chart(fig, use_container_width=True)
+    st.write("### Технічна таблиця (контроль):")
+    st.dataframe(df.head(10))
 else:
-    st.error("Метеодані не завантажились!")
+    st.warning("Таблиця порожня. Перевірте WEATHER_API_KEY у Secrets.")
