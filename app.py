@@ -18,21 +18,20 @@ try:
     df_h = pd.read_csv(url)
     
     if not df_f.empty:
-        # ПРИМУСОВО створюємо українські назви
+        # 1. Створюємо колонку сайту
         df_f['Прогноз сайту (МВт)'] = df_f['Forecast_MW']
         
-        # Виклик ШІ
+        # 2. Виклик ШІ
         ai_preds, accuracy = train_and_predict(df_h, df_f)
         df_f['Прогноз ШІ (МВт)'] = ai_preds
         
-        # Обнуляємо ніч
+        # 3. Обнуляємо ніч
         night = (df_f['Time'].dt.hour < 5) | (df_f['Time'].dt.hour > 20)
         df_f.loc[night, ['Прогноз ШІ (МВт)', 'Прогноз сайту (МВт)']] = 0.0
     else: accuracy = 0
 except:
     df_h, accuracy = pd.DataFrame(), 0
 
-# --- ГРАФІЧНА ЧАСТИНА ---
 st.title("☀️ SkyGrid Solar AI")
 tabs = st.tabs(["📊 МОНІТОРИНГ", "🧠 НАВЧАННЯ", "📑 БАЗА"])
 
@@ -48,16 +47,17 @@ with tabs[0]:
                 si_s = d_data['Прогноз сайту (МВт)'].sum()
                 col.metric(f"{t_date.strftime('%d.%m')}", f"{ai_s:.2f} МВт·год", f"{ai_s-si_s:+.2f}")
 
+        # ГРАФІК
         draw_main_chart(df_f)
 
-        # Excel Кнопка (тільки 2 прогнози)
+        # EXCEL (Лише 2 колонки + Час, українською)
         st.write("---")
         output = io.BytesIO()
         excel_df = df_f.head(72)[['Time', 'Прогноз сайту (МВт)', 'Прогноз ШІ (МВт)']].copy()
         excel_df.columns = ['Дата та час', 'Прогноз сайту (МВт)', 'Прогноз ШІ (МВт)']
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             excel_df.to_excel(writer, index=False, sheet_name='План')
-        st.download_button("📥 Завантажити ПЛАН (Excel)", output.getvalue(), "Plan.xlsx")
+        st.download_button("📥 Завантажити ПЛАН (Excel)", output.getvalue(), "Solar_Plan.xlsx")
 
 with tabs[1]:
     draw_training_stats(df_h, accuracy)
