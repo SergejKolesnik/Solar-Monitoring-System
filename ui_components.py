@@ -4,7 +4,8 @@ import plotly.graph_objects as go
 def draw_main_chart(df):
     fig = go.Figure()
     
-    # 1. Пряме малювання Прогнозу сайту
+    # 1. СІРИЙ ПУНКТИР (Прогноз сайту)
+    # Використовуємо пряме звернення до назви, яку ми підготуємо в app.py
     if 'Прогноз сайту (МВт)' in df.columns:
         fig.add_trace(go.Scatter(
             x=df['Time'].head(72), 
@@ -13,12 +14,12 @@ def draw_main_chart(df):
             line=dict(dash='dot', color='gray', width=2)
         ))
         
-    # 2. Пряме малювання Плану ШІ
+    # 2. ЗЕЛЕНА ОБЛАСТЬ (План ШІ)
     if 'Прогноз ШІ (МВт)' in df.columns:
         fig.add_trace(go.Scatter(
             x=df['Time'].head(72), 
             y=df['Прогноз ШІ (МВт)'].head(72), 
-            name="Прогноз ШІ (коригований)", 
+            name="План ШІ (коригований)", 
             fill='tozeroy', 
             line=dict(color='#00ff7f', width=3)
         ))
@@ -34,4 +35,4 @@ def draw_training_stats(df_history, accuracy):
     st.subheader(f"🧠 Діагностика ШІ")
     c1, c2 = st.columns(2)
     c1.metric("Точність моделі", f"{accuracy:.1f}%")
-    c2.metric("Даних у базі", f"{len(df_history)} год.")
+    c2.metric("Записів у базі", f"{len(df_history)} год.")
