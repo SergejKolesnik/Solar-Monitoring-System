@@ -1,27 +1,30 @@
-name: Solar AI Sync
+name: SkyGrid Auto Sync
 
 on:
   schedule:
-    - cron: '10 * * * *' # Запуск щогодини на 10-й хвилині
-  workflow_dispatch:      # Кнопка для ручного запуску
+    # Запуск кожні 3 години (у 0, 3, 6, 9, 12, 15, 18, 21 годину за UTC)
+    - cron: '0 */3 * * *'
+  workflow_dispatch: # Залишаємо кнопку ручного запуску
 
 jobs:
-  update:
+  update: # Змінив назву джоби на ту, що у вас була
     runs-on: ubuntu-latest
-    # ВАЖЛИВО: Надаємо права боту на запис у репозиторій
     permissions:
       contents: write
-    
-    steps:
-      - uses: actions/checkout@v3
 
-      - name: Setup Python
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
 
       - name: Install dependencies
-        run: pip install pandas requests pytz openpyxl
+        run: pip install pandas requests pytz openpyxl scikit-learn
 
       - name: Run Collector
         env:
@@ -35,5 +38,8 @@ jobs:
           git config --global user.name 'SkyGrid Bot'
           git config --global user.email 'bot@skygrid.ai'
           git add solar_ai_base.csv
+          # Додаємо pull, щоб уникнути конфліктів
+          git pull origin main --rebase
           git commit -m "Auto-update: Sync Forecast and Fact" || exit 0
-          git push
+          # Вказуємо конкретний шлях для push
+          git push origin main
