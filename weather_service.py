@@ -15,16 +15,12 @@ def fetch_weather_data():
                 for hr in d['hours']:
                     h_list.append({
                         'Time': pd.to_datetime(f"{d['datetime']} {hr['datetime']}"),
-                        'Rad': hr.get('solarradiation', 0),
-                        'CloudCover': hr.get('cloudcover', 0),
-                        'Temp': hr.get('temp', 0),
-                        'WindSpeed': hr.get('windspeed', 0),
-                        'PrecipProb': hr.get('precipprob', 0)
+                        'Rad': float(hr.get('solarradiation', 0)),
+                        'CloudCover': float(hr.get('cloudcover', 0)),
+                        'Temp': float(hr.get('temp', 0))
                     })
             df = pd.DataFrame(h_list)
-            df['Hour'] = df['Time'].dt.hour
-            # Базовий прогноз (Сайт)
-            df['Forecast_MW'] = (df['Rad'] * 11.4 * 0.001).round(3)
+            df['Forecast_MW'] = (df['Rad'] * 11.4 * 0.001).astype(float)
             return df
     except: pass
     return pd.DataFrame()
