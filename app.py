@@ -10,39 +10,38 @@ from ui_components import draw_main_chart, draw_training_stats
 st.set_page_config(page_title="SkyGrid Solar AI", layout="wide")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 
-# Отримуємо копію даних
-raw_data = fetch_weather_data()
-df_f = raw_data.copy()
+# Отримуємо дані
+raw_df = fetch_weather_data()
+df_f = raw_df.copy() # Створюємо незалежну копію для маніпуляцій
 now_ua = datetime.now(UA_TZ).replace(tzinfo=None)
 
 try:
+    # Тільки читаємо базу, не записуємо в неї!
     url = f"https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/solar_ai_base.csv?v={int(time.time()/60)}"
     df_h = pd.read_csv(url)
     
     if not df_f.empty:
-        # ПРИМУСОВО створюємо колонку прогнозу сайту як числа
+        # Гарантуємо числові значення для сайту
         df_f['Прогноз сайту (МВт)'] = df_f['Forecast_MW'].astype(float)
         
-        # Виклик ШІ
+        # Прогноз ШІ
         ai_preds, accuracy = train_and_predict(df_h, df_f)
         df_f['Прогноз ШІ (МВт)'] = ai_preds.astype(float)
         
-        # Обнуляємо ніч
+        # Обнуляємо ніч (зберігаємо коректність графіку)
         night = (df_f['Time'].dt.hour < 5) | (df_f['Time'].dt.hour > 20)
         df_f.loc[night, ['Прогноз ШІ (МВт)', 'Прогноз сайту (МВт)']] = 0.0
-    else: 
-        accuracy = 0
-except Exception as e:
-    st.error(f"Технічна помилка: {e}")
+    else: accuracy = 0
+except:
     df_h, accuracy = pd.DataFrame(), 0
 
-# --- ІНТЕРФЕЙС ---
+# --- ГРАФІЧНИЙ ІНТЕРФЕЙС ---
 st.title("☀️ SkyGrid Solar AI")
 tabs = st.tabs(["📊 МОНІТОРИНГ", "🧠 НАВЧАННЯ", "📑 БАЗА"])
 
 with tabs[0]:
     if not df_f.empty:
-        # Метрики
+        # Метрики на 3 дні
         c1, c2, c3 = st.columns(3)
         for i, col in enumerate([c1, c2, c3]):
             t_date = (now_ua + timedelta(days=i)).date()
@@ -52,17 +51,17 @@ with tabs[0]:
                 si_s = d_data['Прогноз сайту (МВт)'].sum()
                 col.metric(f"{t_date.strftime('%d.%m')}", f"{ai_s:.2f} МВт·год", f"{ai_s-si_s:+.2f}")
 
-        # ГРАФІК
+        # Основний графік
         draw_main_chart(df_f)
 
-        # EXCEL
+        # Excel файл для колег (тільки суть)
         st.write("---")
         output = io.BytesIO()
         excel_df = df_f.head(72)[['Time', 'Прогноз сайту (МВт)', 'Прогноз ШІ (МВт)']].copy()
         excel_df.columns = ['Дата та час', 'Прогноз сайту (МВт)', 'Прогноз ШІ (МВт)']
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            excel_df.to_excel(writer, index=False, sheet_name='План')
-        st.download_button("📥 Завантажити ПЛАН (Excel)", output.getvalue(), f"Plan_{now_ua.strftime('%d_%m')}.xlsx")
+            excel_df.to_excel(writer, index=False)
+        st.download_button("📥 Завантажити ПЛАН (Excel)", output.getvalue(), f"Solar_Plan_{now_ua.strftime('%d_%m')}.xlsx")
 
 with tabs[1]:
     draw_training_stats(df_h, accuracy)
