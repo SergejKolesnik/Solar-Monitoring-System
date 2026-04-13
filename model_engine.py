@@ -6,33 +6,35 @@ def train_and_get_insights(df_h, df_f):
     # Фактори для навчання
     features = ['Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb']
     
-    # Перевіряємо наявність колонок у базі
-    missing_cols = [c for c in features if c not in df_h.columns]
+    # ПЕРЕВІРКА: чи є колонки в базі?
+    existing_features = [c for c in features if c in df_h.columns]
     
-    # Якщо колонок немає або мало даних, повертаємо базовий прогноз
-    df_train = df_h.dropna(subset=['Fact_MW', 'Forecast_MW'])
-    if missing_cols or len(df_train) < 50:
+    # Якщо немає навіть базового прогнозу або мало даних - повертаємо прогноз сайту
+    if 'Forecast_MW' not in existing_features or len(df_h[df_h['Fact_MW'].notna()]) < 20:
         return df_f['Forecast_MW'], 0.0, None, None
 
-    # Навчання на розширених даних
-    df_train = df_h.dropna(subset=features + ['Fact_MW'])
-    X = df_train[features]
+    # Навчаємо на тому, що є в наявності (щоб не було помилки index)
+    df_train = df_h.dropna(subset=existing_features + ['Fact_MW'])
+    
+    if df_train.empty:
+        return df_f['Forecast_MW'], 0.0, None, None
+
+    X = df_train[existing_features]
     y = df_train['Fact_MW']
 
     model = RandomForestRegressor(n_estimators=100, random_state=42)
     model.fit(X, y)
 
-    # Прогноз та аналітика
-    predictions = model.predict(df_f[features])
+    # Для прогнозу на майбутнє теж використовуємо тільки наявні колонки
+    predictions = model.predict(df_f[existing_features])
     accuracy = model.score(X, y) * 100
 
-    # Важливість факторів (що найбільше впливає на результат)
+    # Аналітика для вкладки Навчання
     importance = pd.DataFrame({
-        'Фактор': ['Сайт', 'Хмари', 'Темп.', 'Вітер', 'Опади'],
+        'Фактор': existing_features,
         'Важливість': model.feature_importances_
     }).sort_values(by='Важливість', ascending=False)
 
-    # Дані для графіка дельти
     error_df = df_train[['Time', 'Fact_MW', 'Forecast_MW']].tail(50).copy()
     error_df['Error'] = error_df['Fact_MW'] - error_df['Forecast_MW']
     
