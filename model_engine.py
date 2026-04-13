@@ -3,44 +3,39 @@ import numpy as np
 from sklearn.ensemble import RandomForestRegressor
 
 def train_and_get_insights(df_h, df_f):
-    """
-    Навчає модель на існуючій базі та повертає прогноз і аналітику факторів.
-    """
-    # Список факторів, які ми використовуємо для аналізу
-    features = ['Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb']
+    # Фактори, які ми хочемо бачити
+    desired_features = ['Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb']
     
-    # Визначаємо, які з цих колонок реально існують у файлі
-    existing_features = [c for c in features if c in df_h.columns]
+    # 1. Вибираємо ТІЛЬКИ ті колонки, які реально є у вашому CSV
+    existing_features = [c for c in desired_features if c in df_h.columns]
     
-    # Відбираємо тільки ті рядки, де є Фактичний виробіток (Fact_MW)
+    # 2. Відбираємо рядки, де заповнений ФАКТ (виробіток)
     df_train = df_h.dropna(subset=['Fact_MW'])
     
-    # Якщо даних замало для навчання (менше доби), повертаємо стандартний прогноз
-    if len(df_train) < 24:
+    # Знижуємо поріг до 20 годин, щоб ви побачили результат вже сьогодні
+    if len(df_train) < 20:
         return df_f['Forecast_MW'], 0.0, None, None
 
-    # Готуємо дані (заповнюємо рідкісні пропуски в метеоданих нулями)
-    X = df_train[existing_features].fillna(0)
+    # 3. Готуємо дані для навчання (заповнюємо пусті клітинки середнім, щоб не втрачати рядки)
+    X = df_train[existing_features].fillna(df_train[existing_features].mean())
     y = df_train['Fact_MW']
 
-    # Ініціалізуємо та навчаємо модель "Випадкового лісу"
+    # 4. Навчання моделі
     model = RandomForestRegressor(n_estimators=100, random_state=42)
     model.fit(X, y)
 
-    # Робимо прогноз на майбутнє (df_f - це прогноз погоди)
+    # 5. Прогноз на майбутнє
     X_future = df_f[existing_features].fillna(0)
     predictions = model.predict(X_future)
-    
-    # Рахуємо точність моделі на тренувальних даних
     accuracy = model.score(X, y) * 100
 
-    # Створюємо таблицю важливості факторів для візуалізації
+    # 6. Важливість факторів (для графіків у вкладці Навчання)
     importance = pd.DataFrame({
         'Фактор': existing_features,
         'Важливість': model.feature_importances_
     }).sort_values(by='Важливість', ascending=False)
 
-    # Готуємо дані для графіка Дельти (Помилка сайту за останні 100 годин)
+    # Історія помилок (дельта)
     error_df = df_train[['Time', 'Fact_MW', 'Forecast_MW']].tail(100).copy()
     error_df['Error'] = error_df['Fact_MW'] - error_df['Forecast_MW']
     
