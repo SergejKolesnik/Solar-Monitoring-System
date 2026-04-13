@@ -3,37 +3,36 @@ import numpy as np
 from sklearn.ensemble import RandomForestRegressor
 
 def train_and_get_insights(df_h, df_f):
-    # Повний набір колонок, які ми ХОЧЕМО бачити
-    desired_features = ['Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb']
+    # Фактори, які ми шукаємо в базі (згідно з вашим скріншотом image_b9f574.png)
+    features = ['Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb']
     
-    # 1. Вибираємо ТІЛЬКИ ті колонки, які РЕАЛЬНО є у файлі
-    existing_features = [c for c in desired_features if c in df_h.columns]
+    # Вибираємо тільки ті рядки, де реально є ФАКТ (виробіток)
+    # У вас таких рядків вже близько 300-400
+    df_train = df_h.dropna(subset=['Fact_MW'])
     
-    # Якщо немає навіть базових даних для навчання — виходимо
-    if 'Forecast_MW' not in existing_features or len(df_h.dropna(subset=['Fact_MW'])) < 10:
+    if len(df_train) < 24: # Достатньо хоча б однієї доби даних для старту
         return df_f['Forecast_MW'], 0.0, None, None
 
-    # 2. Навчання на наявному максимумі даних
-    df_train = df_h.dropna(subset=existing_features + ['Fact_MW'])
-    X = df_train[existing_features].fillna(0)
+    # Заповнюємо пропуски в метеоданих середніми значеннями, щоб не втрачати рядки
+    X = df_train[features].fillna(df_train[features].mean())
     y = df_train['Fact_MW']
 
+    # Навчання моделі
     model = RandomForestRegressor(n_estimators=100, random_state=42)
     model.fit(X, y)
 
-    # 3. Прогноз
-    X_future = df_f[existing_features].fillna(0)
+    # Прогноз на майбутнє
+    X_future = df_f[features].fillna(0)
     predictions = model.predict(X_future)
     accuracy = model.score(X, y) * 100
 
-    # 4. Важливість факторів (для візуалізації навчання)
+    # Аналітика для вкладки
     importance = pd.DataFrame({
-        'Фактор': existing_features,
+        'Фактор': ['Сайт', 'Хмари', 'Темп.', 'Вітер', 'Опади'],
         'Важливість': model.feature_importances_
     }).sort_values(by='Важливість', ascending=False)
 
-    # Дані для дельти
-    error_df = df_train[['Time', 'Fact_MW', 'Forecast_MW']].tail(50).copy()
+    error_df = df_train[['Time', 'Fact_MW', 'Forecast_MW']].tail(100).copy()
     error_df['Error'] = error_df['Fact_MW'] - error_df['Forecast_MW']
     
     return predictions, accuracy, importance, error_df
