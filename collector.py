@@ -8,7 +8,6 @@ from datetime import datetime, timedelta
 
 # НАЛАШТУВАННЯ
 BASE_FILE = "solar_ai_base.csv"
-START_DATE = "2026-03-23"
 
 def main():
     print(f"🚀 Запуск збору даних: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
@@ -28,7 +27,7 @@ def main():
         mail.login(os.getenv('EMAIL_USER'), os.getenv('EMAIL_PASS'))
         mail.select("INBOX")
         
-        # Шукаємо за останні 3 дні (свіжі звіти)
+        # Шукаємо за останні 3 дні
         date_cut = (datetime.now() - timedelta(days=3)).strftime("%d-%b-%Y")
         _, messages = mail.search(None, f'(SINCE {date_cut})')
         
@@ -52,7 +51,7 @@ def main():
                         temp['Fact_MW'] = pd.to_numeric(temp['Fact_MW'], errors='coerce') / 1000
                         fact_data.append(temp)
         mail.logout()
-        print(f"📥 Оброблено листів з пошти: {len(fact_data)}")
+        print(f"📥 Оброблено з пошти: {len(fact_data)} файлів")
     except Exception as e:
         print(f"❌ Помилка пошти: {e}")
 
@@ -60,9 +59,8 @@ def main():
     w_rows = []
     try:
         api_key = os.getenv('WEATHER_API_KEY')
-        # Запитуємо лише останні 3 дні, щоб не перевантажувати API
         date_start_w = (datetime.now() - timedelta(days=2)).strftime('%Y-%m-%d')
-        date_end_w = datetime.now().strftime('%Y-%m-%d')
+        date_end_w = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
         
         w_url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/47.631494,34.348690/{date_start_w}/{date_end_w}?unitGroup=metric&elements=datetime,temp,cloudcover,solarradiation,windspeed,precipprob&key={api_key}&contentType=json"
         
@@ -77,33 +75,27 @@ def main():
                     'WindSpeed': hr.get('windspeed', 0),
                     'PrecipProb': hr.get('precipprob', 0)
                 })
-        print(f"🌤 Отримано метеоданих: {len(w_rows)} годин")
+        print(f"🌤 Отримано метео: {len(w_rows)} годин")
     except Exception as e:
         print(f"❌ Помилка метео: {e}")
 
-    # 4. ОБ'ЄДНАННЯ ТА ОНОВЛЕННЯ
-    new_data = pd.DataFrame()
-    
-    if fact_data:
-        new_data = pd.concat(fact_data)
-    
-    if w_rows:
-        df_w = pd.DataFrame(w_rows)
-        if not new_data.empty:
-            new_data = pd.merge(new_data, df_w, on='Time', how='outer')
-        else:
-            new_data = df_w
-
-    if not new_data.empty:
-        # Об'єднуємо стару базу з новою, видаляючи дублікати (пріоритет новим даним)
-        df_final = pd.concat([df_main, new_data]).drop_duplicates(subset=['Time'], keep='last')
-        df_final = df_final.sort_values('Time')
+    # 4. ОБ'ЄДНАННЯ
+    if fact_data or w_rows:
+        update_df = pd.DataFrame()
+        if fact_data: update_df = pd.concat(fact_data)
         
-        # Запис у файл
+        if w_rows:
+            df_w = pd.DataFrame(w_rows)
+            if not update_df.empty:
+                update_df = pd.merge(update_df, df_w, on='Time', how='outer')
+            else:
+                update_df = df_w
+
+        # Пріоритет новим даним через drop_duplicates(keep='last')
+        df_final = pd.concat([df_main, update_df]).drop_duplicates(subset=['Time'], keep='last')
+        df_final = df_final.sort_values('Time')
         df_final.to_csv(BASE_FILE, index=False)
-        print(f"✅ Базу оновлено. Останній запис: {df_final['Time'].max()}")
-    else:
-        print("⚠️ Нових даних не знайдено.")
+        print(f"✅ Готово. Останній час у базі: {df_final['Time'].max()}")
 
 if __name__ == "__main__":
     main()
