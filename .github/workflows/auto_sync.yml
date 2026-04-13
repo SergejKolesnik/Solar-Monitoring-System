@@ -2,12 +2,11 @@ name: SkyGrid Auto Sync
 
 on:
   schedule:
-    # Запуск кожні 3 години (у 0, 3, 6, 9, 12, 15, 18, 21 годину за UTC)
     - cron: '0 */3 * * *'
-  workflow_dispatch: # Залишаємо кнопку ручного запуску
+  workflow_dispatch:
 
 jobs:
-  update: # Змінив назву джоби на ту, що у вас була
+  update:
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -24,7 +23,7 @@ jobs:
           python-version: '3.9'
 
       - name: Install dependencies
-        run: pip install pandas requests pytz openpyxl scikit-learn
+        run: pip install pandas requests openpyxl
 
       - name: Run Collector
         env:
@@ -37,9 +36,8 @@ jobs:
         run: |
           git config --global user.name 'SkyGrid Bot'
           git config --global user.email 'bot@skygrid.ai'
+          # Очищуємо індекс, щоб уникнути помилки "uncommitted changes"
+          git reset --hard origin/main
           git add solar_ai_base.csv
-          # Додаємо pull, щоб уникнути конфліктів
-          git pull origin main --rebase
-          git commit -m "Auto-update: Sync Forecast and Fact" || exit 0
-          # Вказуємо конкретний шлях для push
+          git commit -m "Auto-update: Sync Forecast and Fact [$(date)]" || exit 0
           git push origin main
