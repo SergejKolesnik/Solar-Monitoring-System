@@ -36,10 +36,15 @@ jobs:
         run: |
           git config --global user.name 'SkyGrid Bot'
           git config --global user.email 'bot@skygrid.ai'
-          # Примусове вирівнювання з сервером
+          
+          # Примусове вирівнювання з сервером перед записом
           git fetch origin main
           git reset --hard origin/main
+          
           git add solar_ai_base.csv
-          # Якщо база змінилася - записуємо, якщо ні - йдемо далі
-          git commit -m "Auto-update solar base [$(date)]" || exit 0
+          
+          # Комітимо зміни, якщо вони є
+          git commit -m "Auto-update solar base: $(date +'%Y-%m-%d %H:%M')" || exit 0
+          
+          # Пуш з примусом, щоб обійти помилку 'cannot pull with rebase'
           git push origin main --force
