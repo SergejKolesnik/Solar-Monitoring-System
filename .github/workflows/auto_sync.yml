@@ -23,7 +23,7 @@ jobs:
           python-version: '3.9'
 
       - name: Install dependencies
-        run: pip install pandas requests openpyxl
+        run: pip install pandas requests openpyxl scikit-learn
 
       - name: Run Collector
         env:
@@ -36,8 +36,10 @@ jobs:
         run: |
           git config --global user.name 'SkyGrid Bot'
           git config --global user.email 'bot@skygrid.ai'
-          # Очищуємо індекс, щоб уникнути помилки "uncommitted changes"
+          # Примусове вирівнювання з сервером
+          git fetch origin main
           git reset --hard origin/main
           git add solar_ai_base.csv
-          git commit -m "Auto-update: Sync Forecast and Fact [$(date)]" || exit 0
-          git push origin main
+          # Якщо база змінилася - записуємо, якщо ні - йдемо далі
+          git commit -m "Auto-update solar base [$(date)]" || exit 0
+          git push origin main --force
