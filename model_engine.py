@@ -3,39 +3,55 @@ import numpy as np
 from sklearn.ensemble import RandomForestRegressor
 
 def train_and_get_insights(df_h, df_f):
-    # Фактори, які ми хочемо бачити
-    desired_features = ['Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb']
+    # 1. Приводимо все до єдиного формату (видаляємо пробіли, малі літери)
+    df_h.columns = df_h.columns.str.strip()
+    df_f.columns = df_f.columns.str.strip()
     
-    # 1. Вибираємо ТІЛЬКИ ті колонки, які реально є у вашому CSV
-    existing_features = [c for c in desired_features if c in df_h.columns]
+    # Створюємо мапу для пошуку колонок незалежно від регістру
+    h_cols = {c.lower(): c for c in df_h.columns}
+    f_cols = {c.lower(): c for c in df_f.columns}
     
-    # 2. Відбираємо рядки, де заповнений ФАКТ (виробіток)
-    df_train = df_h.dropna(subset=['Fact_MW'])
+    # Фактори, які ми шукаємо
+    targets = ['forecast_mw', 'cloudcover', 'temp', 'windspeed', 'precipprob']
     
-    # Знижуємо поріг до 20 годин, щоб ви побачили результат вже сьогодні
-    if len(df_train) < 20:
-        return df_f['Forecast_MW'], 0.0, None, None
+    # Знаходимо колонки, які є В ОБОХ датафреймах
+    existing_features = []
+    for t in targets:
+        if t in h_cols and t in f_cols:
+            existing_features.append(h_cols[t]) # Беремо назву з бази
+            
+    # Якщо нічого не знайшли - беремо хоча б прогноз сайту
+    if not existing_features:
+        if 'Forecast_MW' in df_h.columns: existing_features = ['Forecast_MW']
+        else: return df_f.get('Forecast_MW', pd.Series([0]*len(df_f))), 0.0, None, None
 
-    # 3. Готуємо дані для навчання (заповнюємо пусті клітинки середнім, щоб не втрачати рядки)
-    X = df_train[existing_features].fillna(df_train[existing_features].mean())
-    y = df_train['Fact_MW']
+    # 2. Чистимо дані для навчання
+    df_train = df_h.dropna(subset=['Fact_MW'] + existing_features)
+    
+    # Ваші 500 годин тепер точно пройдуть перевірку
+    if len(df_train) < 10:
+        return df_f[existing_features[0]] if not df_f.empty else pd.Series([0]*len(df_f)), 0.0, None, None
 
-    # 4. Навчання моделі
+    # 3. Навчання
+    X = df_train[existing_features].fillna(0)
+    y = df_train['Fact_MW'].astype(float)
+
     model = RandomForestRegressor(n_estimators=100, random_state=42)
     model.fit(X, y)
 
-    # 5. Прогноз на майбутнє
-    X_future = df_f[existing_features].fillna(0)
+    # 4. Прогноз
+    # Для прогнозу беремо відповідні колонки з df_f
+    f_feature_names = [f_cols[c.lower()] for c in existing_features]
+    X_future = df_f[f_feature_names].fillna(0)
     predictions = model.predict(X_future)
     accuracy = model.score(X, y) * 100
 
-    # 6. Важливість факторів (для графіків у вкладці Навчання)
+    # Аналітика
     importance = pd.DataFrame({
         'Фактор': existing_features,
         'Важливість': model.feature_importances_
     }).sort_values(by='Важливість', ascending=False)
 
-    # Історія помилок (дельта)
     error_df = df_train[['Time', 'Fact_MW', 'Forecast_MW']].tail(100).copy()
     error_df['Error'] = error_df['Fact_MW'] - error_df['Forecast_MW']
     
