@@ -3,43 +3,56 @@ import numpy as np
 from sklearn.ensemble import RandomForestRegressor
 
 def train_and_get_insights(df_h, df_f):
+    # 1. Нормалізація
     df_h = df_h.copy()
     df_h['Time'] = pd.to_datetime(df_h['Time'], errors='coerce')
     df_h = df_h.dropna(subset=['Time'])
     
-    # Вибір факторів (приведення до одного регістру)
-    all_features = ['Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb']
+    # Спільні фактори (регістронезалежно)
     df_h.columns = df_h.columns.str.strip()
     df_f.columns = df_f.columns.str.strip()
-    existing_features = [c for c in all_features if c in df_h.columns and c in df_f.columns]
+    target_features = ['Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb']
+    existing_features = [c for c in target_features if c in df_h.columns and c in df_f.columns]
     
-    # Фільтрація: беремо останні 7 днів для аналізу помилок
-    df_train = df_h.dropna(subset=['Fact_MW'] + [existing_features[0]])
-    if len(df_train) < 10:
-        return df_f['Forecast_MW'], 0.0, None, None, None
+    # Дані для навчання (мінімум 20 рядків з Фактом)
+    df_train = df_h.dropna(subset=['Fact_MW'] + existing_features)
+    if len(df_train) < 20:
+        return df_f['Forecast_MW'], 0.0, None, None, None, None
 
-    # Навчання
+    # 2. Навчання
     X = df_train[existing_features].fillna(0)
     y = df_train['Fact_MW'].astype(float)
     model = RandomForestRegressor(n_estimators=100, random_state=42)
     model.fit(X, y)
 
-    # Прогноз
+    # 3. Прогноз та аналітика
     predictions = model.predict(df_f[existing_features].fillna(0))
     accuracy = model.score(X, y) * 100
 
-    # 1. Важливість факторів
-    importance = pd.DataFrame({'Фактор': existing_features, 'Важливість': model.feature_importances_}).sort_values(by='Важливість', ascending=False)
+    # Важливість факторів (коефіцієнти)
+    importance = pd.DataFrame({
+        'Фактор': existing_features, 
+        'Коефіцієнт': model.feature_importances_
+    }).sort_values(by='Коефіцієнт', ascending=False)
 
-    # 2. Дані для графіка помилок (7 днів)
+    # 4. Порівняльний аналіз за останні 5 днів (Історія)
+    hist_5d = df_train.tail(24 * 5).copy()
+    hist_5d['AI_Plan'] = model.predict(hist_5d[existing_features].fillna(0))
+    
+    # Групуємо по днях
+    comparison_df = hist_5d.groupby(hist_5d['Time'].dt.date).agg({
+        'Fact_MW': 'sum',
+        'Forecast_MW': 'sum',
+        'AI_Plan': 'sum'
+    }).reset_index()
+    comparison_df.columns = ['Дата', 'Факт (АСКОЕ)', 'Прогноз Сайту', 'План ШІ']
+
+    # Історія помилок для теплової карти
     error_history = df_train[['Time', 'Fact_MW', 'Forecast_MW']].tail(24 * 7).copy()
     error_history['Error'] = error_history['Fact_MW'] - error_history['Forecast_MW']
-
-    # 3. Дані для ТЕПЛОВОЇ КАРТИ (Помилка: Година vs День)
-    heatmap_data = error_history.copy()
-    heatmap_data['Hour'] = heatmap_data['Time'].dt.hour
-    heatmap_data['Date'] = heatmap_data['Time'].dt.strftime('%d.%m')
-    # Створюємо матрицю помилок
-    pivot_error = heatmap_data.pivot_table(index='Hour', columns='Date', values='Error', aggfunc='mean').fillna(0)
+    heatmap_df = error_history.copy()
+    heatmap_df['Hour'] = heatmap_df['Time'].dt.hour
+    heatmap_df['Date'] = heatmap_df['Time'].dt.strftime('%d.%m')
+    pivot_error = heatmap_df.pivot_table(index='Hour', columns='Date', values='Error', aggfunc='mean').fillna(0)
     
-    return predictions, accuracy, importance, error_history, pivot_error
+    return predictions, accuracy, importance, error_history, pivot_error, comparison_df
