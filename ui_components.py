@@ -3,10 +3,9 @@ import plotly.graph_objects as go
 import plotly.express as px
 
 def draw_main_chart(df):
-    """Головний графік: темний фон, без білих плям"""
+    """Головний графік: глибока темна тема"""
     fig = go.Figure()
 
-    # 1. Прогноз сайту
     fig.add_trace(go.Scatter(
         x=df['Time'].head(72), 
         y=df['Forecast_MW'].head(72), 
@@ -14,7 +13,6 @@ def draw_main_chart(df):
         line=dict(dash='dot', color='#888888', width=2)
     ))
 
-    # 2. План SkyGrid AI
     fig.add_trace(go.Scatter(
         x=df['Time'].head(72), 
         y=df['AI_MW'].head(72), 
@@ -40,12 +38,11 @@ def draw_main_chart(df):
     st.plotly_chart(fig, use_container_width=True, theme=None)
 
 def draw_learning_insights(accuracy, importance_df, error_history, pivot_error):
-    """Вкладка НАВЧАННЯ: Прозора теплова карта"""
+    """Вкладка НАВЧАННЯ: Тепер з прозорим колорбаром"""
     st.subheader(f"🧠 Аналітика ШІ (Точність: {accuracy:.1f}%)")
     
     c1, c2 = st.columns(2)
     with c1:
-        # Графік факторів (поки не чіпаємо)
         fig = px.bar(importance_df, x='Важливість', y='Фактор', orientation='h')
         fig.update_traces(marker_color='#00ff7f')
         fig.update_layout(
@@ -59,7 +56,6 @@ def draw_learning_insights(accuracy, importance_df, error_history, pivot_error):
         st.plotly_chart(fig, use_container_width=True, theme=None)
 
     with c2:
-        # Графік похибки
         fig_err = go.Figure(go.Scatter(
             x=error_history['Time'], 
             y=error_history['Error'], 
@@ -78,7 +74,7 @@ def draw_learning_insights(accuracy, importance_df, error_history, pivot_error):
 
     st.write("🔥 **Теплова карта помилок (Година / День)**")
     
-    # --- ТЕПЛОВА КАРТА З ПРОЗОРИМ ФОНОМ ---
+    # Створення теплової карти
     fig_heat = px.imshow(
         pivot_error, 
         labels=dict(x="Дата", y="Година", color="Δ МВт"),
@@ -88,23 +84,28 @@ def draw_learning_insights(accuracy, importance_df, error_history, pivot_error):
         aspect="auto"
     )
     
+    # НАЛАШТУВАННЯ ЗГІДНО З ВАШИМИ ПАРАМЕТРАМИ
     fig_heat.update_layout(
         template=None,
-        paper_bgcolor='rgba(0,0,0,0)', # Прозорість
-        plot_bgcolor='rgba(0,0,0,0)',  # Прозорість
+        paper_bgcolor='rgba(0,0,0,0)', # Фон паперу прозорий
+        plot_bgcolor='rgba(0,0,0,0)',  # Фон графіка прозорий
         font=dict(color="white"),
         margin=dict(l=10, r=10, t=10, b=10),
+        
+        # Налаштування колорбару (шкали) за допомогою властивостей, які ви надіслали
         coloraxis_colorbar=dict(
-            title="Δ МВт", 
-            tickfont=dict(color="white"),
-            titlefont=dict(color="white")
+            bgcolor='rgba(0,0,0,0)',     # ТЕ САМЕ ПОЛЕ BGCOLOR - тепер прозоре
+            tickfont=dict(color="white"), # Колір шрифту шкали
+            title=dict(text="Δ МВт", font=dict(color="white")), # Колір заголовка шкали
+            outlinecolor='rgba(0,0,0,0)', # Прибираємо рамку навколо шкали
+            bordercolor='rgba(0,0,0,0)'   # Прибираємо колір межі
         )
     )
     
     st.plotly_chart(fig_heat, use_container_width=True, theme=None)
 
 def draw_metrics(df, now_ua, timedelta):
-    """Верхні картки генерації"""
+    """Метрики генерації"""
     c1, c2, c3 = st.columns(3)
     for i, col in enumerate([c1, c2, c3]):
         d = (now_ua + timedelta(days=i)).date()
