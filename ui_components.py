@@ -3,82 +3,78 @@ import plotly.graph_objects as go
 import plotly.express as px
 
 def draw_main_chart(df):
-    """Фінальна версія: повністю темний професійний графік"""
+    """Версія з повним ігноруванням тем Streamlit"""
     fig = go.Figure()
 
-    # 1. Прогноз сайту (сірий пунктир)
+    # 1. Прогноз сайту
     fig.add_trace(go.Scatter(
         x=df['Time'].head(72), 
         y=df['Forecast_MW'].head(72), 
         name="Прогноз сайту", 
-        line=dict(dash='dot', color='rgba(200, 200, 200, 0.5)', width=2)
+        line=dict(dash='dot', color='#888888', width=2)
     ))
 
-    # 2. План SkyGrid AI (Зелена лінія з підсвіткою)
+    # 2. План SkyGrid AI
     fig.add_trace(go.Scatter(
         x=df['Time'].head(72), 
         y=df['AI_MW'].head(72), 
         name="План SkyGrid AI", 
         fill='tozeroy', 
-        fillcolor='rgba(0, 255, 127, 0.15)', # Легке зелене сяйво
+        fillcolor='rgba(0, 255, 127, 0.1)', 
         line=dict(color='#00ff7f', width=4)
     ))
 
-    # 3. ПОВНЕ ВИДАЛЕННЯ БІЛОГО ФОНУ
+    # 3. ТОТАЛЬНИЙ КОНТРОЛЬ КОЛЬОРУ
     fig.update_layout(
+        template=None, # Вимикаємо стандартні шаблони
         hovermode="x unified",
-        paper_bgcolor='#0e1117', # Темний фон сторінки Streamlit
-        plot_bgcolor='#1a1c23',  # Темний фон самої області графіка
+        paper_bgcolor='#0e1117', # Фон паперу
+        plot_bgcolor='#0e1117',  # Фон області малювання (ТЕПЕР ТОЧНО ТЕМНИЙ)
         font=dict(color="#e0e0e0"),
         margin=dict(l=10, r=10, t=50, b=10),
         height=500,
-        legend=dict(
-            orientation="h", 
-            yanchor="bottom", y=1.02, 
-            xanchor="right", x=1,
-            font=dict(size=12)
-        ),
+        legend=dict(orientation="h", y=1.05, x=1, xanchor="right"),
         xaxis=dict(
             showgrid=True, 
-            gridcolor='rgba(255, 255, 255, 0.05)', # Дуже м'яка сітка
-            linecolor='rgba(255, 255, 255, 0.2)',
-            title="Час (72 години)"
+            gridcolor='#262730', # Темна сітка
+            zeroline=False,
+            title="Години"
         ),
         yaxis=dict(
             showgrid=True, 
-            gridcolor='rgba(255, 255, 255, 0.05)',
-            linecolor='rgba(255, 255, 255, 0.2)',
-            title="Потужність, МВт"
+            gridcolor='#262730',
+            zeroline=False,
+            title="МВт"
         )
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    # Вимикаємо вбудовану тему Streamlit для цього графіка
+    st.plotly_chart(fig, use_container_width=True, theme=None)
 
 def draw_learning_insights(accuracy, importance_df, error_history, pivot_error):
-    """Аналітика теж у глибокому темному стилі"""
+    """Аналітика без білих плям"""
     st.subheader(f"🧠 Аналітика ШІ (Точність: {accuracy:.1f}%)")
     
-    # Використовуємо темний шаблон Plotly за замовчуванням
     c1, c2 = st.columns(2)
     with c1:
-        st.write("📊 **Важливість факторів**")
-        fig = px.bar(importance_df, x='Важливість', y='Фактор', orientation='h', color_discrete_sequence=['#00ff7f'])
-        fig.update_layout(template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', height=300)
-        st.plotly_chart(fig, use_container_width=True)
+        fig = px.bar(importance_df, x='Важливість', y='Фактор', orientation='h')
+        fig.update_traces(marker_color='#00ff7f')
+        fig.update_layout(template=None, paper_bgcolor='#0e1117', plot_bgcolor='#0e1117', 
+                          font=dict(color="white"), height=300, margin=dict(l=0,r=0,t=0,b=0))
+        st.plotly_chart(fig, use_container_width=True, theme=None)
 
     with c2:
-        st.write("📉 **Динаміка похибки (7 днів)**")
-        fig_err = go.Figure(go.Scatter(x=error_history['Time'], y=error_history['Error'], fill='tozeroy', line=dict(color='#FFA500'), fillcolor='rgba(255, 165, 0, 0.1)'))
-        fig_err.update_layout(template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', height=300)
-        st.plotly_chart(fig_err, use_container_width=True)
+        fig_err = go.Figure(go.Scatter(x=error_history['Time'], y=error_history['Error'], fill='tozeroy', line=dict(color='#FFA500')))
+        fig_err.update_layout(template=None, paper_bgcolor='#0e1117', plot_bgcolor='#0e1117', 
+                              font=dict(color="white"), height=300, margin=dict(l=0,r=0,t=0,b=0))
+        st.plotly_chart(fig_err, use_container_width=True, theme=None)
 
-    st.write("🔥 **Теплова карта помилок (Година / День)**")
+    st.write("🔥 Теплова карта помилок")
     fig_heat = px.imshow(pivot_error, color_continuous_scale='RdBu_r', aspect="auto")
-    fig_heat.update_layout(template='plotly_dark', height=400)
-    st.plotly_chart(fig_heat, use_container_width=True)
+    fig_heat.update_layout(template=None, paper_bgcolor='#0e1117', plot_bgcolor='#0e1117', font=dict(color="white"))
+    st.plotly_chart(fig_heat, use_container_width=True, theme=None)
 
 def draw_metrics(df, now_ua, timedelta):
-    """Картки генерації"""
     c1, c2, c3 = st.columns(3)
     for i, col in enumerate([c1, c2, c3]):
         d = (now_ua + timedelta(days=i)).date()
