@@ -3,7 +3,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 
 def draw_main_chart(df):
-    """Головний графік: глибока темна тема"""
+    """Головний графік: глибокий темний стиль"""
     fig = go.Figure()
 
     fig.add_trace(go.Scatter(
@@ -38,7 +38,7 @@ def draw_main_chart(df):
     st.plotly_chart(fig, use_container_width=True, theme=None)
 
 def draw_learning_insights(accuracy, importance_df, error_history, pivot_error):
-    """Вкладка НАВЧАННЯ: Тепер з прозорим колорбаром"""
+    """Вкладка НАВЧАННЯ: Тепер без білих контурів на шкалі"""
     st.subheader(f"🧠 Аналітика ШІ (Точність: {accuracy:.1f}%)")
     
     c1, c2 = st.columns(2)
@@ -74,7 +74,6 @@ def draw_learning_insights(accuracy, importance_df, error_history, pivot_error):
 
     st.write("🔥 **Теплова карта помилок (Година / День)**")
     
-    # Створення теплової карти
     fig_heat = px.imshow(
         pivot_error, 
         labels=dict(x="Дата", y="Година", color="Δ МВт"),
@@ -84,21 +83,21 @@ def draw_learning_insights(accuracy, importance_df, error_history, pivot_error):
         aspect="auto"
     )
     
-    # НАЛАШТУВАННЯ ЗГІДНО З ВАШИМИ ПАРАМЕТРАМИ
     fig_heat.update_layout(
         template=None,
-        paper_bgcolor='rgba(0,0,0,0)', # Фон паперу прозорий
-        plot_bgcolor='rgba(0,0,0,0)',  # Фон графіка прозорий
+        paper_bgcolor='rgba(0,0,0,0)', 
+        plot_bgcolor='rgba(0,0,0,0)',  
         font=dict(color="white"),
         margin=dict(l=10, r=10, t=10, b=10),
         
-        # Налаштування колорбару (шкали) за допомогою властивостей, які ви надіслали
+        # ВИПРАВЛЕННЯ БІЛОЇ РАМКИ НАВКОЛО ШКАЛИ
         coloraxis_colorbar=dict(
-            bgcolor='rgba(0,0,0,0)',     # ТЕ САМЕ ПОЛЕ BGCOLOR - тепер прозоре
-            tickfont=dict(color="white"), # Колір шрифту шкали
-            title=dict(text="Δ МВт", font=dict(color="white")), # Колір заголовка шкали
-            outlinecolor='rgba(0,0,0,0)', # Прибираємо рамку навколо шкали
-            bordercolor='rgba(0,0,0,0)'   # Прибираємо колір межі
+            bgcolor='rgba(0,0,0,0)',     
+            tickfont=dict(color="white"), 
+            title=dict(text="Δ МВт", font=dict(color="white")), 
+            outlinecolor='rgba(0,0,0,0)', # Прибираємо білий контур
+            bordercolor='rgba(0,0,0,0)',  # Прибираємо білу межу
+            borderwidth=0                 # Встановлюємо ширину межі в нуль
         )
     )
     
