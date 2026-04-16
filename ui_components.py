@@ -3,7 +3,6 @@ import plotly.graph_objects as go
 import plotly.express as px
 
 def draw_main_chart(df):
-    """Головний графік моніторингу"""
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=df['Time'].head(72), y=df['Forecast_MW'].head(72), name="Прогноз сайту", line=dict(dash='dot', color='#888888')))
     fig.add_trace(go.Scatter(x=df['Time'].head(72), y=df['AI_MW'].head(72), name="План SkyGrid AI", fill='tozeroy', line=dict(color='#00ff7f', width=4)))
@@ -11,29 +10,24 @@ def draw_main_chart(df):
     st.plotly_chart(fig, use_container_width=True, theme=None)
 
 def draw_learning_insights(accuracy, importance_df, error_history, pivot_error, comparison_df):
-    """Вкладка НАВЧАННЯ: Тепер з порівнянням за 5 днів та факторами"""
     st.subheader(f"🧠 Аналітика навчання (Точність: {accuracy:.1f}%)")
     
-    # 1. ПОРІВНЯЛЬНИЙ ГРАФІК (Факт vs Сайт vs ШІ)
-    st.write("📊 **Порівняння генерації за останні 5 днів (МВт·год)**")
+    # ПОРІВНЯЛЬНИЙ ГРАФІК СТОВПЧИКАМИ
     if comparison_df is not None:
+        st.write("📊 **Порівняння сумарної генерації за 5 днів (МВт·год)**")
         fig_comp = go.Figure()
         fig_comp.add_trace(go.Bar(x=comparison_df['Дата'], y=comparison_df['Факт (АСКОЕ)'], name='Факт (АСКОЕ)', marker_color='#00ff7f'))
         fig_comp.add_trace(go.Bar(x=comparison_df['Дата'], y=comparison_df['Прогноз Сайту'], name='Прогноз Сайту', marker_color='#888888'))
         fig_comp.add_trace(go.Bar(x=comparison_df['Дата'], y=comparison_df['План ШІ'], name='План ШІ', marker_color='#00d4ff'))
-        
-        fig_comp.update_layout(template=None, barmode='group', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', 
-                               font=dict(color="white"), height=400, margin=dict(l=10,r=10,t=10,b=10))
+        fig_comp.update_layout(template=None, barmode='group', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color="white"), height=400)
         st.plotly_chart(fig_comp, use_container_width=True, theme=None)
 
     c1, c2 = st.columns(2)
     with c1:
-        st.write("📈 **Вплив факторів (Вага коефіцієнтів)**")
-        # Горизонтальні стовпчики для кожного фактора
-        fig_imp = px.bar(importance_df, x='Коефіцієнт', y='Фактор', orientation='h', color='Коефіцієнт', color_continuous_scale='Greens')
-        fig_imp.update_layout(template=None, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color="white"), height=300, showlegend=False)
+        st.write("📈 **Вплив факторів (Коефіцієнти)**")
+        fig_imp = px.bar(importance_df, x='Коефіцієнт', y='Фактор', orientation='h', color_discrete_sequence=['#00ff7f'])
+        fig_imp.update_layout(template=None, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color="white"), height=300)
         st.plotly_chart(fig_imp, use_container_width=True, theme=None)
-
     with c2:
         st.write("📉 **Динаміка похибки (Дельта)**")
         fig_err = go.Figure(go.Scatter(x=error_history['Time'], y=error_history['Error'], fill='tozeroy', line=dict(color='#FFA500')))
