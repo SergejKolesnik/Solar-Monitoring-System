@@ -10,15 +10,15 @@ from datetime import datetime, timedelta
 BASE_FILE = "solar_ai_base.csv"
 
 def main():
-    print(f"🚀 СТАРТ РОБОТИ: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"🚀 СТАРТ: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
-    # --- 1. ЗАВАНТАЖЕННЯ ІСНУЮЧОЇ БАЗИ ---
+    # --- 1. ЗАВАНТАЖЕННЯ БАЗИ ---
     if os.path.exists(BASE_FILE):
         df_main = pd.read_csv(BASE_FILE)
         df_main['Time'] = pd.to_datetime(df_main['Time'])
         print(f"📋 База завантажена. Рядки: {len(df_main)}. Останній запис: {df_main['Time'].max()}")
     else:
-        print("⚠️ База не знайдена, створюємо нову структуру.")
+        print("⚠️ База не знайдена, створюємо нову.")
         df_main = pd.DataFrame(columns=['Time', 'Fact_MW', 'Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb'])
 
     # --- 2. ПОШТА (АСКОЕ) ---
@@ -29,56 +29,64 @@ def main():
         mail.login(os.getenv('EMAIL_USER'), os.getenv('EMAIL_PASS'))
         mail.select("INBOX")
         
-        # Шукаємо за останні 7 днів, щоб точно нічого не пропустити
-        date_cut = (datetime.now() - timedelta(days=7)).strftime("%d-%b-%Y")
-        _, messages = mail.search(None, f'(SINCE {date_cut})')
+        # Беремо останні 50 листів (найнадійніший спосіб знайти нові листи)
+        _, data = mail.search(None, 'ALL')
+        msg_ids = data[0].split()
+        last_ids = msg_ids[-50:]
         
-        msg_ids = messages[0].split()
-        print(f"📩 Знайдено листів за період з {date_cut}: {len(msg_ids)}")
+        print(f"📩 Перевірка останніх {len(last_ids)} листів...")
 
-        for num in msg_ids:
+        for num in last_ids:
             _, data = mail.fetch(num, "(RFC822)")
             msg = email.message_from_bytes(data[0][1])
-            subject = msg.get("Subject")
             
-            for part in msg.walk():
-                if part.get_content_maintype() == 'multipart': continue
-                if part.get('Content-Disposition') is None: continue
+            # Фільтр по даті (лише за останні 7 днів)
+            date_str = msg.get("Date")
+            msg_date = email.utils.parsedate_to_datetime(date_str).replace(tzinfo=None)
+            
+            if msg_date > (datetime.now() - timedelta(days=7)):
+                subject = msg.get("Subject")
                 
-                filename = part.get_filename()
-                if filename and (filename.endswith(".xlsx") or filename.endswith(".xls")):
-                    print(f"📎 Обробка вкладення: {filename} (Тема: {subject})")
-                    try:
-                        content = part.get_payload(decode=True)
-                        # Читаємо Excel (використовуємо io.BytesIO)
-                        df_excel = pd.read_excel(io.BytesIO(content))
-                        
-                        # Тут ми припускаємо, що Excel має колонки 'Час' та 'Факт' 
-                        # (Налаштуйте назви під ваш формат АСКОЕ, якщо вони відрізняються)
-                        # Приклад для типового звіту:
-                        if not df_excel.empty:
-                            # Очищення та форматування даних з Excel
-                            # (Замініть назви колонок на реальні з вашого файлу)
-                            temp_df = pd.DataFrame({
-                                'Time': pd.to_datetime(df_excel.iloc[:, 0]), # Перша колонка - час
-                                'Fact_MW': df_excel.iloc[:, 1].astype(float) # Друга колонка - факт
-                            })
-                            fact_data_list.append(temp_df)
-                            print(f"✅ Успішно вилучено {len(temp_df)} рядків факту")
-                    except Exception as ex:
-                        print(f"❌ Помилка читання Excel {filename}: {ex}")
+                for part in msg.walk():
+                    if part.get_content_maintype() == 'multipart': continue
+                    filename = part.get_filename()
+                    
+                    if filename and (filename.endswith(".xlsx") or filename.endswith(".xls")):
+                        print(f"📎 Файл: {filename} (Тема: {subject})")
+                        try:
+                            content = part.get_payload(decode=True)
+                            # Читаємо Excel без заголовків (header=None) для ручного парсингу
+                            df_excel = pd.read_excel(io.BytesIO(content), header=None)
+                            
+                            if not df_excel.empty:
+                                # ОЧИЩЕННЯ: перетворюємо все в текст і міняємо коми на крапки
+                                df_excel = df_excel.astype(str).replace({',': '.'}, regex=True)
+                                
+                                temp_rows = []
+                                for _, row in df_excel.iterrows():
+                                    # Намагаємося знайти Час у 1-й колонці та Число у 2-й
+                                    t = pd.to_datetime(row[0], errors='coerce')
+                                    f = pd.to_numeric(row[1], errors='coerce')
+                                    
+                                    if not pd.isna(t) and not pd.isna(f):
+                                        temp_rows.append({'Time': t, 'Fact_MW': f})
+                                
+                                if temp_rows:
+                                    fact_data_list.append(pd.DataFrame(temp_rows))
+                                    print(f"✅ Додано {len(temp_rows)} рядків")
+                        except Exception as ex:
+                            print(f"❌ Помилка Excel {filename}: {ex}")
         
         mail.close()
         mail.logout()
     except Exception as e:
-        print(f"❌ Критична помилка пошти: {e}")
+        print(f"❌ Помилка пошти: {e}")
 
     # --- 3. ПОГОДА (Visual Crossing) ---
     df_w = pd.DataFrame()
     try:
-        print("☁️ Запит прогнозу погоди...")
+        print("☁️ Запит погоди...")
         api_key = os.getenv('WEATHER_API_KEY')
-        # Беремо історію за 3 дні та прогноз на 3 дні вперед
         d_start = (datetime.now() - timedelta(days=3)).strftime('%Y-%m-%d')
         d_end = (datetime.now() + timedelta(days=3)).strftime('%Y-%m-%d')
         
@@ -97,35 +105,42 @@ def main():
                     'PrecipProb': hr.get('precipprob', 0)
                 })
         df_w = pd.DataFrame(w_rows)
-        print(f"✅ Отримано погодніх даних: {len(df_w)} рядків")
+        print(f"✅ Погода отримана: {len(df_w)} рядків")
     except Exception as e:
-        print(f"❌ Помилка метеосервісу: {e}")
+        print(f"❌ Помилка метео: {e}")
 
-    # --- 4. ОБ'ЄДНАННЯ ТА СИНХРОНІЗАЦІЯ ---
-    print("🔄 Синхронізація даних...")
+    # --- 4. ОБ'ЄДНАННЯ ТА ЗБЕРЕЖЕННЯ ---
+    print("🔄 Синхронізація...")
     
-    # Створюємо датафрейм з нових даних
+    # Збираємо нові дані (Погода + Факт)
     df_new = df_w.copy() if not df_w.empty else pd.DataFrame(columns=['Time'])
     
     if fact_data_list:
         df_facts = pd.concat(fact_data_list).drop_duplicates('Time', keep='last')
         if not df_new.empty:
-            df_new = pd.merge(df_new, df_facts, on='Time', how='left')
+            # Об'єднуємо погоду з фактом по часу
+            df_new = pd.merge(df_new, df_facts, on='Time', how='left', suffixes=('', '_new'))
+            if 'Fact_MW_new' in df_new.columns:
+                df_new['Fact_MW'] = df_new['Fact_MW_new']
+                df_new = df_new.drop(columns=['Fact_MW_new'])
         else:
             df_new = df_facts
 
-    # Об'єднуємо стару базу з новими даними
-    # Важливо: використовуємо keep='last', щоб оновлювати прогноз на свіжіший
+    # Додаємо нове до старої бази
     df_final = pd.concat([df_main, df_new], ignore_index=True)
     
-    # Видаляємо дублікати по часу, залишаючи останню версію (де є Факт)
+    # Розумне видалення дублікатів:
+    # Спочатку сортуємо так, щоб рядки з Fact_MW були внизу
     df_final = df_final.sort_values(by=['Time', 'Fact_MW'], na_position='first')
+    # Залишаємо останній запис для кожної години (той, що з фактом або найсвіжіший)
     df_final = df_final.drop_duplicates(subset=['Time'], keep='last')
     
-    # Сортуємо по даті перед збереженням
     df_final = df_final.sort_values('Time').reset_index(drop=True)
 
-    # Зберігаємо
+    # Фінальний фільтр: залишаємо лише колонки бази
+    cols = ['Time', 'Fact_MW', 'Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb']
+    df_final = df_final[cols]
+
     df_final.to_csv(BASE_FILE, index=False)
     print(f"💾 ФІНІШ: База оновлена. Разом рядків: {len(df_final)}")
 
