@@ -37,15 +37,14 @@ jobs:
           git config --global user.name 'SkyGrid Bot'
           git config --global user.email 'bot@skygrid.ai'
           
-          # Очищуємо робочу область і беремо свіжий стан з сервера
-          git fetch origin main
-          git reset --hard origin/main
+          # Отримуємо зміни з сервера без видалення локального файлу
+          git pull --rebase origin main
           
-          # Додаємо файл, який оновив collector.py
+          # Додаємо наш оновлений файл
           git add solar_ai_base.csv
           
-          # Комітимо, якщо є зміни
+          # Робимо коміт (якщо файл реально змінився)
           git commit -m "Auto-update solar base: $(date +'%Y-%m-%d %H:%M')" || exit 0
           
-          # ПРИМУСОВИЙ ПУШ (це розблокує оновлення бази)
-          git push origin main --force
+          # Відправляємо в репозиторій
+          git push origin main
