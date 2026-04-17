@@ -37,17 +37,14 @@ jobs:
           git config --global user.name 'SkyGrid Bot'
           git config --global user.email 'bot@skygrid.ai'
           
-          # Очищуємо кеш індексу для цього файлу, щоб Git точно його "перечитав"
-          git rm --cached solar_ai_base.csv || echo "File not cached"
+          # Отримуємо свіжий стан сервера без затирання локальних змін
+          git pull origin main --rebase
           
-          # Додаємо файл заново
+          # Додаємо оновлену базу
           git add solar_ai_base.csv
           
-          # Виводимо статус для діагностики в логах
-          git status
+          # Створюємо коміт (exit 0 дозволяє не ламатися, якщо раптом змін немає)
+          git commit -m "Full Sync: $(date +'%Y-%m-%d %H:%M')" || exit 0
           
-          # Комітимо
-          git commit -m "Hard-update solar base: $(date +'%Y-%m-%d %H:%M')" || exit 0
-          
-          # Примусовий пуш, щоб ігнорувати помилку "rejected"
+          # ПРИМУСОВИЙ ПУШ, щоб перебити будь-які конфлікти версій
           git push origin main --force
