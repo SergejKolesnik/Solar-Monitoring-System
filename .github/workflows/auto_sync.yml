@@ -37,14 +37,14 @@ jobs:
           git config --global user.name 'SkyGrid Bot'
           git config --global user.email 'bot@skygrid.ai'
           
-          # Отримуємо зміни з сервера без видалення локального файлу
-          git pull --rebase origin main
+          # Отримуємо останні зміни з сервера (якщо були) без скидання локальних файлів
+          git pull origin main --rebase
           
-          # Додаємо наш оновлений файл
+          # Додаємо саме наш файл бази
           git add solar_ai_base.csv
           
-          # Робимо коміт (якщо файл реально змінився)
-          git commit -m "Auto-update solar base: $(date +'%Y-%m-%d %H:%M')" || exit 0
+          # Створюємо коміт, якщо є реальні зміни в даних
+          git commit -m "Auto-update solar base: $(date +'%Y-%m-%d %H:%M')" || echo "No changes to commit"
           
-          # Відправляємо в репозиторій
+          # Відправляємо оновлений файл на GitHub
           git push origin main
