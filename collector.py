@@ -12,6 +12,8 @@ DAYS_TO_KEEP = 30
 LIMIT = DAYS_TO_KEEP * 24 
 
 def main():
+    print(f"📂 Робоча директорія: {os.getcwd()}")
+    print(f"📄 Шлях до бази: {os.path.abspath(BASE_FILE)}")
     print(f"🚀 СТАРТ: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
     # 1. ЗАВАНТАЖЕННЯ БАЗИ
