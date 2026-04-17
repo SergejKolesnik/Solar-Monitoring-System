@@ -9,14 +9,13 @@ jobs:
   update:
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # ДОЗВІЛ НА ЗАПИС НОВИХ ФАЙЛІВ
+      contents: write
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }} # Використання системного токена
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -38,16 +37,14 @@ jobs:
           git config --global user.name 'SkyGrid Bot'
           git config --global user.email 'bot@skygrid.ai'
           
-          # Обов'язково pull перед push, щоб уникнути конфлікту 128
+          # Оновлюємось, щоб не було конфліктів
           git pull origin main --rebase
           
-          # Додаємо абсолютно всі зміни (включаючи нові файли)
+          # Додаємо ВСІ нові файли (base_weather, base_generation тощо)
           git add -A
           
-          # Перевіряємо, чи є що комітити
-          if git diff --staged --quiet; then
-            echo "No changes to commit"
-          else
-            git commit -m "Auto-split base update: $(date +'%Y-%m-%d %H:%M')"
-            git push origin main
-          fi
+          # Робимо коміт
+          git commit -m "Split-base activation: $(date +'%Y-%m-%d %H:%M')" || exit 0
+          
+          # Штовхаємо в репозиторій
+          git push origin main
