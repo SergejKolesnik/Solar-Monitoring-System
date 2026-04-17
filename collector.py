@@ -12,21 +12,23 @@ DAYS_TO_KEEP = 30
 LIMIT = DAYS_TO_KEEP * 24 
 
 def main():
+    print(f"🚀 СТАРТ: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"📂 Робоча директорія: {os.getcwd()}")
     print(f"📄 Шлях до бази: {os.path.abspath(BASE_FILE)}")
-    print(f"🚀 СТАРТ: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
     # 1. ЗАВАНТАЖЕННЯ БАЗИ
     if os.path.exists(BASE_FILE):
         df_main = pd.read_csv(BASE_FILE)
-        df_main['Time'] = pd.to_datetime(df_main['Time']).dt.floor('h') # Відкидаємо секунди для точності
+        df_main['Time'] = pd.to_datetime(df_main['Time']).dt.floor('h')
         print(f"📋 База завантажена. Рядки: {len(df_main)}. Остання дата: {df_main['Time'].max()}")
     else:
+        print("⚠️ База не знайдена, створюємо нову.")
         df_main = pd.DataFrame(columns=['Time', 'Fact_MW', 'Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb'])
 
     # 2. ПОШТА (АСКОЕ)
     fact_data_list = []
     try:
+        print("🔐 Підключення до пошти...")
         mail = imaplib.IMAP4_SSL("imap.gmail.com")
         mail.login(os.getenv('EMAIL_USER'), os.getenv('EMAIL_PASS'))
         mail.select("INBOX")
@@ -61,9 +63,10 @@ def main():
     except Exception as e:
         print(f"❌ Помилка пошти: {e}")
 
-    # 3. ПОГОДА (Visual Crossing) - Розширено до 5 днів історії
+    # 3. ПОГОДА (Visual Crossing)
     df_w = pd.DataFrame()
     try:
+        print("☁️ Запит погоди...")
         api_key = os.getenv('WEATHER_API_KEY')
         d_start = (datetime.now() - timedelta(days=5)).strftime('%Y-%m-%d')
         d_end = (datetime.now() + timedelta(days=3)).strftime('%Y-%m-%d')
@@ -85,34 +88,24 @@ def main():
     except Exception as e:
         print(f"❌ Помилка метео: {e}")
 
-    # 4. РОЗУМНЕ ОБ'ЄДНАННЯ (Пріоритет Факту)
+    # 4. ОБ'ЄДНАННЯ ТА РОТАЦІЯ
     print("🔄 Синхронізація...")
-    
-    # Створюємо тимчасову таблицю нових фактів
     df_new_facts = pd.DataFrame(fact_data_list)
     if not df_new_facts.empty:
         df_new_facts = df_new_facts.drop_duplicates('Time', keep='last')
 
-    # Об'єднуємо все в один масив
     df_final = pd.concat([df_main, df_w, df_new_facts], ignore_index=True)
-    
-    # Сортуємо так, щоб рядки з Fact_MW були в кінці для кожної години
     df_final = df_final.sort_values(by=['Time', 'Fact_MW'], na_position='first')
-    
-    # Видаляємо дублікати, залишаючи останній запис (де є факт)
     df_final = df_final.drop_duplicates(subset=['Time'], keep='last')
-    
-    # Відновлюємо безперервність (сортування по часу)
     df_final = df_final.sort_values('Time').reset_index(drop=True)
 
-    # ЛІМІТ 30 ДНІВ
     if len(df_final) > LIMIT:
         df_final = df_final.tail(LIMIT)
 
-    # Збереження
-    cols = ['Time', 'Fact_MW', 'Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb']
-    df_final[cols].to_csv(BASE_FILE, index=False)
-    print(f"💾 ФІНІШ: База оновлена. Разом рядків: {len(df_final)}. Останній факт: {df_final.dropna(subset=['Fact_MW'])['Time'].max()}")
+    df_final[['Time', 'Fact_MW', 'Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb']].to_csv(BASE_FILE, index=False)
+    
+    last_f = df_final.dropna(subset=['Fact_MW'])['Time'].max()
+    print(f"💾 ФІНІШ: База оновлена. Рядків: {len(df_final)}. Останній факт: {last_f}")
 
 if __name__ == "__main__":
     main()
