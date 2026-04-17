@@ -1,50 +1,33 @@
 name: SkyGrid Auto Sync
-
 on:
   schedule:
     - cron: '0 */3 * * *'
   workflow_dispatch:
-
 jobs:
   update:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v3
-        with:
-          fetch-depth: 0
-
-      - name: Set up Python
+      - name: Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
-
-      - name: Install dependencies
+      - name: Install
         run: pip install pandas requests openpyxl scikit-learn
-
-      - name: Run Collector
+      - name: Run
         env:
           WEATHER_API_KEY: ${{ secrets.WEATHER_API_KEY }}
           EMAIL_USER: ${{ secrets.EMAIL_USER }}
           EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
         run: python collector.py
-
-      - name: Commit and Push Changes
+      - name: Push
         run: |
           git config --global user.name 'SkyGrid Bot'
           git config --global user.email 'bot@skygrid.ai'
-          
-          # Оновлюємось, щоб не було конфліктів
           git pull origin main --rebase
-          
-          # Додаємо ВСІ нові файли (base_weather, base_generation тощо)
-          git add -A
-          
-          # Робимо коміт
-          git commit -m "Split-base activation: $(date +'%Y-%m-%d %H:%M')" || exit 0
-          
-          # Штовхаємо в репозиторій
+          git add base_generation.csv base_weather.csv solar_ai_base.csv || echo "Деякі файли ще не створені"
+          git commit -m "Auto-update" || exit 0
           git push origin main
