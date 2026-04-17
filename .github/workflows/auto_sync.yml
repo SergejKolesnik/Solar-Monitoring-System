@@ -37,17 +37,11 @@ jobs:
           git config --global user.name 'SkyGrid Bot'
           git config --global user.email 'bot@skygrid.ai'
           
-          # Оновлюємо посилання
-          git fetch origin main
+          # ПРИМУСОВО додаємо файл
+          git add solar_ai_base.csv
           
-          # ПРИМУСОВО додаємо файл, навіть якщо Git пручається
-          git add -f solar_ai_base.csv
+          # Створюємо коміт (exit 0 дозволяє пройти далі, якщо змін раптом немає)
+          git commit -m "Auto-update database: $(date +'%Y-%m-%d %H:%M')" || exit 0
           
-          # Перевіряємо, чи файл тепер у черзі (staging)
-          git status
-          
-          # Робимо коміт
-          git commit -m "Auto-update solar base: $(date +'%Y-%m-%d %H:%M')" || echo "No changes to commit"
-          
-          # ПРИМУСОВИЙ ПУШ, щоб перебити будь-які конфлікти
+          # ПРИМУСОВИЙ ПУШ із затиранням конфліктів
           git push origin main --force
