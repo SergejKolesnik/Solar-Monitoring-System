@@ -37,11 +37,14 @@ jobs:
           git config --global user.name 'SkyGrid Bot'
           git config --global user.email 'bot@skygrid.ai'
           
-          # ПРИМУСОВО додаємо файл
+          # Оновлюємо стан, але не робимо ресет
+          git fetch origin main
+          
+          # Додаємо файл
           git add solar_ai_base.csv
           
-          # Створюємо коміт (exit 0 дозволяє пройти далі, якщо змін раптом немає)
+          # Створюємо коміт (якщо є зміни)
           git commit -m "Auto-update database: $(date +'%Y-%m-%d %H:%M')" || exit 0
           
-          # ПРИМУСОВИЙ ПУШ із затиранням конфліктів
+          # ПРИМУСОВИЙ ПУШ (Force), щоб обійти помилку "Updates were rejected"
           git push origin main --force
