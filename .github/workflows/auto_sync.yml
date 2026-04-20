@@ -1,8 +1,8 @@
 name: SkyGrid Auto Sync
 on:
+  workflow_dispatch:
   schedule:
     - cron: '0 */3 * * *'
-  workflow_dispatch:
 jobs:
   update:
     runs-on: ubuntu-latest
@@ -16,7 +16,7 @@ jobs:
         with:
           python-version: '3.9'
       - name: Install
-        run: pip install pandas requests openpyxl scikit-learn
+        run: pip install pandas requests openpyxl
       - name: Run
         env:
           WEATHER_API_KEY: ${{ secrets.WEATHER_API_KEY }}
@@ -27,7 +27,6 @@ jobs:
         run: |
           git config --global user.name 'SkyGrid Bot'
           git config --global user.email 'bot@skygrid.ai'
-          git pull origin main --rebase
-          git add base_generation.csv base_weather.csv solar_ai_base.csv || echo "Деякі файли ще не створені"
-          git commit -m "Auto-update" || exit 0
-          git push origin main
+          git add solar_ai_base.csv
+          git commit -m "Fix: back to basics" || exit 0
+          git push
