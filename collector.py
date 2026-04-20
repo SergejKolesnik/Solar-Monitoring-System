@@ -8,32 +8,30 @@ from datetime import datetime, timedelta
 
 # НАЛАШТУВАННЯ
 BASE_FILE = "solar_ai_base.csv"
-WEATHER_API_KEY = os.getenv('WEATHER_API_KEY')
 
 def main():
-    print(f"🚀 Старт системи: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"🚀 Старт: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
-    # 1. ЗАВАНТАЖЕННЯ ІСНУЮЧОЇ БАЗИ
+    # 1. ЗАВАНТАЖЕННЯ АБО СТВОРЕННЯ БАЗИ
     if os.path.exists(BASE_FILE):
-        df_base = pd.read_csv(BASE_FILE)
-        df_base['Time'] = pd.to_datetime(df_base['Time'])
+        df = pd.read_csv(BASE_FILE)
+        df['Time'] = pd.to_datetime(df['Time'])
     else:
-        # Створюємо з нуля, якщо файл зник
-        cols = ['Time', 'Fact_MW', 'Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb']
-        df_base = pd.DataFrame(columns=cols)
+        df = pd.DataFrame(columns=['Time', 'Fact_MW', 'Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb'])
 
-    # 2. ЗБІР ПОГОДИ (Прогноз на 3 дні вперед + історія за 7 днів)
-    print("☁️ Оновлення погоди...")
+    # 2. ОНОВЛЕННЯ ПОГОДИ (Беремо історію + прогноз)
+    print("☁️ Оновлення метеоданих...")
     try:
+        api_key = os.getenv('WEATHER_API_KEY')
         d_start = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
         d_end = (datetime.now() + timedelta(days=3)).strftime('%Y-%m-%d')
-        url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/47.631494,34.348690/{d_start}/{d_end}?unitGroup=metric&elements=datetime,temp,cloudcover,solarradiation,windspeed,precipprob&key={WEATHER_API_KEY}&contentType=json"
+        url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/47.631494,34.348690/{d_start}/{d_end}?unitGroup=metric&elements=datetime,temp,cloudcover,solarradiation,windspeed,precipprob&key={api_key}&contentType=json"
         
-        weather_data = requests.get(url).json()
-        new_weather = []
-        for day in weather_data['days']:
+        w_res = requests.get(url).json()
+        new_w_rows = []
+        for day in w_res['days']:
             for hr in day['hours']:
-                new_weather.append({
+                new_w_rows.append({
                     'Time': pd.to_datetime(f"{day['datetime']} {hr['datetime']}"),
                     'Forecast_MW': round(hr.get('solarradiation', 0) * 0.0114, 3),
                     'CloudCover': hr.get('cloudcover', 0),
@@ -41,63 +39,48 @@ def main():
                     'WindSpeed': hr.get('windspeed', 0),
                     'PrecipProb': hr.get('precipprob', 0)
                 })
-        
-        df_weather = pd.DataFrame(new_weather)
-        # Оновлюємо базу погодними даними
-        df_base = pd.merge(df_weather, df_base[['Time', 'Fact_MW']], on='Time', how='left')
-    except Exception as e:
-        print(f"❌ Помилка метео: {e}")
+        df_w = pd.DataFrame(new_w_rows)
+        # Злиття: залишаємо старі факти, оновлюємо погоду
+        df = pd.merge(df_w, df[['Time', 'Fact_MW']], on='Time', how='left')
+    except Exception as e: print(f"❌ Погода: {e}")
 
-    # 3. ЗБІР ГЕНЕРАЦІЇ З ПОШТИ
-    print("📧 Перевірка листів АСКОЕ...")
+    # 3. ЗБІР ГЕНЕРАЦІЇ (Останні 10 днів)
+    print("📧 Читання пошти АСКОЕ...")
     try:
         mail = imaplib.IMAP4_SSL("imap.gmail.com")
         mail.login(os.getenv('EMAIL_USER'), os.getenv('EMAIL_PASS'))
         mail.select("INBOX")
-        
-        # Шукаємо листи за останні 10 днів
         date_cutoff = (datetime.now() - timedelta(days=10)).strftime("%d-%b-%Y")
-        _, search_data = mail.search(None, f'(SINCE "{date_cutoff}")')
+        _, data = mail.search(None, f'(SINCE "{date_cutoff}")')
         
-        mail_ids = search_data[0].split()
-        for m_id in mail_ids[-30:]: # Останні 30 листів
-            _, msg_data = mail.fetch(m_id, "(RFC822)")
-            msg = email.message_from_bytes(msg_data[0][1])
-            
+        for m_id in data[0].split()[-30:]: # Останні 30 листів
+            _, m_data = mail.fetch(m_id, "(RFC822)")
+            msg = email.message_from_bytes(m_data[0][1])
             for part in msg.walk():
                 if part.get_filename() and (part.get_filename().endswith(".xlsx") or part.get_filename().endswith(".xls")):
-                    excel_data = part.get_payload(decode=True)
-                    df_excel = pd.read_excel(io.BytesIO(excel_data), header=None)
+                    excel_df = pd.read_excel(io.BytesIO(part.get_payload(decode=True)), header=None)
                     
-                    # Гнучкий пошук колонки з генерацією
-                    target_col = 5 # за замовчуванням
-                    header_row = df_excel.iloc[1].astype(str).tolist()
-                    for idx, val in enumerate(header_row):
+                    # Динамічний пошук колонки з генерацією
+                    target_col = 5
+                    for idx, val in enumerate(excel_df.iloc[1].astype(str)):
                         if "вироб" in val.lower() or "інвертор" in val.lower():
                             target_col = idx
                             break
                     
-                    # Парсимо рядки з даними
-                    for i in range(2, len(df_excel)):
-                        row_time = pd.to_datetime(df_excel.iloc[i, 0], errors='coerce')
-                        row_val = pd.to_numeric(str(df_excel.iloc[i, target_col]).replace(',', '.'), errors='coerce')
-                        
-                        if not pd.isna(row_time) and not pd.isna(row_val):
-                            t_floor = row_time.replace(minute=0, second=0, microsecond=0)
-                            # Записуємо в основну базу
-                            df_base.loc[df_base['Time'] == t_floor, 'Fact_MW'] = row_val
-        
+                    for i in range(2, len(excel_df)):
+                        t_raw = pd.to_datetime(excel_df.iloc[i, 0], errors='coerce')
+                        val = pd.to_numeric(str(excel_df.iloc[i, target_col]).replace(',', '.'), errors='coerce')
+                        if not pd.isna(t_raw) and not pd.isna(val):
+                            t_floor = t_raw.replace(minute=0, second=0, microsecond=0)
+                            df.loc[df['Time'] == t_floor, 'Fact_MW'] = val
         mail.close()
         mail.logout()
-    except Exception as e:
-        print(f"❌ Помилка пошти: {e}")
+    except Exception as e: print(f"❌ Пошта: {e}")
 
-    # 4. ФІНАЛІЗАЦІЯ
-    df_base = df_base.sort_values('Time').drop_duplicates('Time', keep='last')
-    # Залишаємо вікно 30 днів для навчання
-    df_base = df_base.tail(720) 
-    df_base.to_csv(BASE_FILE, index=False)
-    print(f"✅ Базу оновлено. Останній запис: {df_base['Time'].max()}")
+    # 4. ЗБЕРЕЖЕННЯ
+    df = df.sort_values('Time').drop_duplicates('Time', keep='last').tail(800)
+    df.to_csv(BASE_FILE, index=False)
+    print(f"✅ Готово. Останній час у базі: {df['Time'].max()}")
 
 if __name__ == "__main__":
     main()
