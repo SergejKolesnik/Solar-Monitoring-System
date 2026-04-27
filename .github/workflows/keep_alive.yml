@@ -1,0 +1,13 @@
+name: Keep Site Awake
+
+on:
+  schedule:
+    - cron: '*/20 * * * *' # Кожні 20 хвилин
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Site
+        run: curl -I https://pd2b4edrjntm8tyeulappbo.streamlit.app// # ЗАМІНІТЬ на вашу реальну адресу сайту
