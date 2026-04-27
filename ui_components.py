@@ -15,10 +15,10 @@ def draw_learning_insights(accuracy, importance_df, error_history, pivot_error, 
     # ПОРІВНЯЛЬНИЙ ГРАФІК СТОВПЧИКАМИ
     if comparison_df is not None:
         st.write("📊 **Порівняння сумарної генерації за 5 днів (МВт·год)**")
-        fig_comp = go.Figure()
-        fig_comp.add_trace(go.Bar(x=comparison_df['Дата'], y=comparison_df['Факт (АСКОЕ)'], name='Факт (АСКОЕ)', marker_color='#00ff7f'))
+        fig_comp = go.Figure()        
         fig_comp.add_trace(go.Bar(x=comparison_df['Дата'], y=comparison_df['Прогноз Сайту'], name='Прогноз Сайту', marker_color='#888888'))
         fig_comp.add_trace(go.Bar(x=comparison_df['Дата'], y=comparison_df['План ШІ'], name='План ШІ', marker_color='#00d4ff'))
+        fig_comp.add_trace(go.Bar(x=comparison_df['Дата'], y=comparison_df['Факт (АСКОЕ)'], name='Факт (АСКОЕ)', marker_color='#00ff7f'))
         fig_comp.update_layout(template=None, barmode='group', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color="white"), height=400)
         st.plotly_chart(fig_comp, use_container_width=True, theme=None)
 
