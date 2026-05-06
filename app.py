@@ -47,8 +47,7 @@ if not df_f.empty:
             st.stop()
 
         # Корекція нічного часу
-        night = (df_f['Time'].dt.hour < 5) | (df_f['Time'].dt.hour > 20)
-        df_f.loc[night, ['AI_MW', 'Forecast_MW']] = 0.0
+        df_f.loc[df_f['Rad'] < 5, ['AI_MW', 'Forecast_MW']] = 0.0
 
         # Створення вкладок
         tabs = st.tabs(["📊 МОНІТОРИНГ", "🧠 НАВЧАННЯ", "📑 БАЗА"])
