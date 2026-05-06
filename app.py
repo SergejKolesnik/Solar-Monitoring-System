@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 from weather_service import fetch_weather_data
 from model_engine import train_and_get_insights
-from ui_components import draw_main_chart, draw_metrics
+from ui_components import draw_main_chart, draw_metrics, draw_training_tab
 
 # Налаштування сторінки
 st.set_page_config(page_title="SkyGrid Solar AI", layout="wide", page_icon="☀️")
@@ -24,77 +24,52 @@ if not df_f.empty:
         url = f"https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/solar_ai_base.csv?v={int(time.time()/60)}"
         df_h = pd.read_csv(url)
         df_h['Time'] = pd.to_datetime(df_h['Time'])
-        
-        # 3. ВИКЛИК МОДЕЛІ ІЗ ЗАПОБІЖНИКОМ
+
+        # 3. Виклик моделі
         try:
             results = train_and_get_insights(df_h, df_f)
-            
-            # Перевірка: якщо модель повернула 6 значень (нова версія)
+
             if isinstance(results, tuple) and len(results) == 6:
                 predictions, accuracy, importance, scatter_data, pivot_error, comparison_df = results
-            # Якщо модель повернула 4 значення (стара версія)
             elif isinstance(results, tuple) and len(results) == 4:
                 predictions, accuracy, importance, scatter_data = results
                 pivot_error, comparison_df = 0.0, None
             else:
-                # На випадок непередбачуваної відповіді
                 predictions = results[0] if isinstance(results, tuple) else results
                 accuracy, importance, scatter_data, pivot_error, comparison_df = 0.0, None, None, 0.0, None
-            
+
             df_f['AI_MW'] = predictions
+
         except Exception as model_err:
             st.error(f"⚠️ Помилка логіки моделі: {model_err}")
             st.stop()
 
-        # Корекція нічного часу
+        # 4. Корекція нічного часу
         df_f.loc[df_f['Rad'] < 5, ['AI_MW', 'Forecast_MW']] = 0.0
 
-        # Створення вкладок
+        # 5. Вкладки
         tabs = st.tabs(["📊 МОНІТОРИНГ", "🧠 НАВЧАННЯ", "📑 БАЗА"])
-        
+
         with tabs[0]:
             draw_metrics(df_f, now_ua, timedelta)
             draw_main_chart(df_f)
-            
+
             st.write("---")
             output = io.BytesIO()
             df_export = df_f.head(72)[['Time', 'Forecast_MW', 'AI_MW']].copy()
             df_export.columns = ['Час', 'Прогноз сайту (МВт)', 'План ШІ (МВт)']
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 df_export.to_excel(writer, index=False, sheet_name='Solar_Plan')
-            
+
             st.download_button(
-                label="📥 Завантажити План в Excel", 
-                data=output.getvalue(), 
+                label="📥 Завантажити План в Excel",
+                data=output.getvalue(),
                 file_name=f"Solar_Plan_{now_ua.strftime('%d_%m')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-        
-        # Замінити блок with tabs[1]: на:
-    with tabs[1]:
-    from ui_components import draw_training_tab
-    draw_training_tab(df_h, accuracy, importance, scatter_data, pivot_error, comparison_df)
-            
-            with col_left:
-                st.write("📊 **Вплив факторів**")
-                if importance is not None:
-                    st.bar_chart(importance.set_index('Фактор'))
-                else:
-                    st.info("Дані про важливість факторів очікуються...")
 
-            with col_right:
-                st.write("🎯 **Точність (Факт vs План)**")
-                if scatter_data is not None:
-                    # Відображаємо діаграму розсіювання (точки)
-                    st.scatter_chart(scatter_data, x=scatter_data.columns[0], y=scatter_data.columns[1])
-                else:
-                    st.info("Діаграма точності буде доступна після оновлення model_engine.py")
-
-            if comparison_df is not None:
-                st.write("---")
-                st.write("📅 **Ефективність за останні 5 днів**")
-                st.dataframe(comparison_df.style.highlight_max(axis=0, color='#1b5e20'), use_container_width=True)
-                st.line_chart(comparison_df.set_index('Дата'))
+        with tabs[1]:
+            draw_training_tab(df_h, accuracy, importance, scatter_data, pivot_error, comparison_df)
 
         with tabs[2]:
             st.subheader("📑 Останні записи в базі даних")
