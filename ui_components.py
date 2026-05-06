@@ -1,9 +1,60 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+from datetime import timedelta
 
-def draw_training_tab(df_h, accuracy_r2, mse_error, importance, scatter_data, comparison_df):
+
+# ─────────────────────────────────────────────
+#  ВКЛАДКА 0: МОНІТОРИНГ
+# ─────────────────────────────────────────────
+
+def draw_metrics(df_f, now_ua, timedelta):
+    current = df_f[df_f['Time'] >= now_ua].head(1)
+    next3 = df_f[(df_f['Time'] >= now_ua)].head(3)
+
+    ai_now     = float(current['AI_MW'].values[0])       if not current.empty else 0.0
+    fc_now     = float(current['Forecast_MW'].values[0]) if not current.empty else 0.0
+    ai_3h      = float(next3['AI_MW'].mean())             if not next3.empty  else 0.0
+    daily_sum  = float(df_f[df_f['Time'].dt.date == now_ua.date()]['AI_MW'].sum())
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("⚡ Зараз (ШІ)", f"{ai_now:.2f} МВт",  f"Сайт: {fc_now:.2f}")
+    c2.metric("📈 Середнє 3 год", f"{ai_3h:.2f} МВт")
+    c3.metric("☀️ День (план)", f"{daily_sum:.1f} МВт·год")
+    c4.metric("🕐 Час (Київ)", now_ua.strftime("%H:%M"))
+
+
+def draw_main_chart(df_f):
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(
+        x=df_f['Time'], y=df_f['Forecast_MW'],
+        name='Прогноз сайту', mode='lines',
+        line=dict(color='#D85A30', width=1.5, dash='dot')
+    ))
+    fig.add_trace(go.Scatter(
+        x=df_f['Time'], y=df_f['AI_MW'],
+        name='План ШІ', mode='lines',
+        line=dict(color='#378ADD', width=2),
+        fill='tozeroy', fillcolor='rgba(55,138,221,0.07)'
+    ))
+
+    fig.update_layout(
+        height=360,
+        margin=dict(l=0, r=0, t=10, b=0),
+        yaxis=dict(title='МВт'),
+        xaxis=dict(title='Час'),
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0),
+        hovermode='x unified'
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+# ─────────────────────────────────────────────
+#  ВКЛАДКА 1: НАВЧАННЯ
+# ─────────────────────────────────────────────
+
+def draw_training_tab(df_h, accuracy_r2, importance, scatter_data, mse_error, comparison_df):
 
     # --- 4 метрики вгорі ---
     c1, c2, c3, c4 = st.columns(4)
@@ -19,13 +70,13 @@ def draw_training_tab(df_h, accuracy_r2, mse_error, importance, scatter_data, co
     with col_left:
         st.markdown("##### Як R² росте з кількістю даних")
         if len(df_h) >= 20:
-            steps = list(range(20, len(df_h), max(1, len(df_h) // 15))) + [len(df_h)]
             from sklearn.ensemble import RandomForestRegressor
             from sklearn.metrics import r2_score
             from sklearn.model_selection import train_test_split
 
-            features = [c for c in ['Forecast_MW','CloudCover','Temp','WindSpeed','PrecipProb'] if c in df_h.columns]
+            features = [c for c in ['Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb'] if c in df_h.columns]
             df_clean = df_h.dropna(subset=['Fact_MW', features[0]])
+            steps = list(range(20, len(df_clean), max(1, len(df_clean) // 15))) + [len(df_clean)]
 
             r2_values, sizes = [], []
             for n in steps:
@@ -70,7 +121,7 @@ def draw_training_tab(df_h, accuracy_r2, mse_error, importance, scatter_data, co
                 x=importance['Вплив %'],
                 y=importance['Фактор'],
                 orientation='h',
-                marker_color=['#378ADD','#1D9E75','#BA7517','#888780','#D85A30'][:len(importance)],
+                marker_color=['#378ADD', '#1D9E75', '#BA7517', '#888780', '#D85A30'][:len(importance)],
                 text=importance['Вплив %'].astype(str) + '%',
                 textposition='outside'
             ))
@@ -86,7 +137,7 @@ def draw_training_tab(df_h, accuracy_r2, mse_error, importance, scatter_data, co
     st.write("---")
 
     # --- Факт vs план ШІ по днях ---
-    st.markdown("##### Факт vs план ШІ — останні 7 днів (МВт·год/день)")
+    st.markdown("##### Факт vs план ШІ — останні 5 днів (МВт·год/день)")
     if comparison_df is not None:
         fig_cmp = go.Figure()
         fig_cmp.add_trace(go.Scatter(
@@ -117,36 +168,34 @@ def draw_training_tab(df_h, accuracy_r2, mse_error, importance, scatter_data, co
 
     # --- Похибка по годинах доби ---
     st.markdown("##### Похибка прогнозу по годинах доби")
-    if scatter_data is not None:
-        df_h_copy = df_h.copy()
-        features = [c for c in ['Forecast_MW','CloudCover','Temp','WindSpeed','PrecipProb'] if c in df_h_copy.columns]
-        df_clean = df_h_copy.dropna(subset=['Fact_MW', 'Time'] + [features[0]])
-        df_clean['hour'] = pd.to_datetime(df_clean['Time']).dt.hour
+    features = [c for c in ['Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb'] if c in df_h.columns]
+    df_clean = df_h.dropna(subset=['Fact_MW', 'Time', features[0]]).copy()
 
+    if len(df_clean) >= 20:
         from sklearn.ensemble import RandomForestRegressor
+
+        df_clean['hour'] = pd.to_datetime(df_clean['Time']).dt.hour
         X = df_clean[features].fillna(0)
         y = df_clean['Fact_MW'].astype(float)
-        if len(df_clean) >= 20:
-            m = RandomForestRegressor(n_estimators=50, random_state=42)
-            m.fit(X, y)
-            df_clean['error'] = abs(m.predict(X) - y)
-            hourly_error = df_clean.groupby('hour')['error'].mean().reset_index()
-            hourly_error = hourly_error[(hourly_error['hour'] >= 5) & (hourly_error['hour'] <= 21)]
 
-            fig_err = go.Figure(go.Bar(
-                x=hourly_error['hour'],
-                y=hourly_error['error'].round(3),
-                marker_color='#BA7517',
-                name='Похибка (МВт)'
-            ))
-            fig_err.update_layout(
-                height=180, margin=dict(l=0, r=0, t=10, b=0),
-                xaxis=dict(title='Година доби', tickmode='linear', dtick=1),
-                yaxis=dict(title='МВт'),
-                showlegend=False
-            )
-            st.plotly_chart(fig_err, use_container_width=True)
-        else:
-            st.info("Недостатньо даних для аналізу похибки.")
+        m = RandomForestRegressor(n_estimators=50, random_state=42)
+        m.fit(X, y)
+        df_clean['error'] = abs(m.predict(X) - y)
+
+        hourly_error = df_clean.groupby('hour')['error'].mean().reset_index()
+        hourly_error = hourly_error[(hourly_error['hour'] >= 5) & (hourly_error['hour'] <= 21)]
+
+        fig_err = go.Figure(go.Bar(
+            x=hourly_error['hour'],
+            y=hourly_error['error'].round(3),
+            marker_color='#BA7517'
+        ))
+        fig_err.update_layout(
+            height=180, margin=dict(l=0, r=0, t=10, b=0),
+            xaxis=dict(title='Година доби', tickmode='linear', dtick=1),
+            yaxis=dict(title='МВт'),
+            showlegend=False
+        )
+        st.plotly_chart(fig_err, use_container_width=True)
     else:
-        st.info("Графік похибки буде доступний після оновлення моделі.")
+        st.info("Недостатньо даних для аналізу похибки.")
