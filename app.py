@@ -70,16 +70,10 @@ if not df_f.empty:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         
-        with tabs[1]:
-            st.subheader("🧠 Аналітика навчання нейронної моделі")
-            
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Якість моделі (R²)", f"{accuracy:.1f}%")
-            m2.metric("Похибка (MSE)", f"{pivot_error:.4f}")
-            m3.metric("Активних факторів", len(importance) if importance is not None else 0)
-
-            st.write("---")
-            col_left, col_right = st.columns(2)
+        # Замінити блок with tabs[1]: на:
+    with tabs[1]:
+    from ui_components import draw_training_tab
+    draw_training_tab(df_h, accuracy, importance, scatter_data, pivot_error, comparison_df)
             
             with col_left:
                 st.write("📊 **Вплив факторів**")
