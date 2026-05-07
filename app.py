@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 from weather_service import fetch_weather_data
 from model_engine import train_and_get_insights
-from ui_components import draw_main_chart, draw_metrics, draw_training_tab
+from ui_components import draw_main_chart, draw_metrics, draw_training_tab, draw_base_tab, draw_meteo_tab
 
 # Налаштування сторінки
 st.set_page_config(page_title="SkyGrid Solar AI", layout="wide", page_icon="☀️")
@@ -48,7 +48,7 @@ if not df_f.empty:
         df_f.loc[df_f['Rad'] < 5, ['AI_MW', 'Forecast_MW']] = 0.0
 
         # 5. Вкладки
-        tabs = st.tabs(["📊 МОНІТОРИНГ", "🧠 НАВЧАННЯ", "📑 БАЗА"])
+        tabs = st.tabs(["📊 МОНІТОРИНГ", "🧠 НАВЧАННЯ", "📅 БАЗА", "🌤 МЕТЕО"])
 
         with tabs[0]:
             draw_metrics(df_f, now_ua, timedelta)
@@ -72,8 +72,10 @@ if not df_f.empty:
             draw_training_tab(df_h, accuracy, importance, scatter_data, pivot_error, comparison_df)
 
         with tabs[2]:
-            st.subheader("📑 Останні записи в базі даних")
-            st.dataframe(df_h.tail(48).sort_values('Time', ascending=False), use_container_width=True)
+            draw_base_tab(df_h)
+
+        with tabs[3]:
+            draw_meteo_tab(df_f)
 
     except Exception as e:
         st.error(f"❌ Критична помилка додатка: {e}")
