@@ -32,7 +32,8 @@ def train_and_get_insights(df_h, df_f):
     df_h['Time'] = pd.to_datetime(df_h['Time'], errors='coerce')
     df_h = df_h.dropna(subset=['Time'])
 
-    target_features = ['Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb']
+    # Capacity_MW додано до факторів
+    target_features = ['Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb', 'Capacity_MW']
     existing_features = [c for c in target_features if c in df_h.columns and c in df_f.columns]
 
     df_train = df_h.dropna(subset=['Fact_MW', existing_features[0]])
