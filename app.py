@@ -1,7 +1,9 @@
 import streamlit as st
 import pandas as pd
-import time, io, pytz
+import time, io, pytz, json
+import gspread
 from datetime import datetime, timedelta
+from google.oauth2.service_account import Credentials
 
 from weather_service import fetch_weather_data
 from model_engine import train_and_get_insights
@@ -12,6 +14,26 @@ st.set_page_config(page_title="SkyGrid Solar AI", layout="wide", page_icon="☀�
 UA_TZ = pytz.timezone('Europe/Kyiv')
 now_ua = datetime.now(UA_TZ).replace(tzinfo=None)
 
+SHEET_ID = "1ckVoJla9DA3BLQfBDy30sXmaOyH2HSqCZ1FbZtUDr9Q"
+SCOPES = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+
+@st.cache_data(ttl=300)
+def load_base_from_sheets():
+    try:
+        creds_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
+        creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+        gc = gspread.authorize(creds)
+        sh = gc.open_by_key(SHEET_ID)
+        data = sh.sheet1.get_all_records()
+        if not data:
+            return pd.DataFrame()
+        df = pd.DataFrame(data)
+        df['Time'] = pd.to_datetime(df['Time'])
+        return df
+    except Exception as e:
+        st.error(f"❌ Помилка читання Google Sheet: {e}")
+        return pd.DataFrame()
+
 st.sidebar.markdown("🚀 **Status: SkyGrid_Active**")
 st.title("☀️ SkyGrid Solar AI")
 
@@ -20,10 +42,12 @@ df_f = fetch_weather_data()
 
 if not df_f.empty:
     try:
-        # 2. Завантаження бази з GitHub
-        url = f"https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/solar_ai_base.csv?v={int(time.time()/60)}"
-        df_h = pd.read_csv(url)
-        df_h['Time'] = pd.to_datetime(df_h['Time'])
+        # 2. Завантаження бази з Google Sheets
+        df_h = load_base_from_sheets()
+
+        if df_h.empty:
+            st.warning("⚠️ База даних порожня або недоступна.")
+            st.stop()
 
         # 3. Вкладки
         tabs = st.tabs(["📊 МОНІТОРИНГ", "🧠 НАВЧАННЯ", "📅 БАЗА", "🌤 МЕТЕО"])
