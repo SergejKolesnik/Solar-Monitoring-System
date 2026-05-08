@@ -4,6 +4,22 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 
+def _clean_numeric(df, columns):
+    """Конвертуємо числові колонки — виправляє порожні рядки та текст з Google Sheets."""
+    df = df.copy()
+    for col in columns:
+        if col in df.columns:
+            df[col] = (
+                df[col].astype(str)
+                .str.replace(',', '.', regex=False)
+                .str.strip()
+                .replace('', '0')
+                .replace('nan', '0')
+            )
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+    return df
+
+
 # ─────────────────────────────────────────────
 #  ВКЛАДКА 0: МОНІТОРИНГ
 # ─────────────────────────────────────────────
@@ -25,7 +41,6 @@ def draw_metrics(df_f, now_ua, timedelta):
 
 
 def draw_main_chart(df_f):
-    # Показуємо тільки 5 днів починаючи від першого запису
     cutoff = df_f['Time'].min() + pd.Timedelta(days=5)
     df_plot = df_f[df_f['Time'] <= cutoff]
 
@@ -42,10 +57,8 @@ def draw_main_chart(df_f):
         fill='tozeroy', fillcolor='rgba(55,138,221,0.07)'
     ))
     fig.update_layout(
-        height=360,
-        margin=dict(l=0, r=0, t=10, b=0),
-        yaxis=dict(title='МВт'),
-        xaxis=dict(title='Час'),
+        height=360, margin=dict(l=0, r=0, t=10, b=0),
+        yaxis=dict(title='МВт'), xaxis=dict(title='Час'),
         legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0),
         hovermode='x unified'
     )
@@ -59,10 +72,10 @@ def draw_main_chart(df_f):
 def draw_training_tab(df_h, accuracy_r2, importance, scatter_data, mse_error, comparison_df):
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("R² (тест)",         f"{accuracy_r2:.1f}%")
-    c2.metric("MSE похибка",        f"{mse_error:.4f}")
-    c3.metric("Записів у базі",     f"{len(df_h):,}")
-    c4.metric("Активних факторів",  len(importance) if importance is not None else 0)
+    c1.metric("R² (тест)",        f"{accuracy_r2:.1f}%")
+    c2.metric("MSE похибка",       f"{mse_error:.4f}")
+    c3.metric("Записів у базі",    f"{len(df_h):,}")
+    c4.metric("Активних факторів", len(importance) if importance is not None else 0)
 
     st.write("---")
     col_left, col_right = st.columns(2)
@@ -75,7 +88,10 @@ def draw_training_tab(df_h, accuracy_r2, importance, scatter_data, mse_error, co
             from sklearn.model_selection import train_test_split
 
             features = [c for c in ['Forecast_MW','CloudCover','Temp','WindSpeed','PrecipProb'] if c in df_h.columns]
-            df_clean = df_h.dropna(subset=['Fact_MW', features[0]])
+
+            # Очищуємо від порожніх рядків Google Sheets
+            df_h2 = _clean_numeric(df_h, features + ['Fact_MW'])
+            df_clean = df_h2[df_h2['Fact_MW'] > 0].dropna(subset=['Fact_MW', features[0]])
             steps = list(range(20, len(df_clean), max(1, len(df_clean) // 15))) + [len(df_clean)]
 
             r2_values, sizes = [], []
@@ -83,7 +99,7 @@ def draw_training_tab(df_h, accuracy_r2, importance, scatter_data, mse_error, co
                 subset = df_clean.iloc[:n]
                 if len(subset) < 20:
                     continue
-                X = subset[features].fillna(0)
+                X = subset[features].fillna(0).astype(float)
                 y = subset['Fact_MW'].astype(float)
                 try:
                     X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.2, random_state=42)
@@ -94,21 +110,23 @@ def draw_training_tab(df_h, accuracy_r2, importance, scatter_data, mse_error, co
                 except Exception:
                     continue
 
-            fig_r2 = go.Figure()
-            fig_r2.add_trace(go.Scatter(
-                x=sizes, y=r2_values, mode='lines+markers',
-                line=dict(color='#378ADD', width=2),
-                fill='tozeroy', fillcolor='rgba(55,138,221,0.08)'
-            ))
-            fig_r2.add_hline(y=50, line_dash="dash", line_color="#D85A30",
-                             annotation_text="50% поріг", annotation_position="bottom right")
-            fig_r2.update_layout(
-                height=220, margin=dict(l=0, r=0, t=10, b=0),
-                yaxis=dict(title='%', range=[0, 100]),
-                xaxis=dict(title='Записів'),
-                showlegend=False
-            )
-            st.plotly_chart(fig_r2, use_container_width=True)
+            if r2_values:
+                fig_r2 = go.Figure()
+                fig_r2.add_trace(go.Scatter(
+                    x=sizes, y=r2_values, mode='lines+markers',
+                    line=dict(color='#378ADD', width=2),
+                    fill='tozeroy', fillcolor='rgba(55,138,221,0.08)'
+                ))
+                fig_r2.add_hline(y=50, line_dash="dash", line_color="#D85A30",
+                                 annotation_text="50% поріг", annotation_position="bottom right")
+                fig_r2.update_layout(
+                    height=220, margin=dict(l=0, r=0, t=10, b=0),
+                    yaxis=dict(title='%', range=[0, 100]),
+                    xaxis=dict(title='Записів'), showlegend=False
+                )
+                st.plotly_chart(fig_r2, use_container_width=True)
+            else:
+                st.info("Недостатньо чистих даних для графіку.")
         else:
             st.info("Недостатньо даних для графіку.")
 
@@ -119,14 +137,13 @@ def draw_training_tab(df_h, accuracy_r2, importance, scatter_data, mse_error, co
                 x=importance['Вплив %'],
                 y=importance['Фактор'],
                 orientation='h',
-                marker_color=['#378ADD','#1D9E75','#BA7517','#888780','#D85A30'][:len(importance)],
+                marker_color=['#378ADD','#1D9E75','#BA7517','#888780','#D85A30','#6B4FBB'][:len(importance)],
                 text=importance['Вплив %'].astype(str) + '%',
                 textposition='outside'
             ))
             fig_imp.update_layout(
                 height=220, margin=dict(l=0, r=40, t=10, b=0),
-                xaxis=dict(title='%'),
-                showlegend=False
+                xaxis=dict(title='%'), showlegend=False
             )
             st.plotly_chart(fig_imp, use_container_width=True)
         else:
@@ -163,17 +180,19 @@ def draw_training_tab(df_h, accuracy_r2, importance, scatter_data, mse_error, co
     st.write("---")
     st.markdown("##### Похибка прогнозу по годинах доби")
     features = [c for c in ['Forecast_MW','CloudCover','Temp','WindSpeed','PrecipProb'] if c in df_h.columns]
-    df_clean = df_h.dropna(subset=['Fact_MW', 'Time', features[0]]).copy()
 
-    if len(df_clean) >= 20:
+    df_h3 = _clean_numeric(df_h, features + ['Fact_MW'])
+    df_clean2 = df_h3[df_h3['Fact_MW'] > 0].dropna(subset=['Fact_MW', 'Time', features[0]]).copy()
+
+    if len(df_clean2) >= 20:
         from sklearn.ensemble import RandomForestRegressor
-        df_clean['hour'] = pd.to_datetime(df_clean['Time']).dt.hour
-        X = df_clean[features].fillna(0)
-        y = df_clean['Fact_MW'].astype(float)
+        df_clean2['hour'] = pd.to_datetime(df_clean2['Time']).dt.hour
+        X = df_clean2[features].fillna(0).astype(float)
+        y = df_clean2['Fact_MW'].astype(float)
         m = RandomForestRegressor(n_estimators=50, random_state=42)
         m.fit(X, y)
-        df_clean['error'] = abs(m.predict(X) - y)
-        hourly_error = df_clean.groupby('hour')['error'].mean().reset_index()
+        df_clean2['error'] = abs(m.predict(X) - y)
+        hourly_error = df_clean2.groupby('hour')['error'].mean().reset_index()
         hourly_error = hourly_error[(hourly_error['hour'] >= 5) & (hourly_error['hour'] <= 21)]
 
         fig_err = go.Figure(go.Bar(
@@ -184,8 +203,7 @@ def draw_training_tab(df_h, accuracy_r2, importance, scatter_data, mse_error, co
         fig_err.update_layout(
             height=180, margin=dict(l=0, r=0, t=10, b=0),
             xaxis=dict(title='Година доби', tickmode='linear', dtick=1),
-            yaxis=dict(title='МВт'),
-            showlegend=False
+            yaxis=dict(title='МВт'), showlegend=False
         )
         st.plotly_chart(fig_err, use_container_width=True)
     else:
@@ -203,16 +221,14 @@ def draw_base_tab(df_h):
         st.info("База даних порожня.")
         return
 
-    df = df_h.copy()
+    df = _clean_numeric(df_h.copy(), ['Fact_MW', 'Forecast_MW'])
     df['Time'] = pd.to_datetime(df['Time'])
     df['Дата'] = df['Time'].dt.date
 
     agg = {}
     if 'Fact_MW' in df.columns:
         agg['Факт (МВт·год)'] = ('Fact_MW', 'sum')
-    if 'AI_MW' in df.columns:
-        agg['План ШІ (МВт·год)'] = ('AI_MW', 'sum')
-    elif 'Forecast_MW' in df.columns:
+    if 'Forecast_MW' in df.columns:
         agg['Прогноз сайту (МВт·год)'] = ('Forecast_MW', 'sum')
 
     if not agg:
@@ -224,8 +240,8 @@ def draw_base_tab(df_h):
     for col in daily.columns[1:]:
         daily[col] = daily[col].round(2)
 
-    if 'Факт (МВт·год)' in daily.columns and 'План ШІ (МВт·год)' in daily.columns:
-        daily['Відхилення (МВт·год)'] = (daily['Факт (МВт·год)'] - daily['План ШІ (МВт·год)']).round(2)
+    if 'Факт (МВт·год)' in daily.columns and 'Прогноз сайту (МВт·год)' in daily.columns:
+        daily['Відхилення (МВт·год)'] = (daily['Факт (МВт·год)'] - daily['Прогноз сайту (МВт·год)']).round(2)
         daily['Точність %'] = (
             100 - (abs(daily['Відхилення (МВт·год)']) / daily['Факт (МВт·год)'].replace(0, 1) * 100)
         ).clip(0, 100).round(1)
@@ -245,11 +261,11 @@ def draw_base_tab(df_h):
             x=daily['Дата'], y=daily['Факт (МВт·год)'],
             name='Факт', marker_color='#378ADD'
         ))
-    if 'План ШІ (МВт·год)' in daily.columns:
+    if 'Прогноз сайту (МВт·год)' in daily.columns:
         fig.add_trace(go.Scatter(
-            x=daily['Дата'], y=daily['План ШІ (МВт·год)'],
-            name='План ШІ', mode='lines+markers',
-            line=dict(color='#1D9E75', width=2, dash='dash')
+            x=daily['Дата'], y=daily['Прогноз сайту (МВт·год)'],
+            name='Прогноз сайту', mode='lines+markers',
+            line=dict(color='#D85A30', width=2, dash='dash')
         ))
     fig.update_layout(
         height=280, margin=dict(l=0, r=0, t=10, b=0),
@@ -285,7 +301,6 @@ def draw_meteo_tab(df_f):
     cutoff = df['Time'].min() + pd.Timedelta(days=5)
     df = df[df['Time'] <= cutoff]
 
-    # Метрики поточного моменту
     row = df.iloc[0] if not df.empty else None
     if row is not None:
         c1, c2, c3, c4 = st.columns(4)
@@ -296,7 +311,6 @@ def draw_meteo_tab(df_f):
 
     st.write("---")
 
-    # Радіація + хмарність
     st.markdown("##### Сонячна радіація та хмарність")
     fig1 = make_subplots(specs=[[{"secondary_y": True}]])
     fig1.add_trace(go.Scatter(
@@ -320,7 +334,6 @@ def draw_meteo_tab(df_f):
     fig1.update_yaxes(title_text="%", secondary_y=True)
     st.plotly_chart(fig1, use_container_width=True)
 
-    # Температура
     st.markdown("##### Температура повітря")
     fig2 = go.Figure(go.Scatter(
         x=df['Time'], y=df['Temp'],
@@ -333,7 +346,6 @@ def draw_meteo_tab(df_f):
     )
     st.plotly_chart(fig2, use_container_width=True)
 
-    # Вітер + опади
     col_l, col_r = st.columns(2)
     with col_l:
         st.markdown("##### Швидкість вітру")
