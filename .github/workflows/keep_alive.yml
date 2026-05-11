@@ -2,8 +2,8 @@ name: Keep Site Awake
 
 on:
   schedule:
-    - cron: '*/20 * * * *' # Запуск кожні 20 хвилин
-  workflow_dispatch: # Можливість запустити вручну
+    - cron: '*/20 * * * *'
+  workflow_dispatch:
 
 jobs:
   ping:
@@ -11,4 +11,4 @@ jobs:
     steps:
       - name: Wake up Streamlit
         run: |
-          curl -I -L https://skygrid-ai.streamlit.app/
+          curl -s -o /dev/null -w "%{http_code}" --max-redirs 5 https://pd2b4edrjntm8tyeulappbo.streamlit.app/ || true
