@@ -12,6 +12,8 @@ from google.oauth2.service_account import Credentials
 SHEET_ID = "1ckVoJla9DA3BLQfBDy30sXmaOyH2HSqCZ1FbZtUDr9Q"
 SCOPES = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 
+NUMERIC_COLS = ['Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb', 'Fact_MW', 'Capacity_MW']
+
 def get_sheet():
     creds_json = os.getenv('GOOGLE_CREDENTIALS')
     if not creds_json:
@@ -23,18 +25,46 @@ def get_sheet():
     return sh.sheet1
 
 def load_df_from_sheet(sheet):
-    data = sheet.get_all_records()
+    data = sheet.get_all_records(value_render_option='UNFORMATTED_VALUE')
     if not data:
-        return pd.DataFrame(columns=['Time','Fact_MW','Forecast_MW','CloudCover','Temp','WindSpeed','PrecipProb','Capacity_MW'])
+        return pd.DataFrame(columns=['Time'] + NUMERIC_COLS)
     df = pd.DataFrame(data)
     df['Time'] = pd.to_datetime(df['Time'])
+    # Очищуємо числові колонки при читанні
+    for col in NUMERIC_COLS:
+        if col in df.columns:
+            df[col] = pd.to_numeric(
+                df[col].astype(str).str.replace(',', '.').str.strip(),
+                errors='coerce'
+            ).fillna(0)
     return df
 
 def save_df_to_sheet(sheet, df):
-    df = df.sort_values('Time').drop_duplicates('Time').tail(1000)
+    df = df.sort_values('Time').drop_duplicates('Time').tail(1000).copy()
+
+    # Примусово конвертуємо всі числові колонки у float з крапкою
+    for col in NUMERIC_COLS:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).round(3)
+
     df['Time'] = df['Time'].astype(str)
+
+    # Формуємо рядки — числа як float, не рядки
+    rows = []
+    for _, row in df.iterrows():
+        r = []
+        for col in df.columns:
+            val = row[col]
+            if col == 'Time':
+                r.append(str(val))
+            elif col in NUMERIC_COLS:
+                r.append(float(val))
+            else:
+                r.append(val if val != '' else 0)
+        rows.append(r)
+
     sheet.clear()
-    sheet.update([df.columns.tolist()] + df.fillna('').values.tolist())
+    sheet.update([df.columns.tolist()] + rows)
     print(f"✅ Google Sheet оновлено. Рядків: {len(df)}")
 
 def main():
@@ -116,18 +146,19 @@ def main():
                 if dt not in df['Time'].values:
                     df = pd.concat([df, pd.DataFrame([{'Time': dt}])], ignore_index=True)
                 mask = df['Time'] == dt
-                df.loc[mask, 'Forecast_MW'] = round(hr.get('solarradiation', 0) * 0.0114, 3)
-                df.loc[mask, 'CloudCover']  = hr.get('cloudcover', 0)
-                df.loc[mask, 'Temp']        = hr.get('temp', 0)
-                df.loc[mask, 'WindSpeed']   = hr.get('windspeed', 0)
-                df.loc[mask, 'PrecipProb']  = hr.get('precipprob', 0)
+                df.loc[mask, 'Forecast_MW'] = round(float(hr.get('solarradiation', 0)) * 0.0114, 3)
+                df.loc[mask, 'CloudCover']  = float(hr.get('cloudcover', 0))
+                df.loc[mask, 'Temp']        = float(hr.get('temp', 0))
+                df.loc[mask, 'WindSpeed']   = float(hr.get('windspeed', 0))
+                df.loc[mask, 'PrecipProb']  = float(hr.get('precipprob', 0))
         print("🌤 Погоду оновлено")
     except Exception as e:
         print(f"❌ Погода: {e}")
 
-    # Додаємо Capacity_MW якщо немає
+    # Capacity_MW
     if 'Capacity_MW' not in df.columns:
         df['Capacity_MW'] = 12.5
+    df['Capacity_MW'] = df['Capacity_MW'].fillna(12.5)
 
     save_df_to_sheet(sheet, df)
     print(f"🏁 Готово. Остання дата: {df['Time'].max()}")
