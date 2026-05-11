@@ -16,17 +16,11 @@ jobs:
         with:
           python-version: '3.9'
       - name: Install
-        run: pip install pandas requests openpyxl
+        run: pip install pandas requests openpyxl gspread google-auth
       - name: Run
         env:
           WEATHER_API_KEY: ${{ secrets.WEATHER_API_KEY }}
           EMAIL_USER: ${{ secrets.EMAIL_USER }}
           EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
         run: python collector.py
-      - name: Push
-        run: |
-          git config --global user.name 'SkyGrid Bot'
-          git config --global user.email 'bot@skygrid.ai'
-          git add solar_ai_base.csv
-          git commit -m "Fix: back to basics" || exit 0
-          git push
