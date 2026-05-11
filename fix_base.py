@@ -33,19 +33,39 @@ def load_df_from_sheet(sheet):
             ).fillna(0)
     return df
 
-def fix_value(v, col):
-    """Виправляє аномальні значення після проблем з крапкою."""
-    if col in ('Forecast_MW', 'Fact_MW') and v > 100:
-        return round(v / 1000, 3)
-    if col == 'CloudCover' and v > 100:
-        return round(v / 10, 1)
-    if col == 'Temp' and v > 50:
-        return round(v / 10, 1)
-    if col == 'WindSpeed' and v > 35:
-        return round(v / 10, 1)
-    if col == 'PrecipProb' and v > 100:
-        return round(v / 10, 1)
-    return v
+def fix_anomalies(df):
+    """Виправляє всі аномальні значення в базі."""
+    # Forecast_MW: максимум ~13 МВт для СЕС 12.5 МВт
+    mask = df['Forecast_MW'] > 15
+    df.loc[mask, 'Forecast_MW'] = (df.loc[mask, 'Forecast_MW'] / 1000).round(3)
+    print(f"🔧 Forecast_MW виправлено: {mask.sum()} рядків")
+
+    # Fact_MW: максимум ~15 МВт
+    mask = df['Fact_MW'] > 15
+    df.loc[mask, 'Fact_MW'] = (df.loc[mask, 'Fact_MW'] / 1000).round(3)
+    print(f"🔧 Fact_MW виправлено: {mask.sum()} рядків")
+
+    # CloudCover: максимум 100%
+    mask = df['CloudCover'] > 100
+    df.loc[mask, 'CloudCover'] = (df.loc[mask, 'CloudCover'] / 10).round(1)
+    print(f"🔧 CloudCover виправлено: {mask.sum()} рядків")
+
+    # Temp: реальний діапазон -30..+50°C
+    mask = df['Temp'] > 50
+    df.loc[mask, 'Temp'] = (df.loc[mask, 'Temp'] / 10).round(1)
+    print(f"🔧 Temp виправлено: {mask.sum()} рядків")
+
+    # WindSpeed: максимум ~35 м/с
+    mask = df['WindSpeed'] > 35
+    df.loc[mask, 'WindSpeed'] = (df.loc[mask, 'WindSpeed'] / 10).round(1)
+    print(f"🔧 WindSpeed виправлено: {mask.sum()} рядків")
+
+    # PrecipProb: максимум 100%
+    mask = df['PrecipProb'] > 100
+    df.loc[mask, 'PrecipProb'] = (df.loc[mask, 'PrecipProb'] / 10).round(1)
+    print(f"🔧 PrecipProb виправлено: {mask.sum()} рядків")
+
+    return df
 
 def save_df_to_sheet(sheet, df):
     df = df.sort_values('Time').drop_duplicates('Time').tail(1000).copy()
@@ -69,18 +89,16 @@ def save_df_to_sheet(sheet, df):
     print(f"✅ Google Sheet оновлено. Рядків: {len(df)}")
 
 def main():
-    print(f"🚀 СТАРТ ПОВНОГО ПЕРЕЗАПИСУ ФАКТІВ: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"🚀 СТАРТ: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
     sheet = get_sheet()
     df = load_df_from_sheet(sheet)
-    print(f"📊 Завантажено з Google Sheet: {len(df)} рядків")
+    print(f"📊 Завантажено: {len(df)} рядків")
 
-    # Виправляємо всі існуючі числові значення
-    for col in NUMERIC_COLS:
-        if col in df.columns:
-            df[col] = df[col].apply(lambda v: fix_value(v, col))
+    # Виправляємо всі аномалії
+    df = fix_anomalies(df)
 
-    # Обнуляємо Fact_MW повністю — перечитаємо з нуля
+    # Обнуляємо Fact_MW — перечитаємо з пошти
     df['Fact_MW'] = 0.0
     print("🔄 Fact_MW обнулено — читаємо листи за 45 днів...")
 
@@ -90,11 +108,9 @@ def main():
         mail.login(os.getenv('EMAIL_USER'), os.getenv('EMAIL_PASS'))
         mail.select("INBOX")
 
-        # Читаємо листи за 45 днів
         date_from = (datetime.now() - timedelta(days=45)).strftime("%d-%b-%Y")
         _, data = mail.search(None, f'(SINCE "{date_from}")')
         ids = data[0].split()
-
         print(f"📧 Знайдено {len(ids)} листів за 45 днів...")
 
         for num in reversed(ids):
@@ -116,14 +132,13 @@ def main():
                             f_val = pd.to_numeric(val_str, errors='coerce')
 
                             if not pd.isna(t) and not pd.isna(f_val):
-                                # Конвертуємо кВт → МВт
                                 final_v = round(f_val / 1000, 3) if f_val > 25 else round(f_val, 3)
                                 new_facts.append({
                                     'Time': t.replace(minute=0, second=0, microsecond=0),
                                     'Fact_MW': final_v
                                 })
                     except Exception as fe:
-                        print(f"⚠️ Помилка файлу: {fe}")
+                        print(f"⚠️ {fe}")
 
         mail.logout()
 
@@ -131,28 +146,26 @@ def main():
         print(f"❌ Пошта: {e}")
 
     if new_facts:
-        df_new = pd.DataFrame(new_facts).drop_duplicates('Time')
-        # Агрегуємо по годині — беремо максимум (на випадок дублів)
+        df_new = pd.DataFrame(new_facts)
         df_new = df_new.groupby('Time')['Fact_MW'].max().reset_index()
-
         df = df.set_index('Time')
         df_new = df_new.set_index('Time')
         df.update(df_new)
         df = pd.concat([df, df_new[~df_new.index.isin(df.index)]]).reset_index()
         print(f"✅ Записано фактів: {len(df_new)}")
-        print(f"   Діапазон Fact_MW: {df_new['Fact_MW'].min():.3f} .. {df_new['Fact_MW'].max():.3f} МВт")
     else:
         print("📭 Листів з даними не знайдено")
 
     # Capacity_MW
     df['Capacity_MW'] = 12.5
 
-    # Фінальна перевірка діапазонів
+    # Фінальні діапазони
     print(f"\n📊 Фінальні діапазони:")
     for col in ['Forecast_MW', 'Fact_MW', 'Temp', 'WindSpeed', 'CloudCover']:
         if col in df.columns:
             vals = pd.to_numeric(df[col], errors='coerce').dropna()
-            print(f"   {col}: {vals.min():.2f} .. {vals.max():.2f}")
+            non_zero = vals[vals > 0]
+            print(f"   {col}: 0 .. {vals.max():.3f} (ненульових: {len(non_zero)})")
 
     save_df_to_sheet(sheet, df)
     print(f"\n🏁 Готово. Рядків: {len(df)}, Остання дата: {df['Time'].max()}")
