@@ -34,33 +34,26 @@ def load_df_from_sheet(sheet):
     return df
 
 def fix_anomalies(df):
-    """Виправляє всі аномальні значення в базі."""
-    # Forecast_MW: максимум ~13 МВт для СЕС 12.5 МВт
     mask = df['Forecast_MW'] > 15
     df.loc[mask, 'Forecast_MW'] = (df.loc[mask, 'Forecast_MW'] / 1000).round(3)
     print(f"🔧 Forecast_MW виправлено: {mask.sum()} рядків")
 
-    # Fact_MW: максимум ~15 МВт
     mask = df['Fact_MW'] > 15
     df.loc[mask, 'Fact_MW'] = (df.loc[mask, 'Fact_MW'] / 1000).round(3)
     print(f"🔧 Fact_MW виправлено: {mask.sum()} рядків")
 
-    # CloudCover: максимум 100%
     mask = df['CloudCover'] > 100
     df.loc[mask, 'CloudCover'] = (df.loc[mask, 'CloudCover'] / 10).round(1)
     print(f"🔧 CloudCover виправлено: {mask.sum()} рядків")
 
-    # Temp: реальний діапазон -30..+50°C
     mask = df['Temp'] > 50
     df.loc[mask, 'Temp'] = (df.loc[mask, 'Temp'] / 10).round(1)
     print(f"🔧 Temp виправлено: {mask.sum()} рядків")
 
-    # WindSpeed: максимум ~35 м/с
     mask = df['WindSpeed'] > 35
     df.loc[mask, 'WindSpeed'] = (df.loc[mask, 'WindSpeed'] / 10).round(1)
     print(f"🔧 WindSpeed виправлено: {mask.sum()} рядків")
 
-    # PrecipProb: максимум 100%
     mask = df['PrecipProb'] > 100
     df.loc[mask, 'PrecipProb'] = (df.loc[mask, 'PrecipProb'] / 10).round(1)
     print(f"🔧 PrecipProb виправлено: {mask.sum()} рядків")
@@ -95,10 +88,8 @@ def main():
     df = load_df_from_sheet(sheet)
     print(f"📊 Завантажено: {len(df)} рядків")
 
-    # Виправляємо всі аномалії
     df = fix_anomalies(df)
 
-    # Обнуляємо Fact_MW — перечитаємо з пошти
     df['Fact_MW'] = 0.0
     print("🔄 Fact_MW обнулено — читаємо листи за 45 днів...")
 
@@ -114,31 +105,48 @@ def main():
         print(f"📧 Знайдено {len(ids)} листів за 45 днів...")
 
         for num in reversed(ids):
-            _, msg_data = mail.fetch(num, "(RFC822)")
-            msg = email.message_from_bytes(msg_data[0][1])
+            try:
+                _, msg_data = mail.fetch(num, "(RFC822)")
+                msg = email.message_from_bytes(msg_data[0][1])
 
-            for part in msg.walk():
-                if part.get_filename() and ('.xls' in part.get_filename().lower()):
-                    try:
-                        print(f"📄 {part.get_filename()}")
-                        raw_data = part.get_payload(decode=True)
-                        excel_df = pd.read_excel(io.BytesIO(raw_data), header=None)
+                for part in msg.walk():
+                    if part.get_filename() and ('.xls' in part.get_filename().lower()):
+                        try:
+                            print(f"📄 {part.get_filename()}")
+                            raw_data = part.get_payload(decode=True)
+                            if raw_data is None:
+                                continue
+                            excel_df = pd.read_excel(io.BytesIO(raw_data), header=None)
 
-                        for i in range(2, len(excel_df)):
-                            t_raw = excel_df.iloc[i, 0]
-                            t = pd.to_datetime(t_raw, errors='coerce')
-                            val_raw = excel_df.iloc[i, 5]
-                            val_str = str(val_raw).replace(',', '.').strip()
-                            f_val = pd.to_numeric(val_str, errors='coerce')
+                            for i in range(2, len(excel_df)):
+                                try:
+                                    t_raw = excel_df.iloc[i, 0]
+                                    if t_raw is None or str(t_raw).strip() == '':
+                                        continue
+                                    t = pd.to_datetime(t_raw, errors='coerce')
+                                    if t is None or pd.isna(t):
+                                        continue
 
-                            if not pd.isna(t) and not pd.isna(f_val):
-                                final_v = round(f_val / 1000, 3) if f_val > 25 else round(f_val, 3)
-                                new_facts.append({
-                                    'Time': t.replace(minute=0, second=0, microsecond=0),
-                                    'Fact_MW': final_v
-                                })
-                    except Exception as fe:
-                        print(f"⚠️ {fe}")
+                                    val_raw = excel_df.iloc[i, 5]
+                                    if val_raw is None:
+                                        continue
+                                    val_str = str(val_raw).replace(',', '.').strip()
+                                    f_val = pd.to_numeric(val_str, errors='coerce')
+                                    if pd.isna(f_val):
+                                        continue
+
+                                    final_v = round(f_val / 1000, 3) if f_val > 25 else round(f_val, 3)
+                                    new_facts.append({
+                                        'Time': t.replace(minute=0, second=0, microsecond=0),
+                                        'Fact_MW': final_v
+                                    })
+                                except Exception:
+                                    continue
+
+                        except Exception as fe:
+                            print(f"⚠️ Файл: {fe}")
+            except Exception as me:
+                print(f"⚠️ Лист: {me}")
 
         mail.logout()
 
@@ -153,13 +161,12 @@ def main():
         df.update(df_new)
         df = pd.concat([df, df_new[~df_new.index.isin(df.index)]]).reset_index()
         print(f"✅ Записано фактів: {len(df_new)}")
+        print(f"   Fact_MW діапазон: {df_new['Fact_MW'].min():.3f} .. {df_new['Fact_MW'].max():.3f} МВт")
     else:
         print("📭 Листів з даними не знайдено")
 
-    # Capacity_MW
     df['Capacity_MW'] = 12.5
 
-    # Фінальні діапазони
     print(f"\n📊 Фінальні діапазони:")
     for col in ['Forecast_MW', 'Fact_MW', 'Temp', 'WindSpeed', 'CloudCover']:
         if col in df.columns:
