@@ -7,3 +7,4 @@ pytz
 PyGithub
 gspread
 google-auth
+matplotlib
