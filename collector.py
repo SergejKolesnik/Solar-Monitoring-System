@@ -62,17 +62,13 @@ def save_df_to_sheet(sheet, df):
 
 
 def read_facts_from_email(days=15):
-    """Читає факти генерації з Excel-вкладень у пошті за вказану кількість днів."""
     facts = []
     try:
         mail = imaplib.IMAP4_SSL("imap.gmail.com")
         mail.login(os.getenv('EMAIL_USER'), os.getenv('EMAIL_PASS'))
 
-        # Перебираємо всі папки щоб знайти листи
-        folders_to_check = ['INBOX', '"[Gmail]/All Mail"', 'All Mail']
         ids = []
-
-        for folder in folders_to_check:
+        for folder in ['INBOX', '"[Gmail]/All Mail"']:
             try:
                 status, _ = mail.select(folder)
                 if status != 'OK':
@@ -83,13 +79,14 @@ def read_facts_from_email(days=15):
                     found = data[0].split()
                     if found:
                         ids = found
-                        print(f"📧 Знайдено {len(ids)} листів у папці {folder}")
+                        print(f"📧 Знайдено {len(ids)} листів у {folder}")
                         break
-            except Exception:
+            except Exception as fe:
+                print(f"⚠️ Папка: {fe}")
                 continue
 
         if not ids:
-            print("📭 Листів не знайдено в жодній папці")
+            print("📭 Листів не знайдено")
             mail.logout()
             return facts
 
@@ -99,7 +96,6 @@ def read_facts_from_email(days=15):
                 if not msg_data or not msg_data[0]:
                     continue
                 msg = email.message_from_bytes(msg_data[0][1])
-
                 for part in msg.walk():
                     filename = part.get_filename()
                     if not filename or '.xls' not in filename.lower():
@@ -110,7 +106,6 @@ def read_facts_from_email(days=15):
                         if not raw_data:
                             continue
                         excel_df = pd.read_excel(io.BytesIO(raw_data), header=None)
-
                         for i in range(2, len(excel_df)):
                             try:
                                 t_raw = excel_df.iloc[i, 0]
@@ -119,15 +114,15 @@ def read_facts_from_email(days=15):
                                 t = pd.to_datetime(t_raw, errors='coerce')
                                 if pd.isna(t):
                                     continue
-
                                 val_raw = excel_df.iloc[i, 5]
                                 if val_raw is None:
                                     continue
-                                val_str = str(val_raw).replace(',', '.').strip()
-                                f_val = pd.to_numeric(val_str, errors='coerce')
+                                f_val = pd.to_numeric(
+                                    str(val_raw).replace(',', '.').strip(),
+                                    errors='coerce'
+                                )
                                 if pd.isna(f_val):
                                     continue
-
                                 final_v = round(f_val / 1000, 3) if f_val > 25 else round(f_val, 3)
                                 facts.append({
                                     'Time': t.to_pydatetime().replace(minute=0, second=0, microsecond=0),
@@ -136,33 +131,38 @@ def read_facts_from_email(days=15):
                             except Exception:
                                 continue
                     except Exception as fe:
-                        print(f"⚠️ Файл {filename}: {fe}")
-            except Exception as me:
-                print(f"⚠️ Лист {num}: {me}")
+                        print(f"⚠️ {filename}: {fe}")
+            except Exception:
+                continue
 
         mail.logout()
-
     except Exception as e:
         print(f"❌ Пошта: {e}")
-
     return facts
 
 
-def apply_facts(df, facts):
-    if not facts:
-        print("📭 Фактів не знайдено")
-        return df
-    df_new = pd.DataFrame(facts)
-    df_new = df_new.groupby('Time')['Fact_MW'].max().reset_index()
-    df = df.set_index('Time')
-    df_new = df_new.set_index('Time')
-    df.update(df_new)
-    df = pd.concat([df, df_new[~df_new.index.isin(df.index)]]).reset_index()
-    print(f"✅ Записано фактів: {len(df_new)}, діапазон: {df_new['Fact_MW'].min():.3f}..{df_new['Fact_MW'].max():.3f} МВт")
-    return df
+def main():
+    print(f"🚀 СТАРТ: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
+    sheet = get_sheet()
+    df = load_df_from_sheet(sheet)
+    print(f"📊 Завантажено: {len(df)} рядків")
 
-def update_weather(df):
+    # Читаємо факти за 15 днів
+    facts = read_facts_from_email(days=15)
+
+    if facts:
+        df_new = pd.DataFrame(facts)
+        df_new = df_new.groupby('Time')['Fact_MW'].max().reset_index()
+        df = df.set_index('Time')
+        df_new = df_new.set_index('Time')
+        df.update(df_new)
+        df = pd.concat([df, df_new[~df_new.index.isin(df.index)]]).reset_index()
+        print(f"✅ Фактів: {len(df_new)}, діапазон: {df_new['Fact_MW'].min():.3f}..{df_new['Fact_MW'].max():.3f} МВт")
+    else:
+        print("📭 Нових фактів не знайдено")
+
+    # Оновлення погоди
     try:
         api_key = os.getenv('WEATHER_API_KEY')
         url = (
@@ -189,4 +189,15 @@ def update_weather(df):
         print("🌤 Погоду оновлено")
     except Exception as e:
         print(f"❌ Погода: {e}")
-    return df
+
+    # Capacity_MW
+    if 'Capacity_MW' not in df.columns:
+        df['Capacity_MW'] = 12.5
+    df['Capacity_MW'] = df['Capacity_MW'].fillna(12.5)
+
+    save_df_to_sheet(sheet, df)
+    print(f"🏁 Готово. Остання дата: {df['Time'].max()}")
+
+
+if __name__ == "__main__":
+    main()
