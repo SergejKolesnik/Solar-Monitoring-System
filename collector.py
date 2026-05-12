@@ -11,18 +11,18 @@ from google.oauth2.service_account import Credentials
 
 SHEET_ID = "1ckVoJla9DA3BLQfBDy30sXmaOyH2HSqCZ1FbZtUDr9Q"
 SCOPES = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-
 NUMERIC_COLS = ['Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb', 'Fact_MW', 'Capacity_MW']
+
 
 def get_sheet():
     creds_json = os.getenv('GOOGLE_CREDENTIALS')
     if not creds_json:
-        raise Exception("GOOGLE_CREDENTIALS не знайдено в змінних середовища")
+        raise Exception("GOOGLE_CREDENTIALS не знайдено")
     creds_dict = json.loads(creds_json)
     creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
     gc = gspread.authorize(creds)
-    sh = gc.open_by_key(SHEET_ID)
-    return sh.sheet1
+    return gc.open_by_key(SHEET_ID).sheet1
+
 
 def load_df_from_sheet(sheet):
     data = sheet.get_all_records(value_render_option='UNFORMATTED_VALUE')
@@ -30,7 +30,6 @@ def load_df_from_sheet(sheet):
         return pd.DataFrame(columns=['Time'] + NUMERIC_COLS)
     df = pd.DataFrame(data)
     df['Time'] = pd.to_datetime(df['Time'])
-    # Очищуємо числові колонки при читанні
     for col in NUMERIC_COLS:
         if col in df.columns:
             df[col] = pd.to_numeric(
@@ -39,95 +38,131 @@ def load_df_from_sheet(sheet):
             ).fillna(0)
     return df
 
+
 def save_df_to_sheet(sheet, df):
     df = df.sort_values('Time').drop_duplicates('Time').tail(1000).copy()
-
-    # Примусово конвертуємо всі числові колонки у float з крапкою
     for col in NUMERIC_COLS:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).round(3)
-
     df['Time'] = df['Time'].astype(str)
-
-    # Формуємо рядки — числа як float, не рядки
     rows = []
     for _, row in df.iterrows():
         r = []
         for col in df.columns:
-            val = row[col]
             if col == 'Time':
-                r.append(str(val))
+                r.append(str(row[col]))
             elif col in NUMERIC_COLS:
-                r.append(float(val))
+                r.append(float(row[col]))
             else:
-                r.append(val if val != '' else 0)
+                r.append(row[col] if row[col] != '' else 0)
         rows.append(r)
-
     sheet.clear()
     sheet.update([df.columns.tolist()] + rows)
     print(f"✅ Google Sheet оновлено. Рядків: {len(df)}")
 
-def main():
-    print(f"🚀 СТАРТ: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
-    sheet = get_sheet()
-    df = load_df_from_sheet(sheet)
-    print(f"📊 Завантажено з Google Sheet: {len(df)} рядків")
-
-    new_facts = []
+def read_facts_from_email(days=15):
+    """Читає факти генерації з Excel-вкладень у пошті за вказану кількість днів."""
+    facts = []
     try:
         mail = imaplib.IMAP4_SSL("imap.gmail.com")
         mail.login(os.getenv('EMAIL_USER'), os.getenv('EMAIL_PASS'))
-        mail.select("INBOX")
 
-        date_from = (datetime.now() - timedelta(days=15)).strftime("%d-%b-%Y")
-        _, data = mail.search(None, f'(SINCE "{date_from}")')
-        ids = data[0].split()
+        # Перебираємо всі папки щоб знайти листи
+        folders_to_check = ['INBOX', '"[Gmail]/All Mail"', 'All Mail']
+        ids = []
 
-        print(f"📧 Перевірка {len(ids)} листів...")
+        for folder in folders_to_check:
+            try:
+                status, _ = mail.select(folder)
+                if status != 'OK':
+                    continue
+                date_from = (datetime.now() - timedelta(days=days)).strftime("%d-%b-%Y")
+                status2, data = mail.search(None, f'(SINCE "{date_from}")')
+                if status2 == 'OK' and data and data[0]:
+                    found = data[0].split()
+                    if found:
+                        ids = found
+                        print(f"📧 Знайдено {len(ids)} листів у папці {folder}")
+                        break
+            except Exception:
+                continue
+
+        if not ids:
+            print("📭 Листів не знайдено в жодній папці")
+            mail.logout()
+            return facts
 
         for num in reversed(ids):
-            _, msg_data = mail.fetch(num, "(RFC822)")
-            msg = email.message_from_bytes(msg_data[0][1])
+            try:
+                _, msg_data = mail.fetch(num, "(RFC822)")
+                if not msg_data or not msg_data[0]:
+                    continue
+                msg = email.message_from_bytes(msg_data[0][1])
 
-            for part in msg.walk():
-                if part.get_filename() and ('.xls' in part.get_filename().lower()):
+                for part in msg.walk():
+                    filename = part.get_filename()
+                    if not filename or '.xls' not in filename.lower():
+                        continue
                     try:
-                        print(f"📄 Файл: {part.get_filename()}")
+                        print(f"📄 {filename}")
                         raw_data = part.get_payload(decode=True)
+                        if not raw_data:
+                            continue
                         excel_df = pd.read_excel(io.BytesIO(raw_data), header=None)
 
                         for i in range(2, len(excel_df)):
-                            t_raw = excel_df.iloc[i, 0]
-                            t = pd.to_datetime(t_raw, errors='coerce')
-                            val_raw = excel_df.iloc[i, 5]
-                            val_str = str(val_raw).replace(',', '.').strip()
-                            f_val = pd.to_numeric(val_str, errors='coerce')
+                            try:
+                                t_raw = excel_df.iloc[i, 0]
+                                if t_raw is None or str(t_raw).strip() in ('', 'nan'):
+                                    continue
+                                t = pd.to_datetime(t_raw, errors='coerce')
+                                if pd.isna(t):
+                                    continue
 
-                            if not pd.isna(t) and not pd.isna(f_val):
+                                val_raw = excel_df.iloc[i, 5]
+                                if val_raw is None:
+                                    continue
+                                val_str = str(val_raw).replace(',', '.').strip()
+                                f_val = pd.to_numeric(val_str, errors='coerce')
+                                if pd.isna(f_val):
+                                    continue
+
                                 final_v = round(f_val / 1000, 3) if f_val > 25 else round(f_val, 3)
-                                new_facts.append({
-                                    'Time': t.replace(minute=0, second=0, microsecond=0),
+                                facts.append({
+                                    'Time': t.to_pydatetime().replace(minute=0, second=0, microsecond=0),
                                     'Fact_MW': final_v
                                 })
+                            except Exception:
+                                continue
                     except Exception as fe:
-                        print(f"⚠️ Помилка: {fe}")
+                        print(f"⚠️ Файл {filename}: {fe}")
+            except Exception as me:
+                print(f"⚠️ Лист {num}: {me}")
+
         mail.logout()
 
     except Exception as e:
         print(f"❌ Пошта: {e}")
 
-    if new_facts:
-        df_new = pd.DataFrame(new_facts).drop_duplicates('Time')
-        df = df.set_index('Time')
-        df_new = df_new.set_index('Time')
-        df.update(df_new)
-        df = pd.concat([df, df_new[~df_new.index.isin(df.index)]]).reset_index()
-        print(f"✅ Оброблено фактів: {len(df_new)}")
-    else:
-        print("📭 Нових фактів не знайдено.")
+    return facts
 
-    # Оновлення погоди
+
+def apply_facts(df, facts):
+    if not facts:
+        print("📭 Фактів не знайдено")
+        return df
+    df_new = pd.DataFrame(facts)
+    df_new = df_new.groupby('Time')['Fact_MW'].max().reset_index()
+    df = df.set_index('Time')
+    df_new = df_new.set_index('Time')
+    df.update(df_new)
+    df = pd.concat([df, df_new[~df_new.index.isin(df.index)]]).reset_index()
+    print(f"✅ Записано фактів: {len(df_new)}, діапазон: {df_new['Fact_MW'].min():.3f}..{df_new['Fact_MW'].max():.3f} МВт")
+    return df
+
+
+def update_weather(df):
     try:
         api_key = os.getenv('WEATHER_API_KEY')
         url = (
@@ -154,14 +189,4 @@ def main():
         print("🌤 Погоду оновлено")
     except Exception as e:
         print(f"❌ Погода: {e}")
-
-    # Capacity_MW
-    if 'Capacity_MW' not in df.columns:
-        df['Capacity_MW'] = 12.5
-    df['Capacity_MW'] = df['Capacity_MW'].fillna(12.5)
-
-    save_df_to_sheet(sheet, df)
-    print(f"🏁 Готово. Остання дата: {df['Time'].max()}")
-
-if __name__ == "__main__":
-    main()
+    return df
