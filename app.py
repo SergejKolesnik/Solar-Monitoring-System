@@ -17,6 +17,8 @@ now_ua = datetime.now(UA_TZ).replace(tzinfo=None)
 SHEET_ID = "1ckVoJla9DA3BLQfBDy30sXmaOyH2HSqCZ1FbZtUDr9Q"
 SCOPES = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 
+LOGO_URL = "https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/logo.gif"
+
 @st.cache_data(ttl=300)
 def load_base_from_sheets():
     try:
@@ -34,8 +36,14 @@ def load_base_from_sheets():
         st.error(f"❌ Помилка читання Google Sheet: {e}")
         return pd.DataFrame()
 
+# --- Заголовок з логотипом ---
 st.sidebar.markdown("🚀 **Status: SkyGrid_Active**")
-st.title("☀️ SkyGrid Solar AI")
+
+col_logo, col_title = st.columns([1, 10])
+with col_logo:
+    st.image(LOGO_URL, width=64)
+with col_title:
+    st.markdown("## ☀️ SkyGrid Solar AI")
 
 # 1. Завантаження погоди
 df_f = fetch_weather_data()
@@ -53,7 +61,6 @@ if not df_f.empty:
         tabs = st.tabs(["📊 МОНІТОРИНГ", "🧠 НАВЧАННЯ", "📅 БАЗА", "🌤 МЕТЕО"])
 
         with tabs[0]:
-            # --- Перемикач потужності ---
             col_cap, col_info = st.columns([1, 3])
             with col_cap:
                 capacity_mw = st.number_input(
@@ -67,12 +74,10 @@ if not df_f.empty:
             with col_info:
                 st.markdown(f"<br>Прогноз розраховано для **{capacity_mw} МВт** · Нікополь", unsafe_allow_html=True)
 
-            # 4. Додаємо Capacity_MW
             df_f['Capacity_MW'] = capacity_mw
             if 'Capacity_MW' not in df_h.columns:
                 df_h['Capacity_MW'] = capacity_mw
 
-            # 5. Виклик моделі
             try:
                 results = train_and_get_insights(df_h, df_f)
 
@@ -91,10 +96,8 @@ if not df_f.empty:
                 st.error(f"⚠️ Помилка логіки моделі: {model_err}")
                 st.stop()
 
-            # 6. Корекція нічного часу
             df_f.loc[df_f['Rad'] < 5, ['AI_MW', 'Forecast_MW']] = 0.0
 
-            # 7. Метрики та графік
             draw_metrics(df_f, now_ua, timedelta)
             draw_main_chart(df_f)
 
@@ -125,3 +128,14 @@ if not df_f.empty:
         st.error(f"❌ Критична помилка додатка: {e}")
 else:
     st.warning("Не вдалося отримати дані про погоду.")
+
+# --- Підпис розробника ---
+st.markdown("---")
+st.markdown(
+    "<div style='text-align:center; color:gray; font-size:13px;'>"
+    "Розроблено для <a href='https://www.nzf.com.ua' target='_blank' style='color:gray;'>НЗФ</a> · "
+    "SkyGrid Solar AI v1.0 · "
+    "<a href='https://github.com/SergejKolesnik/Solar-Monitoring-System' target='_blank' style='color:gray;'>GitHub</a>"
+    "</div>",
+    unsafe_allow_html=True
+)
