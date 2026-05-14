@@ -16,7 +16,6 @@ now_ua = datetime.now(UA_TZ).replace(tzinfo=None)
 
 SHEET_ID = "1ckVoJla9DA3BLQfBDy30sXmaOyH2HSqCZ1FbZtUDr9Q"
 SCOPES = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-
 LOGO_URL = "https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/logo.gif"
 
 @st.cache_data(ttl=300)
@@ -36,14 +35,29 @@ def load_base_from_sheets():
         st.error(f"❌ Помилка читання Google Sheet: {e}")
         return pd.DataFrame()
 
-# --- Заголовок з логотипом ---
+# --- Заголовок ---
 st.sidebar.markdown("🚀 **Status: SkyGrid_Active**")
 
-col_logo, col_title = st.columns([1, 10])
-with col_logo:
-    st.image(LOGO_URL, width=64)
+col_title, col_spacer, col_logo = st.columns([5, 1, 2])
 with col_title:
-    st.markdown("## ☀️ SkyGrid Solar AI")
+    st.markdown("# ☀️ SkyGrid Solar AI")
+    st.markdown("<span style='color:gray; font-size:13px;'>Система моніторингу та прогнозування сонячної генерації</span>", unsafe_allow_html=True)
+with col_logo:
+    st.markdown(
+        f"""
+        <div style='display:flex; align-items:center; justify-content:flex-end; gap:12px; padding-top:8px;'>
+            <img src='{LOGO_URL}' width='48' style='vertical-align:middle;'/>
+            <div style='text-align:left; line-height:1.3;'>
+                <div style='font-weight:600; font-size:14px;'>Нікопольський завод</div>
+                <div style='font-weight:600; font-size:14px;'>феросплавів</div>
+                <div style='font-size:11px; color:gray;'><a href='https://www.nzf.com.ua' target='_blank' style='color:gray; text-decoration:none;'>nzf.com.ua</a></div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+st.markdown("---")
 
 # 1. Завантаження погоди
 df_f = fetch_weather_data()
@@ -132,10 +146,9 @@ else:
 # --- Підпис розробника ---
 st.markdown("---")
 st.markdown(
-    "<div style='text-align:center; color:gray; font-size:13px;'>"
-    "Розроблено для <a href='https://www.nzf.com.ua' target='_blank' style='color:gray;'>НЗФ</a> · "
-    "SkyGrid Solar AI v1.0 · "
-    "<a href='https://github.com/SergejKolesnik/Solar-Monitoring-System' target='_blank' style='color:gray;'>GitHub</a>"
+    "<div style='text-align:center; color:gray; font-size:12px;'>"
+    "SkyGrid Solar AI v1.0 · Розробник: "
+    "<a href='https://github.com/SergejKolesnik/Solar-Monitoring-System' target='_blank' style='color:gray;'>Sergej Kolesnik</a>"
     "</div>",
     unsafe_allow_html=True
 )
