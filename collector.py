@@ -173,7 +173,7 @@ def main():
     df = load_df_from_sheet(sheet)
     print(f"📊 Завантажено: {len(df)} рядків")
 
-    facts = read_facts_from_email(days=45)
+    facts = read_facts_from_email(days=15)
 
     if facts:
         df_new = pd.DataFrame(facts)
