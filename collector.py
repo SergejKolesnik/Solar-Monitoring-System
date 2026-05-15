@@ -149,7 +149,7 @@ def main():
     print(f"📊 Завантажено: {len(df)} рядків")
 
     # Читаємо факти за 15 днів
-    facts = read_facts_from_email(days=15)
+    facts = read_facts_from_email(days=45)
 
     if facts:
         df_new = pd.DataFrame(facts)
