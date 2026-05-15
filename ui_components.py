@@ -176,7 +176,7 @@ def draw_training_tab(df_h, accuracy_r2, importance, scatter_data, mse_error, co
 
     st.write("---")
 
-    # ── Погодинний графік Факт АСЬКЕ vs План ШІ (замість похибки) ──
+    # ── Погодинний графік Факт АСКОЕ vs План ШІ (замість похибки) ──
     st.markdown("##### Факт АСКОЕ vs План ШІ — погодинно (останні 5 днів)")
     features = [c for c in ['Forecast_MW','CloudCover','Temp','WindSpeed','PrecipProb','Capacity_MW'] if c in df_h.columns]
     df_h3 = _clean_numeric(df_h, features + ['Fact_MW'])
@@ -196,7 +196,7 @@ def draw_training_tab(df_h, accuracy_r2, importance, scatter_data, mse_error, co
         fig_hourly = go.Figure()
         fig_hourly.add_trace(go.Scatter(
             x=df_recent['Time'], y=df_recent['Fact_MW'],
-            name='Факт (АСЬКЕ)', mode='lines',
+            name='Факт (АСКОЕ)', mode='lines',
             line=dict(color='#378ADD', width=2),
             fill='tozeroy', fillcolor='rgba(55,138,221,0.07)'
         ))
