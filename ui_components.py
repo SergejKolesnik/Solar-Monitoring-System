@@ -5,7 +5,6 @@ from plotly.subplots import make_subplots
 
 
 def _clean_numeric(df, columns):
-    """Конвертуємо числові колонки — виправляє порожні рядки та текст з Google Sheets."""
     df = df.copy()
     for col in columns:
         if col in df.columns:
@@ -88,8 +87,6 @@ def draw_training_tab(df_h, accuracy_r2, importance, scatter_data, mse_error, co
             from sklearn.model_selection import train_test_split
 
             features = [c for c in ['Forecast_MW','CloudCover','Temp','WindSpeed','PrecipProb'] if c in df_h.columns]
-
-            # Очищуємо від порожніх рядків Google Sheets
             df_h2 = _clean_numeric(df_h, features + ['Fact_MW'])
             df_clean = df_h2[df_h2['Fact_MW'] > 0].dropna(subset=['Fact_MW', features[0]])
             steps = list(range(20, len(df_clean), max(1, len(df_clean) // 15))) + [len(df_clean)]
@@ -178,36 +175,46 @@ def draw_training_tab(df_h, accuracy_r2, importance, scatter_data, mse_error, co
         st.info("Дані порівняння будуть доступні після накопичення бази.")
 
     st.write("---")
-    st.markdown("##### Похибка прогнозу по годинах доби")
-    features = [c for c in ['Forecast_MW','CloudCover','Temp','WindSpeed','PrecipProb'] if c in df_h.columns]
 
+    # ── Погодинний графік Факт АСЬКЕ vs План ШІ (замість похибки) ──
+    st.markdown("##### Факт АСЬКЕ vs План ШІ — погодинно (останні 5 днів)")
+    features = [c for c in ['Forecast_MW','CloudCover','Temp','WindSpeed','PrecipProb','Capacity_MW'] if c in df_h.columns]
     df_h3 = _clean_numeric(df_h, features + ['Fact_MW'])
-    df_clean2 = df_h3[df_h3['Fact_MW'] > 0].dropna(subset=['Fact_MW', 'Time', features[0]]).copy()
+    df_h3['Time'] = pd.to_datetime(df_h3['Time'])
+    df_recent = df_h3[df_h3['Fact_MW'] > 0].copy()
+    df_recent = df_recent.sort_values('Time').tail(24 * 5)
 
-    if len(df_clean2) >= 20:
+    if len(df_recent) >= 10:
         from sklearn.ensemble import RandomForestRegressor
-        df_clean2['hour'] = pd.to_datetime(df_clean2['Time']).dt.hour
-        X = df_clean2[features].fillna(0).astype(float)
-        y = df_clean2['Fact_MW'].astype(float)
+        X = df_recent[features].fillna(0).astype(float)
+        y = df_recent['Fact_MW'].astype(float)
         m = RandomForestRegressor(n_estimators=50, random_state=42)
         m.fit(X, y)
-        df_clean2['error'] = abs(m.predict(X) - y)
-        hourly_error = df_clean2.groupby('hour')['error'].mean().reset_index()
-        hourly_error = hourly_error[(hourly_error['hour'] >= 5) & (hourly_error['hour'] <= 21)]
+        df_recent = df_recent.copy()
+        df_recent['AI_Plan'] = m.predict(X)
 
-        fig_err = go.Figure(go.Bar(
-            x=hourly_error['hour'],
-            y=hourly_error['error'].round(3),
-            marker_color='#BA7517'
+        fig_hourly = go.Figure()
+        fig_hourly.add_trace(go.Scatter(
+            x=df_recent['Time'], y=df_recent['Fact_MW'],
+            name='Факт (АСЬКЕ)', mode='lines',
+            line=dict(color='#378ADD', width=2),
+            fill='tozeroy', fillcolor='rgba(55,138,221,0.07)'
         ))
-        fig_err.update_layout(
-            height=180, margin=dict(l=0, r=0, t=10, b=0),
-            xaxis=dict(title='Година доби', tickmode='linear', dtick=1),
-            yaxis=dict(title='МВт'), showlegend=False
+        fig_hourly.add_trace(go.Scatter(
+            x=df_recent['Time'], y=df_recent['AI_Plan'],
+            name='План ШІ', mode='lines',
+            line=dict(color='#1D9E75', width=2, dash='dash')
+        ))
+        fig_hourly.update_layout(
+            height=280, margin=dict(l=0, r=0, t=10, b=0),
+            yaxis=dict(title='МВт'),
+            xaxis=dict(title='Час'),
+            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0),
+            hovermode='x unified'
         )
-        st.plotly_chart(fig_err, use_container_width=True)
+        st.plotly_chart(fig_hourly, use_container_width=True)
     else:
-        st.info("Недостатньо даних для аналізу похибки.")
+        st.info("Недостатньо погодинних даних для графіку.")
 
 
 # ─────────────────────────────────────────────
@@ -290,7 +297,16 @@ def draw_base_tab(df_h):
 # ─────────────────────────────────────────────
 
 def draw_meteo_tab(df_f):
-    st.markdown("##### 🌤 Метео-дашборд — прогноз на 5 днів")
+    col_title, col_src = st.columns([6, 2])
+    with col_title:
+        st.markdown("##### 🌤 Метео-дашборд — прогноз на 5 днів")
+    with col_src:
+        st.markdown(
+            "<div style='text-align:right; padding-top:6px; font-size:12px; color:gray;'>"
+            "Дані: <a href='https://www.visualcrossing.com' target='_blank' style='color:gray;'>Visual Crossing Weather</a>"
+            "</div>",
+            unsafe_allow_html=True
+        )
 
     if df_f.empty:
         st.info("Метеодані недоступні.")
