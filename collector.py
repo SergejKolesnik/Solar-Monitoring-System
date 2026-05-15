@@ -61,6 +61,35 @@ def save_df_to_sheet(sheet, df):
     print(f"✅ Google Sheet оновлено. Рядків: {len(df)}")
 
 
+def parse_excel_value(val_raw):
+    """
+    Правильно парсить числове значення з Excel.
+    Враховує кому як роздільник тисяч (4,140 = 4140) або десятковий знак (4,14 = 4.14).
+    """
+    if val_raw is None:
+        return None
+
+    val_str = str(val_raw).replace(' ', '').replace('\xa0', '').strip()
+
+    if not val_str or val_str.lower() in ('nan', 'none', ''):
+        return None
+
+    # Якщо є і кома і крапка — кома це роздільник тисяч: 4,140.5 → 4140.5
+    if ',' in val_str and '.' in val_str:
+        val_str = val_str.replace(',', '')
+
+    elif ',' in val_str:
+        parts = val_str.split(',')
+        # Якщо після коми рівно 3 цифри — це роздільник тисяч: 4,140 → 4140
+        if len(parts) == 2 and len(parts[1]) == 3 and parts[1].isdigit():
+            val_str = val_str.replace(',', '')
+        else:
+            # Інакше кома — десятковий знак: 4,14 → 4.14
+            val_str = val_str.replace(',', '.')
+
+    return pd.to_numeric(val_str, errors='coerce')
+
+
 def read_facts_from_email(days=15):
     facts = []
     try:
@@ -101,11 +130,12 @@ def read_facts_from_email(days=15):
                     if not filename or '.xls' not in filename.lower():
                         continue
                     try:
-                        print(f"📄 {filename}")
                         raw_data = part.get_payload(decode=True)
                         if not raw_data:
                             continue
                         excel_df = pd.read_excel(io.BytesIO(raw_data), header=None)
+                        print(f"📄 {filename}")
+
                         for i in range(2, len(excel_df)):
                             try:
                                 t_raw = excel_df.iloc[i, 0]
@@ -114,15 +144,13 @@ def read_facts_from_email(days=15):
                                 t = pd.to_datetime(t_raw, errors='coerce')
                                 if pd.isna(t):
                                     continue
-                                val_raw = excel_df.iloc[i, 5]
-                                if val_raw is None:
+
+                                # Використовуємо новий парсер
+                                f_val = parse_excel_value(excel_df.iloc[i, 5])
+                                if f_val is None or pd.isna(f_val):
                                     continue
-                                f_val = pd.to_numeric(
-                                    str(val_raw).replace(',', '.').strip(),
-                                    errors='coerce'
-                                )
-                                if pd.isna(f_val):
-                                    continue
+
+                                # Конвертуємо кВт → МВт
                                 final_v = round(f_val / 1000, 3) if f_val > 25 else round(f_val, 3)
                                 facts.append({
                                     'Time': t.to_pydatetime().replace(minute=0, second=0, microsecond=0),
@@ -148,7 +176,6 @@ def main():
     df = load_df_from_sheet(sheet)
     print(f"📊 Завантажено: {len(df)} рядків")
 
-    # Читаємо факти за 15 днів
     facts = read_facts_from_email(days=15)
 
     if facts:
@@ -190,7 +217,6 @@ def main():
     except Exception as e:
         print(f"❌ Погода: {e}")
 
-    # Capacity_MW
     if 'Capacity_MW' not in df.columns:
         df['Capacity_MW'] = 12.5
     df['Capacity_MW'] = df['Capacity_MW'].fillna(12.5)
