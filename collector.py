@@ -61,33 +61,33 @@ def save_df_to_sheet(sheet, df):
     print(f"✅ Google Sheet оновлено. Рядків: {len(df)}")
 
 
-def parse_excel_value(val_raw):
+def parse_kwh_value(val_raw):
     """
-    Правильно парсить числове значення з Excel.
-    Враховує кому як роздільник тисяч (4,140 = 4140) або десятковий знак (4,14 = 4.14).
+    Парсить значення генерації з Excel звіту.
+    Формат: пробіл = роздільник тисяч, кома = десятковий знак.
+    Приклади: '6 454,360' → 6454.36, '4,140' → 4.14, '425,190' → 425.19
+    Повертає значення в МВт (завжди ділить на 1000, бо дані в кВт).
     """
     if val_raw is None:
         return None
 
-    val_str = str(val_raw).replace(' ', '').replace('\xa0', '').strip()
+    val_str = (
+        str(val_raw)
+        .replace('\xa0', '')   # нерозривний пробіл
+        .replace(' ', '')      # звичайний пробіл (роздільник тисяч)
+        .replace(',', '.')     # кома → крапка (десятковий знак)
+        .strip()
+    )
 
     if not val_str or val_str.lower() in ('nan', 'none', ''):
         return None
 
-    # Якщо є і кома і крапка — кома це роздільник тисяч: 4,140.5 → 4140.5
-    if ',' in val_str and '.' in val_str:
-        val_str = val_str.replace(',', '')
+    f_val = pd.to_numeric(val_str, errors='coerce')
+    if pd.isna(f_val):
+        return None
 
-    elif ',' in val_str:
-        parts = val_str.split(',')
-        # Якщо після коми рівно 3 цифри — це роздільник тисяч: 4,140 → 4140
-        if len(parts) == 2 and len(parts[1]) == 3 and parts[1].isdigit():
-            val_str = val_str.replace(',', '')
-        else:
-            # Інакше кома — десятковий знак: 4,14 → 4.14
-            val_str = val_str.replace(',', '.')
-
-    return pd.to_numeric(val_str, errors='coerce')
+    # Завжди ділимо на 1000 — дані в кВт
+    return round(f_val / 1000, 3)
 
 
 def read_facts_from_email(days=15):
@@ -145,13 +145,10 @@ def read_facts_from_email(days=15):
                                 if pd.isna(t):
                                     continue
 
-                                # Використовуємо новий парсер
-                                f_val = parse_excel_value(excel_df.iloc[i, 5])
-                                if f_val is None or pd.isna(f_val):
+                                final_v = parse_kwh_value(excel_df.iloc[i, 5])
+                                if final_v is None:
                                     continue
 
-                                # Конвертуємо кВт → МВт
-                                final_v = round(f_val / 1000, 3) if f_val > 25 else round(f_val, 3)
                                 facts.append({
                                     'Time': t.to_pydatetime().replace(minute=0, second=0, microsecond=0),
                                     'Fact_MW': final_v
