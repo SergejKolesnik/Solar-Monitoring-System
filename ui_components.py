@@ -151,8 +151,8 @@ def draw_training_tab(df_h, accuracy_r2, importance, scatter_data, mse_error, co
     if comparison_df is not None:
         fig_cmp = go.Figure()
         fig_cmp.add_trace(go.Scatter(
-            x=comparison_df['Дата'], y=comparison_df['Факт (АСЬКЕ)'],
-            name='Факт (АСЬКЕ)', mode='lines+markers',
+            x=comparison_df['Дата'], y=comparison_df['Факт (АСКОЕ)'],
+            name='Факт (АСКОЕ)', mode='lines+markers',
             line=dict(color='#378ADD', width=2)
         ))
         fig_cmp.add_trace(go.Scatter(
@@ -177,7 +177,7 @@ def draw_training_tab(df_h, accuracy_r2, importance, scatter_data, mse_error, co
     st.write("---")
 
     # ── Погодинний графік Факт АСЬКЕ vs План ШІ (замість похибки) ──
-    st.markdown("##### Факт АСЬКЕ vs План ШІ — погодинно (останні 5 днів)")
+    st.markdown("##### Факт АСКОЕ vs План ШІ — погодинно (останні 5 днів)")
     features = [c for c in ['Forecast_MW','CloudCover','Temp','WindSpeed','PrecipProb','Capacity_MW'] if c in df_h.columns]
     df_h3 = _clean_numeric(df_h, features + ['Fact_MW'])
     df_h3['Time'] = pd.to_datetime(df_h3['Time'])
