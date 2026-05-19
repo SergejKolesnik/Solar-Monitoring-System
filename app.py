@@ -15,7 +15,7 @@ UA_TZ = pytz.timezone('Europe/Kyiv')
 now_ua = datetime.now(UA_TZ).replace(tzinfo=None)
 
 SHEET_ID = "1ckVoJla9DA3BLQfBDy30sXmaOyH2HSqCZ1FbZtUDr9Q"
-PLAN_SHEET_ID = "1U8639UXFyZUNzMOg68Hcg_gDAX_JS9g7fpBkdXOpODw"
+PLAN_SHEET_ID = "1U8639UXFyZUNzMOg6BHcg_gDAX_JS9g7fpBkdXOpODw"
 SCOPES = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 LOGO_URL = "https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/logo.gif"
 
