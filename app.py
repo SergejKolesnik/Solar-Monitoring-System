@@ -2,12 +2,13 @@ import streamlit as st
 import pandas as pd
 import time, io, pytz, json
 import gspread
+import requests
 from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
 
 from weather_service import fetch_weather_data
 from model_engine import train_and_get_insights
-from ui_components import draw_main_chart, draw_metrics, draw_training_tab, draw_base_tab, draw_meteo_tab
+from ui_components import draw_main_chart, draw_metrics, draw_training_tab, draw_base_tab, draw_meteo_tab, draw_plan_tab
 
 # Налаштування сторінки
 st.set_page_config(page_title="SkyGrid Solar AI", layout="wide", page_icon="☀️")
@@ -15,8 +16,16 @@ UA_TZ = pytz.timezone('Europe/Kyiv')
 now_ua = datetime.now(UA_TZ).replace(tzinfo=None)
 
 SHEET_ID = "1ckVoJla9DA3BLQfBDy30sXmaOyH2HSqCZ1FbZtUDr9Q"
+PLAN_SHEET_ID = "1U8639UXFyZUNzMOg68Hcg_gDAX_JS9g7fpBkdXOpODw"
 SCOPES = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 LOGO_URL = "https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/logo.gif"
+
+MONTHS_UK = {
+    1: 'Січень', 2: 'Лютий', 3: 'Березень', 4: 'Квітень',
+    5: 'Травень', 6: 'Червень', 7: 'Липень', 8: 'Серпень',
+    9: 'Вересень', 10: 'Жовтень', 11: 'Листопад', 12: 'Грудень'
+}
+
 
 @st.cache_data(ttl=300)
 def load_base_from_sheets():
@@ -34,6 +43,60 @@ def load_base_from_sheets():
     except Exception as e:
         st.error(f"❌ Помилка читання Google Sheet: {e}")
         return pd.DataFrame()
+
+
+@st.cache_data(ttl=3600)
+def load_plan_from_sheets(month: int, year: int, nominal_kw: float):
+    """Читає план генерації з публічної Google Sheet за поточний місяць."""
+    try:
+        sheet_name = f"{MONTHS_UK[month]} {str(year)[2:]}"
+        # Читаємо через публічний CSV export
+        url = f"https://docs.google.com/spreadsheets/d/{PLAN_SHEET_ID}/gviz/tq?tqx=out:csv&sheet={requests.utils.quote(sheet_name)}"
+        df_raw = pd.read_csv(url, header=None)
+
+        # Знаходимо рядки де є номінал і дні 1-31
+        # Колонка 1 = Номінал, колонка 2 = День, колонки 3-26 = П1-П24
+        data = df_raw.iloc[4:, [1, 2] + list(range(3, 27))].copy()
+        data.columns = ['Nominal', 'День'] + [f'П{i}' for i in range(1, 25)]
+
+        # Очищуємо числа (можуть бути з пробілами/комами)
+        for col in data.columns:
+            data[col] = data[col].astype(str).str.replace(' ', '').str.replace(',', '.').str.strip()
+            data[col] = pd.to_numeric(data[col], errors='coerce')
+
+        # Беремо найближчий номінал до поточної потужності
+        nominals = data['Nominal'].dropna().unique()
+        nominal_kw_val = nominal_kw * 1000
+        closest = min(nominals, key=lambda x: abs(x - nominal_kw_val)) if len(nominals) > 0 else None
+
+        if closest is None:
+            return pd.DataFrame()
+
+        plan = data[(data['Nominal'] == closest) & (data['День'] >= 1) & (data['День'] <= 31)].copy()
+        plan = plan.drop_duplicates(subset=['День'])
+
+        rows = []
+        for _, row in plan.iterrows():
+            day = int(row['День'])
+            for h in range(1, 25):
+                val = row.get(f'П{h}', 0)
+                if pd.notna(val):
+                    rows.append({
+                        'Time': datetime(year, month, day, h - 1, 0),
+                        'Plan_MW': round(float(val) / 1000, 3)
+                    })
+
+        if not rows:
+            return pd.DataFrame()
+
+        result = pd.DataFrame(rows)
+        result['Time'] = pd.to_datetime(result['Time'])
+        return result
+
+    except Exception as e:
+        st.warning(f"⚠️ Не вдалось завантажити план: {e}")
+        return pd.DataFrame()
+
 
 # --- Заголовок ---
 st.sidebar.markdown("🚀 **Status: SkyGrid_Active**")
@@ -64,7 +127,7 @@ df_f = fetch_weather_data()
 
 if not df_f.empty:
     try:
-        # 2. Завантаження бази з Google Sheets
+        # 2. Завантаження бази
         df_h = load_base_from_sheets()
 
         if df_h.empty:
@@ -72,17 +135,15 @@ if not df_f.empty:
             st.stop()
 
         # 3. Вкладки
-        tabs = st.tabs(["📊 МОНІТОРИНГ", "🧠 НАВЧАННЯ", "📅 БАЗА", "🌤 МЕТЕО"])
+        tabs = st.tabs(["📊 МОНІТОРИНГ", "🧠 НАВЧАННЯ", "📅 БАЗА", "🌤 МЕТЕО", "📋 ПЛАН"])
 
         with tabs[0]:
             col_cap, col_info = st.columns([1, 3])
             with col_cap:
                 capacity_mw = st.number_input(
                     "⚡ Потужність СЕС (МВт)",
-                    min_value=1.0,
-                    max_value=100.0,
-                    value=12.5,
-                    step=0.5,
+                    min_value=1.0, max_value=100.0,
+                    value=12.5, step=0.5,
                     help="Змінюй при введенні нових черг СЕС"
                 )
             with col_info:
@@ -94,7 +155,6 @@ if not df_f.empty:
 
             try:
                 results = train_and_get_insights(df_h, df_f)
-
                 if isinstance(results, tuple) and len(results) == 6:
                     predictions, accuracy, importance, scatter_data, pivot_error, comparison_df = results
                 elif isinstance(results, tuple) and len(results) == 4:
@@ -103,9 +163,7 @@ if not df_f.empty:
                 else:
                     predictions = results[0] if isinstance(results, tuple) else results
                     accuracy, importance, scatter_data, pivot_error, comparison_df = 0.0, None, None, 0.0, None
-
                 df_f['AI_MW'] = predictions
-
             except Exception as model_err:
                 st.error(f"⚠️ Помилка логіки моделі: {model_err}")
                 st.stop()
@@ -121,7 +179,6 @@ if not df_f.empty:
             df_export.columns = ['Час', 'Прогноз сайту (МВт)', 'План ШІ (МВт)']
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 df_export.to_excel(writer, index=False, sheet_name='Solar_Plan')
-
             st.download_button(
                 label="📥 Завантажити План в Excel",
                 data=output.getvalue(),
@@ -137,6 +194,10 @@ if not df_f.empty:
 
         with tabs[3]:
             draw_meteo_tab(df_f)
+
+        with tabs[4]:
+            df_plan = load_plan_from_sheets(now_ua.month, now_ua.year, capacity_mw)
+            draw_plan_tab(df_h, df_f, df_plan, now_ua)
 
     except Exception as e:
         st.error(f"❌ Критична помилка додатка: {e}")
