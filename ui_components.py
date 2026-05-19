@@ -61,7 +61,7 @@ def draw_main_chart(df_f):
         legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0),
         hovermode='x unified'
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 
 # ─────────────────────────────────────────────
@@ -121,7 +121,7 @@ def draw_training_tab(df_h, accuracy_r2, importance, scatter_data, mse_error, co
                     yaxis=dict(title='%', range=[0, 100]),
                     xaxis=dict(title='Записів'), showlegend=False
                 )
-                st.plotly_chart(fig_r2, use_container_width=True)
+                st.plotly_chart(fig_r2, width='stretch')
             else:
                 st.info("Недостатньо чистих даних для графіку.")
         else:
@@ -142,7 +142,7 @@ def draw_training_tab(df_h, accuracy_r2, importance, scatter_data, mse_error, co
                 height=220, margin=dict(l=0, r=40, t=10, b=0),
                 xaxis=dict(title='%'), showlegend=False
             )
-            st.plotly_chart(fig_imp, use_container_width=True)
+            st.plotly_chart(fig_imp, width='stretch')
         else:
             st.info("Дані про важливість факторів очікуються...")
 
@@ -170,13 +170,13 @@ def draw_training_tab(df_h, accuracy_r2, importance, scatter_data, mse_error, co
             yaxis=dict(title='МВт·год'),
             legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0)
         )
-        st.plotly_chart(fig_cmp, use_container_width=True)
+        st.plotly_chart(fig_cmp, width='stretch')
     else:
         st.info("Дані порівняння будуть доступні після накопичення бази.")
 
     st.write("---")
 
-    # ── Погодинний графік Факт АСКОЕ vs План ШІ (замість похибки) ──
+    # ── Погодинний графік Факт АСЬКЕ vs План ШІ (замість похибки) ──
     st.markdown("##### Факт АСКОЕ vs План ШІ — погодинно (останні 5 днів)")
     features = [c for c in ['Forecast_MW','CloudCover','Temp','WindSpeed','PrecipProb','Capacity_MW'] if c in df_h.columns]
     df_h3 = _clean_numeric(df_h, features + ['Fact_MW'])
@@ -196,7 +196,7 @@ def draw_training_tab(df_h, accuracy_r2, importance, scatter_data, mse_error, co
         fig_hourly = go.Figure()
         fig_hourly.add_trace(go.Scatter(
             x=df_recent['Time'], y=df_recent['Fact_MW'],
-            name='Факт (АСКОЕ)', mode='lines',
+            name='Факт (АСЬКЕ)', mode='lines',
             line=dict(color='#378ADD', width=2),
             fill='tozeroy', fillcolor='rgba(55,138,221,0.07)'
         ))
@@ -212,7 +212,7 @@ def draw_training_tab(df_h, accuracy_r2, importance, scatter_data, mse_error, co
             legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0),
             hovermode='x unified'
         )
-        st.plotly_chart(fig_hourly, use_container_width=True)
+        st.plotly_chart(fig_hourly, width='stretch')
     else:
         st.info("Недостатньо погодинних даних для графіку.")
 
@@ -280,14 +280,14 @@ def draw_base_tab(df_h):
         legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0),
         barmode='overlay'
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
     st.dataframe(
         daily.style.background_gradient(
             subset=['Точність %'] if 'Точність %' in daily.columns else [],
             cmap='RdYlGn', vmin=50, vmax=100
         ),
-        use_container_width=True,
+        width='stretch',
         hide_index=True
     )
 
@@ -348,7 +348,7 @@ def draw_meteo_tab(df_f):
     )
     fig1.update_yaxes(title_text="Вт/м²", secondary_y=False)
     fig1.update_yaxes(title_text="%", secondary_y=True)
-    st.plotly_chart(fig1, use_container_width=True)
+    st.plotly_chart(fig1, width='stretch')
 
     st.markdown("##### Температура повітря")
     fig2 = go.Figure(go.Scatter(
@@ -360,7 +360,7 @@ def draw_meteo_tab(df_f):
         height=180, margin=dict(l=0, r=0, t=10, b=0),
         yaxis=dict(title='°C'), showlegend=False, hovermode='x unified'
     )
-    st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig2, width='stretch')
 
     col_l, col_r = st.columns(2)
     with col_l:
@@ -373,7 +373,7 @@ def draw_meteo_tab(df_f):
                 height=180, margin=dict(l=0, r=0, t=10, b=0),
                 yaxis=dict(title='м/с'), showlegend=False
             )
-            st.plotly_chart(fig3, use_container_width=True)
+            st.plotly_chart(fig3, width='stretch')
         else:
             st.info("Дані про вітер відсутні.")
 
@@ -387,6 +387,6 @@ def draw_meteo_tab(df_f):
                 height=180, margin=dict(l=0, r=0, t=10, b=0),
                 yaxis=dict(title='%', range=[0, 100]), showlegend=False
             )
-            st.plotly_chart(fig4, use_container_width=True)
+            st.plotly_chart(fig4, width='stretch')
         else:
             st.info("Дані про опади відсутні.")
