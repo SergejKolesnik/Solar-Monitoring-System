@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import time, io, pytz, json
 import gspread
-import requests
 from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
 
@@ -47,12 +46,16 @@ def load_base_from_sheets():
 
 @st.cache_data(ttl=3600)
 def load_plan_from_sheets(month: int, year: int, nominal_kw: float):
-    """Читає план генерації з публічної Google Sheet за поточний місяць."""
+    """Читає план генерації з Google Sheet за поточний місяць через сервісний акаунт."""
     try:
         sheet_name = f"{MONTHS_UK[month]} {str(year)[2:]}"
-        # Читаємо через публічний CSV export
-        url = f"https://docs.google.com/spreadsheets/d/{PLAN_SHEET_ID}/gviz/tq?tqx=out:csv&sheet={requests.utils.quote(sheet_name)}"
-        df_raw = pd.read_csv(url, header=None)
+        creds_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
+        creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+        gc = gspread.authorize(creds)
+        sh = gc.open_by_key(PLAN_SHEET_ID)
+        ws = sh.worksheet(sheet_name)
+        raw = ws.get_all_values()
+        df_raw = pd.DataFrame(raw)
 
         # Знаходимо рядки де є номінал і дні 1-31
         # Колонка 1 = Номінал, колонка 2 = День, колонки 3-26 = П1-П24
