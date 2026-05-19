@@ -47,32 +47,50 @@ def load_base_from_sheets():
 @st.cache_data(ttl=3600)
 def load_plan_from_sheets(month: int, year: int, nominal_kw: float):
     """Читає план генерації з Google Sheet за поточний місяць через сервісний акаунт."""
+    sheet_name = f"{MONTHS_UK[month]} {str(year)[2:]}"
     try:
-        sheet_name = f"{MONTHS_UK[month]} {str(year)[2:]}"
         creds_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
         creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
         gc = gspread.authorize(creds)
-        sh = gc.open_by_key(PLAN_SHEET_ID)
+
+        # Спочатку перевіримо чи є доступ до таблиці
+        try:
+            sh = gc.open_by_key(PLAN_SHEET_ID)
+        except Exception as e:
+            st.error(f"❌ Немає доступу до таблиці плану: {type(e).__name__}: {e}")
+            return pd.DataFrame()
+
+        # Перевіримо список аркушів
+        try:
+            sheet_titles = [ws.title for ws in sh.worksheets()]
+            st.info(f"📋 Доступні аркуші: {sheet_titles}")
+        except Exception as e:
+            st.error(f"❌ Не вдалось отримати список аркушів: {e}")
+            return pd.DataFrame()
+
+        # Знаходимо потрібний аркуш
+        if sheet_name not in sheet_titles:
+            st.error(f"❌ Аркуш '{sheet_name}' не знайдено. Доступні: {sheet_titles}")
+            return pd.DataFrame()
+
         ws = sh.worksheet(sheet_name)
         raw = ws.get_all_values()
         df_raw = pd.DataFrame(raw)
 
-        # Знаходимо рядки де є номінал і дні 1-31
         # Колонка 1 = Номінал, колонка 2 = День, колонки 3-26 = П1-П24
         data = df_raw.iloc[4:, [1, 2] + list(range(3, 27))].copy()
         data.columns = ['Nominal', 'День'] + [f'П{i}' for i in range(1, 25)]
 
-        # Очищуємо числа (можуть бути з пробілами/комами)
         for col in data.columns:
-            data[col] = data[col].astype(str).str.replace(' ', '').str.replace(',', '.').str.strip()
+            data[col] = data[col].astype(str).str.replace(' ', '').str.replace('\xa0', '').str.replace(',', '.').str.strip()
             data[col] = pd.to_numeric(data[col], errors='coerce')
 
-        # Беремо найближчий номінал до поточної потужності
         nominals = data['Nominal'].dropna().unique()
         nominal_kw_val = nominal_kw * 1000
         closest = min(nominals, key=lambda x: abs(x - nominal_kw_val)) if len(nominals) > 0 else None
 
         if closest is None:
+            st.error("❌ Не знайдено номінал генерації в таблиці")
             return pd.DataFrame()
 
         plan = data[(data['Nominal'] == closest) & (data['День'] >= 1) & (data['День'] <= 31)].copy()
@@ -90,6 +108,7 @@ def load_plan_from_sheets(month: int, year: int, nominal_kw: float):
                     })
 
         if not rows:
+            st.error("❌ Дані плану порожні після парсингу")
             return pd.DataFrame()
 
         result = pd.DataFrame(rows)
@@ -97,7 +116,7 @@ def load_plan_from_sheets(month: int, year: int, nominal_kw: float):
         return result
 
     except Exception as e:
-        st.warning(f"⚠️ Не вдалось завантажити план: {e}")
+        st.error(f"❌ Помилка завантаження плану: {type(e).__name__}: {e}")
         return pd.DataFrame()
 
 
