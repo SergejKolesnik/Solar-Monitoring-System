@@ -176,7 +176,7 @@ def draw_training_tab(df_h, accuracy_r2, importance, scatter_data, mse_error, co
 
     st.write("---")
 
-    # ── Погодинний графік Факт АСЬКЕ vs План ШІ (замість похибки) ──
+    # ── Погодинний графік Факт АСКОЕ vs План ШІ (замість похибки) ──
     st.markdown("##### Факт АСКОЕ vs План ШІ — погодинно (останні 5 днів)")
     features = [c for c in ['Forecast_MW','CloudCover','Temp','WindSpeed','PrecipProb','Capacity_MW'] if c in df_h.columns]
     df_h3 = _clean_numeric(df_h, features + ['Fact_MW'])
@@ -196,7 +196,7 @@ def draw_training_tab(df_h, accuracy_r2, importance, scatter_data, mse_error, co
         fig_hourly = go.Figure()
         fig_hourly.add_trace(go.Scatter(
             x=df_recent['Time'], y=df_recent['Fact_MW'],
-            name='Факт (АСЬКЕ)', mode='lines',
+            name='Факт (АСКОЕ)', mode='lines',
             line=dict(color='#378ADD', width=2),
             fill='tozeroy', fillcolor='rgba(55,138,221,0.07)'
         ))
@@ -390,3 +390,158 @@ def draw_meteo_tab(df_f):
             st.plotly_chart(fig4, width='stretch')
         else:
             st.info("Дані про опади відсутні.")
+
+
+# ─────────────────────────────────────────────
+#  ВКЛАДКА 4: ПЛАН
+# ─────────────────────────────────────────────
+
+def draw_plan_tab(df_h, df_f, df_plan, now_ua):
+    import plotly.graph_objects as go
+    import pandas as pd
+
+    month_names = {
+        1: 'Січень', 2: 'Лютий', 3: 'Березень', 4: 'Квітень',
+        5: 'Травень', 6: 'Червень', 7: 'Липень', 8: 'Серпень',
+        9: 'Вересень', 10: 'Жовтень', 11: 'Листопад', 12: 'Грудень'
+    }
+
+    col_t, col_s = st.columns([6, 2])
+    with col_t:
+        st.markdown(f"##### 📋 План генерації vs Факт АСКОЕ vs ШІ — {month_names[now_ua.month]} {now_ua.year}")
+    with col_s:
+        st.markdown(
+            "<div style='text-align:right; padding-top:6px; font-size:12px; color:gray;'>"
+            "Джерело плану: Генерація СЕС (Google Sheets)"
+            "</div>",
+            unsafe_allow_html=True
+        )
+
+    if df_plan.empty:
+        st.warning("⚠️ Дані плану недоступні. Перевірте доступ до таблиці.")
+        return
+
+    # --- Метрики місяця ---
+    plan_month = df_plan.copy()
+    plan_month['Дата'] = plan_month['Time'].dt.date
+
+    # Факт за цей місяць
+    df_h2 = df_h.copy()
+    df_h2['Time'] = pd.to_datetime(df_h2['Time'])
+    df_h2['Fact_MW'] = pd.to_numeric(
+        df_h2['Fact_MW'].astype(str).str.replace(',', '.'), errors='coerce'
+    ).fillna(0)
+    fact_month = df_h2[
+        (df_h2['Time'].dt.month == now_ua.month) &
+        (df_h2['Time'].dt.year == now_ua.year) &
+        (df_h2['Fact_MW'] > 0)
+    ]
+
+    plan_total = plan_month['Plan_MW'].sum()
+    fact_total = fact_month['Fact_MW'].sum() if not fact_month.empty else 0
+    days_with_fact = fact_month['Time'].dt.date.nunique()
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("📋 План місяця", f"{plan_total:.0f} МВт·год")
+    c2.metric("⚡ Факт (накопич.)", f"{fact_total:.1f} МВт·год")
+    c3.metric("📊 Виконання", f"{(fact_total/plan_total*100):.1f}%" if plan_total > 0 else "—")
+    c4.metric("📅 Днів з фактом", f"{days_with_fact}")
+
+    st.write("---")
+
+    # --- Погодинний графік за останні 5 днів ---
+    st.markdown("##### Погодинне порівняння — останні 5 днів")
+
+    cutoff_start = pd.Timestamp(now_ua) - pd.Timedelta(days=5)
+
+    # Факт
+    fact_recent = fact_month[fact_month['Time'] >= cutoff_start][['Time', 'Fact_MW']].copy()
+
+    # План ШІ з df_f
+    ai_recent = df_f[df_f['Time'] >= cutoff_start][['Time', 'AI_MW']].copy() if 'AI_MW' in df_f.columns else pd.DataFrame()
+
+    # План з таблиці
+    plan_recent = plan_month[plan_month['Time'] >= cutoff_start][['Time', 'Plan_MW']].copy()
+
+    fig = go.Figure()
+
+    if not fact_recent.empty:
+        fig.add_trace(go.Scatter(
+            x=fact_recent['Time'], y=fact_recent['Fact_MW'],
+            name='Факт АСКОЕ', mode='lines',
+            line=dict(color='#378ADD', width=2),
+            fill='tozeroy', fillcolor='rgba(55,138,221,0.07)'
+        ))
+
+    if not ai_recent.empty:
+        fig.add_trace(go.Scatter(
+            x=ai_recent['Time'], y=ai_recent['AI_MW'],
+            name='Прогноз ШІ', mode='lines',
+            line=dict(color='#1D9E75', width=2, dash='dash')
+        ))
+
+    if not plan_recent.empty:
+        fig.add_trace(go.Scatter(
+            x=plan_recent['Time'], y=plan_recent['Plan_MW'],
+            name='План (замовлення)', mode='lines',
+            line=dict(color='#D85A30', width=2, dash='dot')
+        ))
+
+    fig.update_layout(
+        height=360, margin=dict(l=0, r=0, t=10, b=0),
+        yaxis=dict(title='МВт'), xaxis=dict(title='Час'),
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0),
+        hovermode='x unified'
+    )
+    st.plotly_chart(fig, width='stretch')
+
+    st.write("---")
+
+    # --- Денна статистика по місяцю ---
+    st.markdown("##### Денне порівняння по місяцю (МВт·год/день)")
+
+    plan_daily = plan_month.groupby('Дата')['Plan_MW'].sum().reset_index()
+    plan_daily.columns = ['Дата', 'План (МВт·год)']
+
+    if not fact_month.empty:
+        fact_daily = fact_month.copy()
+        fact_daily['Дата'] = fact_daily['Time'].dt.date
+        fact_daily = fact_daily.groupby('Дата')['Fact_MW'].sum().reset_index()
+        fact_daily.columns = ['Дата', 'Факт (МВт·год)']
+        daily = plan_daily.merge(fact_daily, on='Дата', how='left').fillna(0)
+    else:
+        daily = plan_daily.copy()
+        daily['Факт (МВт·год)'] = 0
+
+    daily['Відхилення'] = (daily['Факт (МВт·год)'] - daily['План (МВт·год)']).round(2)
+    daily['Виконання %'] = (
+        daily['Факт (МВт·год)'] / daily['План (МВт·год)'].replace(0, 1) * 100
+    ).clip(0, 150).round(1)
+
+    fig2 = go.Figure()
+    fig2.add_trace(go.Bar(
+        x=daily['Дата'], y=daily['План (МВт·год)'],
+        name='План', marker_color='rgba(216,90,48,0.4)'
+    ))
+    fig2.add_trace(go.Bar(
+        x=daily['Дата'], y=daily['Факт (МВт·год)'],
+        name='Факт', marker_color='#378ADD'
+    ))
+    fig2.update_layout(
+        height=280, margin=dict(l=0, r=0, t=10, b=0),
+        yaxis=dict(title='МВт·год'),
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0),
+        barmode='overlay'
+    )
+    st.plotly_chart(fig2, width='stretch')
+
+    # Таблиця
+    display = daily[daily['Факт (МВт·год)'] > 0].copy()
+    if not display.empty:
+        st.dataframe(
+            display.style.background_gradient(
+                subset=['Виконання %'], cmap='RdYlGn', vmin=70, vmax=120
+            ),
+            use_container_width=True,
+            hide_index=True
+        )
