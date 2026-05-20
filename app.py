@@ -44,6 +44,51 @@ def load_base_from_sheets():
         return pd.DataFrame()
 
 
+def save_ai_predictions(df_h, df_f):
+    """Зберігає AI_MW прогноз назад в Google Sheet для минулих годин."""
+    try:
+        if 'AI_MW' not in df_f.columns:
+            return
+        creds_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
+        creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+        gc = gspread.authorize(creds)
+        sh = gc.open_by_key(SHEET_ID)
+        ws = sh.sheet1
+
+        # Отримуємо поточні заголовки
+        headers = ws.row_values(1)
+
+        # Додаємо колонку AI_MW якщо немає
+        if 'AI_MW' not in headers:
+            col_idx = len(headers) + 1
+            ws.update_cell(1, col_idx, 'AI_MW')
+            headers.append('AI_MW')
+
+        ai_col_idx = headers.index('AI_MW') + 1
+        time_col_idx = headers.index('Time') + 1
+
+        # Читаємо всі часові мітки з Sheet
+        all_times = ws.col_values(time_col_idx)[1:]  # пропускаємо заголовок
+
+        # Будуємо словник Time -> AI_MW з df_f (тільки минулі години)
+        now = pd.Timestamp(datetime.now())
+        df_past = df_f[df_f['Time'] < now].copy()
+        ai_map = dict(zip(df_past['Time'].dt.strftime('%Y-%m-%d %H:%M:%S'),
+                          df_past['AI_MW'].round(3)))
+
+        # Оновлюємо тільки рядки де є прогноз
+        updates = []
+        for i, t in enumerate(all_times):
+            if t in ai_map:
+                updates.append(gspread.Cell(i + 2, ai_col_idx, float(ai_map[t])))
+
+        if updates:
+            ws.update_cells(updates)
+
+    except Exception:
+        pass  # Мовчки ігноруємо помилки запису — не критично
+
+
 @st.cache_data(ttl=3600)
 def load_plan_from_sheets(month: int, year: int, nominal_kw: float):
     """Читає план генерації з Google Sheet за поточний місяць через сервісний акаунт."""
@@ -185,6 +230,9 @@ if not df_f.empty:
                     predictions = results[0] if isinstance(results, tuple) else results
                     accuracy, importance, scatter_data, pivot_error, comparison_df = 0.0, None, None, 0.0, None
                 df_f['AI_MW'] = predictions
+
+                # Зберігаємо AI_MW в Google Sheet для аналізу минулих днів
+                save_ai_predictions(df_h, df_f)
             except Exception as model_err:
                 st.error(f"⚠️ Помилка логіки моделі: {model_err}")
                 st.stop()
