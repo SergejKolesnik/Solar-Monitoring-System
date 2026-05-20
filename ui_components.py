@@ -449,87 +449,121 @@ def draw_plan_tab(df_h, df_f, df_plan, now_ua):
 
     st.write("---")
 
-    # --- Погодинний графік з вибором діапазону ---
+    # --- Погодинний аналіз тільки минулих днів ---
     col_h1, col_h2 = st.columns([4, 1])
     with col_h1:
-        st.markdown("##### Погодинне порівняння")
+        st.markdown("##### Погодинний аналіз якості (тільки минулі дні)")
     with col_h2:
-        days_range = st.selectbox("Діапазон", [1, 2, 3, 5], index=1, key="plan_days")
+        days_range = st.selectbox("Діапазон", [1, 2, 3], index=0, key="plan_days",
+                                   format_func=lambda x: f"{x} д.")
 
-    cutoff_start = pd.Timestamp(now_ua) - pd.Timedelta(days=days_range)
+    # Беремо тільки години де є факт (минуле)
+    cutoff_end   = pd.Timestamp(now_ua)
+    cutoff_start = cutoff_end - pd.Timedelta(days=days_range)
 
-    fact_recent  = fact_month[fact_month['Time'] >= cutoff_start][['Time', 'Fact_MW']].copy()
-    ai_recent    = df_f[df_f['Time'] >= cutoff_start][['Time', 'AI_MW']].copy() if 'AI_MW' in df_f.columns else pd.DataFrame()
-    plan_recent  = plan_month[plan_month['Time'] >= cutoff_start][['Time', 'Plan_MW']].copy()
+    fact_past = fact_month[
+        (fact_month['Time'] >= cutoff_start) &
+        (fact_month['Time'] < cutoff_end) &
+        (fact_month['Fact_MW'] > 0)
+    ][['Time', 'Fact_MW']].copy()
 
-    fig = go.Figure()
-    if not fact_recent.empty:
+    plan_past = plan_month[
+        (plan_month['Time'] >= cutoff_start) &
+        (plan_month['Time'] < cutoff_end)
+    ][['Time', 'Plan_MW']].copy()
+
+    # ШІ — тільки де є факт (минуле з df_h)
+    df_h3 = df_h.copy()
+    df_h3['Time'] = pd.to_datetime(df_h3['Time'])
+    if 'AI_MW' in df_h3.columns:
+        ai_past = df_h3[
+            (df_h3['Time'] >= cutoff_start) &
+            (df_h3['Time'] < cutoff_end)
+        ][['Time', 'AI_MW']].copy()
+        ai_past['AI_MW'] = pd.to_numeric(ai_past['AI_MW'].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
+    else:
+        ai_past = pd.DataFrame()
+
+    if fact_past.empty:
+        st.info("Немає даних факту за вибраний період.")
+    else:
+        # Графік 1 — абсолютні значення
+        fig = go.Figure()
         fig.add_trace(go.Scatter(
-            x=fact_recent['Time'], y=fact_recent['Fact_MW'],
+            x=fact_past['Time'], y=fact_past['Fact_MW'],
             name='Факт АСКОЕ', mode='lines',
-            line=dict(color='#378ADD', width=2),
-            fill='tozeroy', fillcolor='rgba(55,138,221,0.07)'
+            line=dict(color='#378ADD', width=2.5),
+            fill='tozeroy', fillcolor='rgba(55,138,221,0.08)'
         ))
-    if not ai_recent.empty:
-        fig.add_trace(go.Scatter(
-            x=ai_recent['Time'], y=ai_recent['AI_MW'],
-            name='Прогноз ШІ', mode='lines',
-            line=dict(color='#1D9E75', width=2, dash='dash')
-        ))
-    if not plan_recent.empty:
-        fig.add_trace(go.Scatter(
-            x=plan_recent['Time'], y=plan_recent['Plan_MW'],
-            name='План (замовлення)', mode='lines',
-            line=dict(color='#D85A30', width=2, dash='dot')
-        ))
-    fig.update_layout(
-        height=300, margin=dict(l=0, r=0, t=10, b=0),
-        yaxis=dict(title='МВт'), xaxis=dict(title='Час'),
-        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0),
-        hovermode='x unified'
-    )
-    st.plotly_chart(fig, width='stretch')
+        if not ai_past.empty:
+            fig.add_trace(go.Scatter(
+                x=ai_past['Time'], y=ai_past['AI_MW'],
+                name='Прогноз ШІ', mode='lines',
+                line=dict(color='#1D9E75', width=2, dash='dash')
+            ))
+        if not plan_past.empty:
+            fig.add_trace(go.Scatter(
+                x=plan_past['Time'], y=plan_past['Plan_MW'],
+                name='План (замовлення)', mode='lines',
+                line=dict(color='#D85A30', width=2, dash='dot')
+            ))
+        fig.update_layout(
+            height=260, margin=dict(l=0, r=0, t=10, b=0),
+            yaxis=dict(title='МВт'),
+            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0),
+            hovermode='x unified'
+        )
+        st.plotly_chart(fig, width='stretch')
 
-    # --- Графік відхилень по годинах ---
-    st.markdown("##### Відхилення від плану по годинах (МВт)")
+        # Графік 2 — відхилення по годинах
+        st.markdown("##### Відхилення від плану замовлення по годинах (МВт)")
 
-    if not fact_recent.empty and not plan_recent.empty:
-        # Мержимо факт і план по часу
-        dev_df = fact_recent.merge(plan_recent, on='Time', how='inner')
-        dev_df['Відхилення_факт'] = (dev_df['Fact_MW'] - dev_df['Plan_MW']).round(3)
+        dev = fact_past.merge(plan_past, on='Time', how='inner')
+        dev['Δ Факт−План'] = (dev['Fact_MW'] - dev['Plan_MW']).round(3)
+
+        # Підписи годин для осі X
+        dev['Година'] = dev['Time'].dt.strftime('%d.%m %H:00')
+
+        colors = ['#378ADD' if v >= 0 else '#D85A30' for v in dev['Δ Факт−План']]
 
         fig_dev = go.Figure()
-
-        # Стовпці відхилення факту від плану
-        colors_fact = ['#378ADD' if v >= 0 else '#D85A30' for v in dev_df['Відхилення_факт']]
         fig_dev.add_trace(go.Bar(
-            x=dev_df['Time'], y=dev_df['Відхилення_факт'],
-            name='Факт − План', marker_color=colors_fact,
-            opacity=0.8
+            x=dev['Година'], y=dev['Δ Факт−План'],
+            name='Факт − План',
+            marker_color=colors,
+            opacity=0.85,
+            text=dev['Δ Факт−План'].apply(lambda v: f"+{v:.2f}" if v >= 0 else f"{v:.2f}"),
+            textposition='outside',
+            textfont=dict(size=9)
         ))
 
-        # Відхилення ШІ від плану якщо є
-        if not ai_recent.empty:
-            dev_ai = plan_recent.merge(ai_recent, on='Time', how='inner')
-            dev_ai['Відхилення_ШІ'] = (dev_ai['AI_MW'] - dev_ai['Plan_MW']).round(3)
+        # Лінія відхилення ШІ
+        if not ai_past.empty:
+            dev_ai = plan_past.merge(ai_past, on='Time', how='inner')
+            dev_ai['Δ ШІ−План'] = (dev_ai['AI_MW'] - dev_ai['Plan_MW']).round(3)
+            dev_ai['Година'] = dev_ai['Time'].dt.strftime('%d.%m %H:00')
             fig_dev.add_trace(go.Scatter(
-                x=dev_ai['Time'], y=dev_ai['Відхилення_ШІ'],
+                x=dev_ai['Година'], y=dev_ai['Δ ШІ−План'],
                 name='ШІ − План', mode='lines+markers',
                 line=dict(color='#1D9E75', width=2),
-                marker=dict(size=4)
+                marker=dict(size=5)
             ))
 
-        fig_dev.add_hline(y=0, line_color='gray', line_width=1)
+        fig_dev.add_hline(y=0, line_color='gray', line_width=1, line_dash='dot')
         fig_dev.update_layout(
-            height=250, margin=dict(l=0, r=0, t=10, b=0),
-            yaxis=dict(title='МВт', zeroline=True),
-            xaxis=dict(title='Час'),
+            height=300, margin=dict(l=0, r=0, t=20, b=80),
+            yaxis=dict(title='МВт відхилення', zeroline=True),
+            xaxis=dict(tickangle=-45, tickfont=dict(size=10)),
             legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0),
-            hovermode='x unified', barmode='overlay'
+            hovermode='x unified'
         )
         st.plotly_chart(fig_dev, width='stretch')
-    else:
-        st.info("Недостатньо даних для графіку відхилень.")
+
+        # Підсумок відхилень
+        col_s1, col_s2, col_s3 = st.columns(3)
+        col_s1.metric("Серед. відхилення факту", f"{dev['Δ Факт−План'].mean():.3f} МВт")
+        col_s2.metric("Макс. перевищення", f"+{dev['Δ Факт−План'].max():.3f} МВт")
+        col_s3.metric("Макс. недовиконання", f"{dev['Δ Факт−План'].min():.3f} МВт")
 
     st.write("---")
 
