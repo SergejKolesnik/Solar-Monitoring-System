@@ -8,10 +8,12 @@ import json
 import gspread
 from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
+from sklearn.ensemble import RandomForestRegressor
 
 SHEET_ID = "1ckVoJla9DA3BLQfBDy30sXmaOyH2HSqCZ1FbZtUDr9Q"
 SCOPES = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 NUMERIC_COLS = ['Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb', 'Fact_MW', 'Capacity_MW']
+FEATURE_COLS = ['Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb', 'Capacity_MW']
 
 
 def get_sheet():
@@ -30,7 +32,8 @@ def load_df_from_sheet(sheet):
         return pd.DataFrame(columns=['Time'] + NUMERIC_COLS)
     df = pd.DataFrame(data)
     df['Time'] = pd.to_datetime(df['Time'])
-    for col in NUMERIC_COLS:
+    all_cols = NUMERIC_COLS + ['AI_Forecast_MW']
+    for col in all_cols:
         if col in df.columns:
             df[col] = pd.to_numeric(
                 df[col].astype(str).str.replace(',', '.').str.strip(),
@@ -40,8 +43,9 @@ def load_df_from_sheet(sheet):
 
 
 def save_df_to_sheet(sheet, df):
+    save_cols = NUMERIC_COLS + (['AI_Forecast_MW'] if 'AI_Forecast_MW' in df.columns else [])
     df = df.sort_values('Time').drop_duplicates('Time').tail(1000).copy()
-    for col in NUMERIC_COLS:
+    for col in save_cols:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).round(3)
     df['Time'] = df['Time'].astype(str)
@@ -51,7 +55,7 @@ def save_df_to_sheet(sheet, df):
         for col in df.columns:
             if col == 'Time':
                 r.append(str(row[col]))
-            elif col in NUMERIC_COLS:
+            elif col in save_cols:
                 r.append(float(row[col]))
             else:
                 r.append(row[col] if row[col] != '' else 0)
@@ -61,32 +65,71 @@ def save_df_to_sheet(sheet, df):
     print(f"✅ Google Sheet оновлено. Рядків: {len(df)}")
 
 
+def train_model(df):
+    """Навчає модель на наявних фактах."""
+    features = [c for c in FEATURE_COLS if c in df.columns]
+    df_train = df[df['Fact_MW'] > 0].dropna(subset=['Fact_MW', features[0]])
+    if len(df_train) < 20:
+        return None, features
+    X = df_train[features].fillna(0).astype(float)
+    y = df_train['Fact_MW'].astype(float)
+    model = RandomForestRegressor(n_estimators=100, random_state=42)
+    model.fit(X, y)
+    print(f"🤖 Модель навчена на {len(df_train)} записах")
+    return model, features
+
+
+def save_ai_forecast(df, model, features):
+    """
+    Зберігає прогноз ШІ на завтра в колонку AI_Forecast_MW.
+    Записує тільки якщо значення ще немає (не перезаписує).
+    """
+    if model is None:
+        print("⚠️ Модель не навчена — пропускаємо прогноз ШІ")
+        return df
+
+    tomorrow = (datetime.now() + timedelta(days=1)).date()
+    mask_tomorrow = pd.to_datetime(df['Time']).dt.date == tomorrow
+
+    if 'AI_Forecast_MW' not in df.columns:
+        df['AI_Forecast_MW'] = 0.0
+
+    # Записуємо тільки якщо порожньо
+    mask_empty = (df['AI_Forecast_MW'].fillna(0) == 0) & mask_tomorrow
+    df_to_predict = df[mask_empty].copy()
+
+    if df_to_predict.empty:
+        print(f"ℹ️ Прогноз ШІ на {tomorrow} вже збережено")
+        return df
+
+    avail_features = [f for f in features if f in df_to_predict.columns]
+    X_pred = df_to_predict[avail_features].fillna(0).astype(float)
+    preds = model.predict(X_pred)
+
+    # Обнуляємо нічні години
+    hours = pd.to_datetime(df_to_predict['Time']).dt.hour
+    preds = [p if 5 <= h <= 21 else 0.0 for p, h in zip(preds, hours)]
+
+    df.loc[mask_empty, 'AI_Forecast_MW'] = [round(p, 3) for p in preds]
+    print(f"✅ Прогноз ШІ збережено на {tomorrow}: {sum(1 for p in preds if p > 0)} годин, макс {max(preds):.3f} МВт")
+    return df
+
+
 def parse_kwh_value(val_raw):
-    """
-    Парсить значення генерації з Excel звіту.
-    Формат: пробіл = роздільник тисяч, кома = десятковий знак.
-    Приклади: '6 454,360' → 6454.36, '4,140' → 4.14, '425,190' → 425.19
-    Повертає значення в МВт (завжди ділить на 1000, бо дані в кВт).
-    """
     if val_raw is None:
         return None
-
     val_str = (
         str(val_raw)
-        .replace('\xa0', '')   # нерозривний пробіл
-        .replace(' ', '')      # звичайний пробіл (роздільник тисяч)
-        .replace(',', '.')     # кома → крапка (десятковий знак)
+        .replace('\xa0', '')
+        .replace(' ', '')
+        .replace(',', '.')
         .strip()
     )
-
     if not val_str or val_str.lower() in ('nan', 'none', ''):
         return None
-
     f_val = pd.to_numeric(val_str, errors='coerce')
     if pd.isna(f_val):
         return None
-
-    # Завжди ділимо на 1000 — дані в кВт
     return round(f_val / 1000, 3)
 
 
@@ -135,7 +178,6 @@ def read_facts_from_email(days=15):
                             continue
                         excel_df = pd.read_excel(io.BytesIO(raw_data), header=None)
                         print(f"📄 {filename}")
-
                         for i in range(2, len(excel_df)):
                             try:
                                 t_raw = excel_df.iloc[i, 0]
@@ -144,11 +186,9 @@ def read_facts_from_email(days=15):
                                 t = pd.to_datetime(t_raw, errors='coerce')
                                 if pd.isna(t):
                                     continue
-
                                 final_v = parse_kwh_value(excel_df.iloc[i, 5])
                                 if final_v is None:
                                     continue
-
                                 facts.append({
                                     'Time': t.to_pydatetime().replace(minute=0, second=0, microsecond=0),
                                     'Fact_MW': final_v
@@ -167,14 +207,15 @@ def read_facts_from_email(days=15):
 
 
 def main():
-    print(f"🚀 СТАРТ: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    now = datetime.now()
+    print(f"🚀 СТАРТ: {now.strftime('%Y-%m-%d %H:%M:%S')}")
 
     sheet = get_sheet()
     df = load_df_from_sheet(sheet)
     print(f"📊 Завантажено: {len(df)} рядків")
 
+    # Читаємо факти з пошти
     facts = read_facts_from_email(days=15)
-
     if facts:
         df_new = pd.DataFrame(facts)
         df_new = df_new.groupby('Time')['Fact_MW'].max().reset_index()
@@ -192,8 +233,8 @@ def main():
         url = (
             f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/"
             f"47.631494,34.348690/"
-            f"{(datetime.now()-timedelta(days=7)).strftime('%Y-%m-%d')}/"
-            f"{(datetime.now()+timedelta(days=3)).strftime('%Y-%m-%d')}"
+            f"{(now-timedelta(days=7)).strftime('%Y-%m-%d')}/"
+            f"{(now+timedelta(days=3)).strftime('%Y-%m-%d')}"
             f"?unitGroup=metric"
             f"&elements=datetime,temp,solarradiation,cloudcover,windspeed,precipprob"
             f"&key={api_key}&contentType=json"
@@ -217,6 +258,14 @@ def main():
     if 'Capacity_MW' not in df.columns:
         df['Capacity_MW'] = 12.5
     df['Capacity_MW'] = df['Capacity_MW'].fillna(12.5)
+
+    # О 12:00 — навчаємо модель і зберігаємо прогноз на завтра
+    if 11 <= now.hour <= 13:
+        print(f"🕛 Час {now.hour}:00 — зберігаємо фіксований прогноз ШІ на завтра...")
+        model, features = train_model(df)
+        df = save_ai_forecast(df, model, features)
+    else:
+        print(f"ℹ️ Час {now.hour}:00 — прогноз ШІ зберігається тільки о 12:00")
 
     save_df_to_sheet(sheet, df)
     print(f"🏁 Готово. Остання дата: {df['Time'].max()}")
