@@ -63,7 +63,6 @@ def load_plan_from_sheets(month: int, year: int, nominal_kw: float):
         # Перевіримо список аркушів
         try:
             sheet_titles = [ws.title for ws in sh.worksheets()]
-            st.info(f"📋 Доступні аркуші: {sheet_titles}")
         except Exception as e:
             st.error(f"❌ Не вдалось отримати список аркушів: {e}")
             return pd.DataFrame()
