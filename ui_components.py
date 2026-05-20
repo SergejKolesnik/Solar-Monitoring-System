@@ -449,121 +449,121 @@ def draw_plan_tab(df_h, df_f, df_plan, now_ua):
 
     st.write("---")
 
-    # --- Погодинний аналіз тільки минулих днів ---
+    # --- Датепікер для аналізу ---
     col_h1, col_h2 = st.columns([4, 1])
     with col_h1:
-        st.markdown("##### Погодинний аналіз якості (тільки минулі дні)")
+        st.markdown("##### Погодинний аналіз якості")
     with col_h2:
-        days_range = st.selectbox("Діапазон", [1, 2, 3], index=0, key="plan_days",
-                                   format_func=lambda x: f"{x} д.")
-
-    # Беремо тільки години де є факт (минуле)
-    cutoff_end   = pd.Timestamp(now_ua)
-    cutoff_start = cutoff_end - pd.Timedelta(days=days_range)
-
-    fact_past = fact_month[
-        (fact_month['Time'] >= cutoff_start) &
-        (fact_month['Time'] < cutoff_end) &
-        (fact_month['Fact_MW'] > 0)
-    ][['Time', 'Fact_MW']].copy()
-
-    plan_past = plan_month[
-        (plan_month['Time'] >= cutoff_start) &
-        (plan_month['Time'] < cutoff_end)
-    ][['Time', 'Plan_MW']].copy()
-
-    # ШІ — тільки де є факт (минуле з df_h)
-    df_h3 = df_h.copy()
-    df_h3['Time'] = pd.to_datetime(df_h3['Time'])
-    if 'AI_MW' in df_h3.columns:
-        ai_past = df_h3[
-            (df_h3['Time'] >= cutoff_start) &
-            (df_h3['Time'] < cutoff_end)
-        ][['Time', 'AI_MW']].copy()
-        ai_past['AI_MW'] = pd.to_numeric(ai_past['AI_MW'].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
-    else:
-        ai_past = pd.DataFrame()
-
-    if fact_past.empty:
-        st.info("Немає даних факту за вибраний період.")
-    else:
-        # Графік 1 — абсолютні значення
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=fact_past['Time'], y=fact_past['Fact_MW'],
-            name='Факт АСКОЕ', mode='lines',
-            line=dict(color='#378ADD', width=2.5),
-            fill='tozeroy', fillcolor='rgba(55,138,221,0.08)'
-        ))
-        if not ai_past.empty:
-            fig.add_trace(go.Scatter(
-                x=ai_past['Time'], y=ai_past['AI_MW'],
-                name='Прогноз ШІ', mode='lines',
-                line=dict(color='#1D9E75', width=2, dash='dash')
-            ))
-        if not plan_past.empty:
-            fig.add_trace(go.Scatter(
-                x=plan_past['Time'], y=plan_past['Plan_MW'],
-                name='План (замовлення)', mode='lines',
-                line=dict(color='#D85A30', width=2, dash='dot')
-            ))
-        fig.update_layout(
-            height=260, margin=dict(l=0, r=0, t=10, b=0),
-            yaxis=dict(title='МВт'),
-            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0),
-            hovermode='x unified'
+        # Визначаємо доступні дати де є факт
+        available_dates = sorted(fact_month['Time'].dt.date.unique(), reverse=True)
+        if not available_dates:
+            st.info("Немає даних факту за поточний місяць.")
+            return
+        selected_date = st.date_input(
+            "Дата аналізу",
+            value=available_dates[0],
+            min_value=available_dates[-1],
+            max_value=available_dates[0],
+            key="plan_date"
         )
-        st.plotly_chart(fig, width='stretch')
 
-        # Графік 2 — відхилення по годинах
-        st.markdown("##### Відхилення від плану замовлення по годинах (МВт)")
+    sel_ts = pd.Timestamp(selected_date)
+    sel_ts_end = sel_ts + pd.Timedelta(days=1)
 
-        dev = fact_past.merge(plan_past, on='Time', how='inner')
+    fact_day  = fact_month[(fact_month['Time'] >= sel_ts) & (fact_month['Time'] < sel_ts_end)][['Time','Fact_MW']].copy()
+    plan_day  = plan_month[(plan_month['Time'] >= sel_ts) & (plan_month['Time'] < sel_ts_end)][['Time','Plan_MW']].copy()
+
+    # AI_MW з df_h якщо є
+    df_h2_copy = df_h.copy()
+    df_h2_copy['Time'] = pd.to_datetime(df_h2_copy['Time'])
+    if 'AI_MW' in df_h2_copy.columns:
+        df_h2_copy['AI_MW'] = pd.to_numeric(df_h2_copy['AI_MW'].astype(str).str.replace(',','.'), errors='coerce').fillna(0)
+        ai_day = df_h2_copy[(df_h2_copy['Time'] >= sel_ts) & (df_h2_copy['Time'] < sel_ts_end) & (df_h2_copy['AI_MW'] > 0)][['Time','AI_MW']].copy()
+    else:
+        ai_day = pd.DataFrame()
+
+    if fact_day.empty:
+        st.info(f"Немає даних факту за {selected_date.strftime('%d.%m.%Y')}.")
+        return
+
+    # --- Графік 1: абсолютні значення ---
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=fact_day['Time'], y=fact_day['Fact_MW'],
+        name='Факт АСКОЕ', mode='lines+markers',
+        line=dict(color='#378ADD', width=2.5),
+        fill='tozeroy', fillcolor='rgba(55,138,221,0.08)',
+        marker=dict(size=5)
+    ))
+    if not ai_day.empty:
+        fig.add_trace(go.Scatter(
+            x=ai_day['Time'], y=ai_day['AI_MW'],
+            name='Прогноз ШІ', mode='lines+markers',
+            line=dict(color='#1D9E75', width=2, dash='dash'),
+            marker=dict(size=4)
+        ))
+    if not plan_day.empty:
+        fig.add_trace(go.Scatter(
+            x=plan_day['Time'], y=plan_day['Plan_MW'],
+            name='План (замовлення)', mode='lines+markers',
+            line=dict(color='#D85A30', width=2, dash='dot'),
+            marker=dict(size=4)
+        ))
+    fig.update_layout(
+        height=260, margin=dict(l=0, r=0, t=10, b=0),
+        yaxis=dict(title='МВт'),
+        xaxis=dict(tickformat='%H:%M'),
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0),
+        hovermode='x unified',
+        title=dict(text=f"📅 {selected_date.strftime('%d.%m.%Y')}", x=0.5, font=dict(size=13))
+    )
+    st.plotly_chart(fig, width='stretch')
+
+    # --- Графік 2: відхилення по годинах ---
+    st.markdown("##### Відхилення від плану замовлення по годинах (МВт)")
+
+    if not plan_day.empty:
+        dev = fact_day.merge(plan_day, on='Time', how='inner')
         dev['Δ Факт−План'] = (dev['Fact_MW'] - dev['Plan_MW']).round(3)
-
-        # Підписи годин для осі X
-        dev['Година'] = dev['Time'].dt.strftime('%d.%m %H:00')
-
+        dev['Година'] = dev['Time'].dt.strftime('%H:00')
         colors = ['#378ADD' if v >= 0 else '#D85A30' for v in dev['Δ Факт−План']]
 
         fig_dev = go.Figure()
         fig_dev.add_trace(go.Bar(
             x=dev['Година'], y=dev['Δ Факт−План'],
-            name='Факт − План',
-            marker_color=colors,
-            opacity=0.85,
+            name='Факт − План', marker_color=colors, opacity=0.85,
             text=dev['Δ Факт−План'].apply(lambda v: f"+{v:.2f}" if v >= 0 else f"{v:.2f}"),
-            textposition='outside',
-            textfont=dict(size=9)
+            textposition='outside', textfont=dict(size=10)
         ))
 
-        # Лінія відхилення ШІ
-        if not ai_past.empty:
-            dev_ai = plan_past.merge(ai_past, on='Time', how='inner')
+        if not ai_day.empty:
+            dev_ai = plan_day.merge(ai_day, on='Time', how='inner')
             dev_ai['Δ ШІ−План'] = (dev_ai['AI_MW'] - dev_ai['Plan_MW']).round(3)
-            dev_ai['Година'] = dev_ai['Time'].dt.strftime('%d.%m %H:00')
+            dev_ai['Година'] = dev_ai['Time'].dt.strftime('%H:00')
             fig_dev.add_trace(go.Scatter(
                 x=dev_ai['Година'], y=dev_ai['Δ ШІ−План'],
                 name='ШІ − План', mode='lines+markers',
                 line=dict(color='#1D9E75', width=2),
-                marker=dict(size=5)
+                marker=dict(size=6)
             ))
 
         fig_dev.add_hline(y=0, line_color='gray', line_width=1, line_dash='dot')
         fig_dev.update_layout(
-            height=300, margin=dict(l=0, r=0, t=20, b=80),
+            height=280, margin=dict(l=0, r=0, t=20, b=40),
             yaxis=dict(title='МВт відхилення', zeroline=True),
-            xaxis=dict(tickangle=-45, tickfont=dict(size=10)),
+            xaxis=dict(tickangle=-45, tickfont=dict(size=11)),
             legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0),
             hovermode='x unified'
         )
         st.plotly_chart(fig_dev, width='stretch')
 
-        # Підсумок відхилень
+        # Підсумок
         col_s1, col_s2, col_s3 = st.columns(3)
-        col_s1.metric("Серед. відхилення факту", f"{dev['Δ Факт−План'].mean():.3f} МВт")
+        col_s1.metric("Серед. відхилення", f"{dev['Δ Факт−План'].mean():.3f} МВт")
         col_s2.metric("Макс. перевищення", f"+{dev['Δ Факт−План'].max():.3f} МВт")
         col_s3.metric("Макс. недовиконання", f"{dev['Δ Факт−План'].min():.3f} МВт")
+    else:
+        st.info("Немає даних плану за цю дату.")
 
     st.write("---")
 
