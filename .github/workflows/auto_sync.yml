@@ -16,7 +16,7 @@ jobs:
         with:
           python-version: '3.9'
       - name: Install
-        run: pip install pandas requests openpyxl gspread google-auth
+        run: pip install pandas requests openpyxl gspread google-auth scikit-learn
       - name: Run
         env:
           WEATHER_API_KEY: ${{ secrets.WEATHER_API_KEY }}
