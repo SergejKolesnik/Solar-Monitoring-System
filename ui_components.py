@@ -449,22 +449,20 @@ def draw_plan_tab(df_h, df_f, df_plan, now_ua):
 
     st.write("---")
 
-    # --- Погодинний графік за останні 5 днів ---
-    st.markdown("##### Погодинне порівняння — останні 5 днів")
+    # --- Погодинний графік з вибором діапазону ---
+    col_h1, col_h2 = st.columns([4, 1])
+    with col_h1:
+        st.markdown("##### Погодинне порівняння")
+    with col_h2:
+        days_range = st.selectbox("Діапазон", [1, 2, 3, 5], index=1, key="plan_days")
 
-    cutoff_start = pd.Timestamp(now_ua) - pd.Timedelta(days=5)
+    cutoff_start = pd.Timestamp(now_ua) - pd.Timedelta(days=days_range)
 
-    # Факт
-    fact_recent = fact_month[fact_month['Time'] >= cutoff_start][['Time', 'Fact_MW']].copy()
-
-    # План ШІ з df_f
-    ai_recent = df_f[df_f['Time'] >= cutoff_start][['Time', 'AI_MW']].copy() if 'AI_MW' in df_f.columns else pd.DataFrame()
-
-    # План з таблиці
-    plan_recent = plan_month[plan_month['Time'] >= cutoff_start][['Time', 'Plan_MW']].copy()
+    fact_recent  = fact_month[fact_month['Time'] >= cutoff_start][['Time', 'Fact_MW']].copy()
+    ai_recent    = df_f[df_f['Time'] >= cutoff_start][['Time', 'AI_MW']].copy() if 'AI_MW' in df_f.columns else pd.DataFrame()
+    plan_recent  = plan_month[plan_month['Time'] >= cutoff_start][['Time', 'Plan_MW']].copy()
 
     fig = go.Figure()
-
     if not fact_recent.empty:
         fig.add_trace(go.Scatter(
             x=fact_recent['Time'], y=fact_recent['Fact_MW'],
@@ -472,28 +470,66 @@ def draw_plan_tab(df_h, df_f, df_plan, now_ua):
             line=dict(color='#378ADD', width=2),
             fill='tozeroy', fillcolor='rgba(55,138,221,0.07)'
         ))
-
     if not ai_recent.empty:
         fig.add_trace(go.Scatter(
             x=ai_recent['Time'], y=ai_recent['AI_MW'],
             name='Прогноз ШІ', mode='lines',
             line=dict(color='#1D9E75', width=2, dash='dash')
         ))
-
     if not plan_recent.empty:
         fig.add_trace(go.Scatter(
             x=plan_recent['Time'], y=plan_recent['Plan_MW'],
             name='План (замовлення)', mode='lines',
             line=dict(color='#D85A30', width=2, dash='dot')
         ))
-
     fig.update_layout(
-        height=360, margin=dict(l=0, r=0, t=10, b=0),
+        height=300, margin=dict(l=0, r=0, t=10, b=0),
         yaxis=dict(title='МВт'), xaxis=dict(title='Час'),
         legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0),
         hovermode='x unified'
     )
     st.plotly_chart(fig, width='stretch')
+
+    # --- Графік відхилень по годинах ---
+    st.markdown("##### Відхилення від плану по годинах (МВт)")
+
+    if not fact_recent.empty and not plan_recent.empty:
+        # Мержимо факт і план по часу
+        dev_df = fact_recent.merge(plan_recent, on='Time', how='inner')
+        dev_df['Відхилення_факт'] = (dev_df['Fact_MW'] - dev_df['Plan_MW']).round(3)
+
+        fig_dev = go.Figure()
+
+        # Стовпці відхилення факту від плану
+        colors_fact = ['#378ADD' if v >= 0 else '#D85A30' for v in dev_df['Відхилення_факт']]
+        fig_dev.add_trace(go.Bar(
+            x=dev_df['Time'], y=dev_df['Відхилення_факт'],
+            name='Факт − План', marker_color=colors_fact,
+            opacity=0.8
+        ))
+
+        # Відхилення ШІ від плану якщо є
+        if not ai_recent.empty:
+            dev_ai = plan_recent.merge(ai_recent, on='Time', how='inner')
+            dev_ai['Відхилення_ШІ'] = (dev_ai['AI_MW'] - dev_ai['Plan_MW']).round(3)
+            fig_dev.add_trace(go.Scatter(
+                x=dev_ai['Time'], y=dev_ai['Відхилення_ШІ'],
+                name='ШІ − План', mode='lines+markers',
+                line=dict(color='#1D9E75', width=2),
+                marker=dict(size=4)
+            ))
+
+        fig_dev.add_hline(y=0, line_color='gray', line_width=1)
+        fig_dev.update_layout(
+            height=250, margin=dict(l=0, r=0, t=10, b=0),
+            yaxis=dict(title='МВт', zeroline=True),
+            xaxis=dict(title='Час'),
+            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0),
+            hovermode='x unified', barmode='overlay'
+        )
+        st.plotly_chart(fig_dev, width='stretch')
+    else:
+        st.info("Недостатньо даних для графіку відхилень.")
 
     st.write("---")
 
