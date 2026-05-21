@@ -565,6 +565,87 @@ def draw_plan_tab(df_h, df_f, df_plan, now_ua):
     else:
         st.info("Немає даних плану за цю дату.")
 
+    # ── ДРУГА ГРУПА: Замовлення vs Прогноз ШІ ──
+    st.write("---")
+
+    # AI_Forecast_MW з df_h
+    df_h_ai = df_h.copy()
+    df_h_ai['Time'] = pd.to_datetime(df_h_ai['Time'])
+    if 'AI_Forecast_MW' in df_h_ai.columns:
+        df_h_ai['AI_Forecast_MW'] = pd.to_numeric(
+            df_h_ai['AI_Forecast_MW'].astype(str).str.replace(',', '.'),
+            errors='coerce'
+        ).fillna(0)
+        ai_fc_day = df_h_ai[
+            (df_h_ai['Time'] >= sel_ts) &
+            (df_h_ai['Time'] < sel_ts_end) &
+            (df_h_ai['AI_Forecast_MW'] > 0)
+        ][['Time', 'AI_Forecast_MW']].copy()
+    else:
+        ai_fc_day = pd.DataFrame()
+
+    if ai_fc_day.empty:
+        st.info(f"⏳ Прогноз ШІ на {selected_date.strftime('%d.%m.%Y')} ще не збережено — він фіксується о 12:00 напередодні.")
+    else:
+        st.markdown(f"##### Замовлення vs Прогноз ШІ — {selected_date.strftime('%d.%m.%Y')}")
+
+        # Графік: абсолютні значення
+        fig_ai = go.Figure()
+        if not plan_day.empty:
+            fig_ai.add_trace(go.Scatter(
+                x=plan_day['Time'], y=plan_day['Plan_MW'],
+                name='План (замовлення)', mode='lines+markers',
+                line=dict(color='#D85A30', width=2, dash='dot'),
+                marker=dict(size=4)
+            ))
+        fig_ai.add_trace(go.Scatter(
+            x=ai_fc_day['Time'], y=ai_fc_day['AI_Forecast_MW'],
+            name='Прогноз ШІ (о 12:00)', mode='lines+markers',
+            line=dict(color='#1D9E75', width=2.5),
+            fill='tozeroy', fillcolor='rgba(29,158,117,0.07)',
+            marker=dict(size=5)
+        ))
+        fig_ai.update_layout(
+            height=260, margin=dict(l=0, r=0, t=10, b=0),
+            yaxis=dict(title='МВт'),
+            xaxis=dict(tickformat='%H:%M'),
+            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0),
+            hovermode='x unified'
+        )
+        st.plotly_chart(fig_ai, width='stretch')
+
+        # Графік відхилень ШІ від плану
+        st.markdown("##### Відхилення прогнозу ШІ від плану замовлення по годинах (МВт)")
+
+        if not plan_day.empty:
+            dev_ai2 = plan_day.merge(ai_fc_day, on='Time', how='inner')
+            dev_ai2['Δ ШІ−План'] = (dev_ai2['AI_Forecast_MW'] - dev_ai2['Plan_MW']).round(3)
+            dev_ai2['Година'] = dev_ai2['Time'].dt.strftime('%H:00')
+            colors_ai = ['#1D9E75' if v >= 0 else '#D85A30' for v in dev_ai2['Δ ШІ−План']]
+
+            fig_dev_ai = go.Figure()
+            fig_dev_ai.add_trace(go.Bar(
+                x=dev_ai2['Година'], y=dev_ai2['Δ ШІ−План'],
+                name='ШІ − План', marker_color=colors_ai, opacity=0.85,
+                text=dev_ai2['Δ ШІ−План'].apply(lambda v: f"+{v:.2f}" if v >= 0 else f"{v:.2f}"),
+                textposition='outside', textfont=dict(size=10)
+            ))
+            fig_dev_ai.add_hline(y=0, line_color='gray', line_width=1, line_dash='dot')
+            fig_dev_ai.update_layout(
+                height=280, margin=dict(l=0, r=0, t=20, b=40),
+                yaxis=dict(title='МВт відхилення', zeroline=True),
+                xaxis=dict(tickangle=-45, tickfont=dict(size=11)),
+                legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0),
+                hovermode='x unified'
+            )
+            st.plotly_chart(fig_dev_ai, width='stretch')
+
+            # Підсумок
+            col_a1, col_a2, col_a3 = st.columns(3)
+            col_a1.metric("Серед. відхилення ШІ", f"{dev_ai2['Δ ШІ−План'].mean():.3f} МВт")
+            col_a2.metric("Макс. перевищення ШІ", f"+{dev_ai2['Δ ШІ−План'].max():.3f} МВт")
+            col_a3.metric("Макс. недовиконання ШІ", f"{dev_ai2['Δ ШІ−План'].min():.3f} МВт")
+
     st.write("---")
 
     # --- Денна статистика по місяцю ---
