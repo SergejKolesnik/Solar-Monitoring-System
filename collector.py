@@ -43,12 +43,13 @@ def load_df_from_sheet(sheet):
 
 
 def save_df_to_sheet(sheet, df):
-    save_cols = NUMERIC_COLS + (['AI_Forecast_MW'] if 'AI_Forecast_MW' in df.columns else [])
+    save_cols = NUMERIC_COLS + (['AI_Forecast_MW'] if 'AI_Forecast_MW' in df.columns else []) + (['AI_MW'] if 'AI_MW' in df.columns else [])
     df = df.sort_values('Time').drop_duplicates('Time').tail(1000).copy()
     for col in save_cols:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).round(3)
     df['Time'] = df['Time'].astype(str)
+
     rows = []
     for _, row in df.iterrows():
         r = []
@@ -60,9 +61,30 @@ def save_df_to_sheet(sheet, df):
             else:
                 r.append(row[col] if row[col] != '' else 0)
         rows.append(r)
-    sheet.clear()
-    sheet.update([df.columns.tolist()] + rows)
-    print(f"✅ Google Sheet оновлено. Рядків: {len(df)}")
+
+    # Безпечний запис: спочатку готуємо дані, потім швидко clear+update
+    # Якщо update впаде — робимо повторну спробу з даними які вже є в пам'яті
+    all_data = [df.columns.tolist()] + rows
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        try:
+            sheet.clear()
+            sheet.update(all_data)
+            print(f"✅ Google Sheet оновлено. Рядків: {len(df)}")
+            return
+        except Exception as e:
+            print(f"⚠️ Спроба {attempt}/{max_attempts} не вдалась: {e}")
+            if attempt < max_attempts:
+                import time as t
+                t.sleep(5)
+
+    # Якщо всі спроби провалились — відновлюємо дані
+    print("❌ Не вдалось зберегти після 3 спроб — відновлюємо останній стан...")
+    try:
+        sheet.update(all_data)
+        print("✅ Відновлення успішне")
+    except Exception as e:
+        print(f"❌ Критична помилка відновлення: {e}")
 
 
 def train_model(df):
