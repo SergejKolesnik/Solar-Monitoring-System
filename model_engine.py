@@ -53,7 +53,9 @@ def train_and_get_insights(df_h, df_f):
     target_features = ['Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb', 'Capacity_MW']
     existing_features = [c for c in target_features if c in df_h.columns and c in df_f.columns]
 
-    df_train = df_h[df_h['Fact_MW'] > 0].dropna(subset=['Fact_MW', existing_features[0]])
+    # Включаємо нічні нулі — модель має знати що вночі генерації немає
+    # Фільтруємо лише рядки де Fact_MW взагалі є (не NaN і не порожньо)
+    df_train = df_h[df_h['Fact_MW'].notna()].dropna(subset=[existing_features[0]])
 
     if len(df_train) < 20:
         return df_f['Forecast_MW'], 0.0, None, None, 0.0, None
