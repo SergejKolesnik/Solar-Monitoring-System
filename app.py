@@ -231,13 +231,16 @@ if not df_f.empty:
                     accuracy, importance, scatter_data, pivot_error, comparison_df = 0.0, None, None, 0.0, None
                 df_f['AI_MW'] = predictions
 
+                # Обнуляємо нічні години ДО запису в Sheet
+                df_f.loc[df_f['Rad'] < 5, 'AI_MW'] = 0.0
+
                 # Зберігаємо AI_MW в Google Sheet для аналізу минулих днів
                 save_ai_predictions(df_h, df_f)
             except Exception as model_err:
                 st.error(f"⚠️ Помилка логіки моделі: {model_err}")
                 st.stop()
 
-            df_f.loc[df_f['Rad'] < 5, ['AI_MW', 'Forecast_MW']] = 0.0
+            df_f.loc[df_f['Rad'] < 5, 'Forecast_MW'] = 0.0  # AI_MW вже обнулено вище
 
             draw_metrics(df_f, now_ua, timedelta)
             draw_main_chart(df_f)
