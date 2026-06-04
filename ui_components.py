@@ -478,12 +478,12 @@ def draw_plan_tab(df_h, df_f, df_plan, now_ua):
     fact_day  = fact_month[(fact_month['Time'] >= sel_ts) & (fact_month['Time'] < sel_ts_end)][['Time','Fact_MW']].copy()
     plan_day  = plan_month[(plan_month['Time'] >= sel_ts) & (plan_month['Time'] < sel_ts_end)][['Time','Plan_MW']].copy()
 
-    # AI_MW з df_h якщо є
+    # AI_Forecast_MW з df_h (прогноз ШІ збережений collector.py)
     df_h2_copy = df_h.copy()
     df_h2_copy['Time'] = pd.to_datetime(df_h2_copy['Time'])
-    if 'AI_MW' in df_h2_copy.columns:
-        df_h2_copy['AI_MW'] = pd.to_numeric(df_h2_copy['AI_MW'].astype(str).str.replace(',','.'), errors='coerce').fillna(0)
-        ai_day = df_h2_copy[(df_h2_copy['Time'] >= sel_ts) & (df_h2_copy['Time'] < sel_ts_end) & (df_h2_copy['AI_MW'] > 0)][['Time','AI_MW']].copy()
+    if 'AI_Forecast_MW' in df_h2_copy.columns:
+        df_h2_copy['AI_Forecast_MW'] = pd.to_numeric(df_h2_copy['AI_Forecast_MW'].astype(str).str.replace(',','.'), errors='coerce').fillna(0)
+        ai_day = df_h2_copy[(df_h2_copy['Time'] >= sel_ts) & (df_h2_copy['Time'] < sel_ts_end) & (df_h2_copy['AI_Forecast_MW'] > 0)][['Time','AI_Forecast_MW']].copy()
     else:
         ai_day = pd.DataFrame()
 
@@ -502,7 +502,7 @@ def draw_plan_tab(df_h, df_f, df_plan, now_ua):
     ))
     if not ai_day.empty:
         fig.add_trace(go.Scatter(
-            x=ai_day['Time'], y=ai_day['AI_MW'],
+            x=ai_day['Time'], y=ai_day['AI_Forecast_MW'],
             name='Прогноз ШІ', mode='lines+markers',
             line=dict(color='#1D9E75', width=2, dash='dash'),
             marker=dict(size=4)
@@ -543,7 +543,7 @@ def draw_plan_tab(df_h, df_f, df_plan, now_ua):
 
         if not ai_day.empty:
             dev_ai = plan_day.merge(ai_day, on='Time', how='inner')
-            dev_ai['Δ ШІ−План'] = (dev_ai['AI_MW'] - dev_ai['Plan_MW']).round(3)
+            dev_ai['Δ ШІ−План'] = (dev_ai['AI_Forecast_MW'] - dev_ai['Plan_MW']).round(3)
             dev_ai['Година'] = dev_ai['Time'].dt.strftime('%H:00')
             fig_dev.add_trace(go.Scatter(
                 x=dev_ai['Година'], y=dev_ai['Δ ШІ−План'],
