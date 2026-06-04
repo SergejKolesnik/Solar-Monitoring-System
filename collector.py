@@ -151,7 +151,7 @@ def parse_kwh_value(val_raw):
         return None
     return round(f_val / 1000, 3)
 
-def read_facts_from_email(days=15):
+def read_facts_from_email(days=90):
     facts = []
     try:
         mail = imaplib.IMAP4_SSL("imap.gmail.com")
@@ -232,7 +232,7 @@ def main():
     print(f"Завантажено: {len(df)} рядків")
 
     # Читаємо факти з пошти
-    facts = read_facts_from_email(days=15)
+    facts = read_facts_from_email(days=90)
     if facts:
         df_new = pd.DataFrame(facts)
         df_new = df_new.groupby('Time')['Fact_MW'].max().reset_index()
