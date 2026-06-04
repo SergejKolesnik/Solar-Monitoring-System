@@ -97,7 +97,7 @@ def train_and_get_insights(df_h, df_f):
             'Forecast_MW': 'sum',
             'AI_Plan': 'sum'
         }).reset_index()
-        comparison_df.columns = ['Дата', 'Факт (АСЬКЕ)', 'Прогноз Сайту', 'План ШІ']
+        comparison_df.columns = ['Дата', 'Факт (АСКОЕ)', 'Прогноз Сайту', 'План ШІ']
     else:
         comparison_df = None
 
