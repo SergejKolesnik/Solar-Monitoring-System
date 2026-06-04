@@ -44,7 +44,7 @@ def load_df_from_sheet(sheet):
 
 def save_df_to_sheet(sheet, df):
     save_cols = NUMERIC_COLS + (['AI_Forecast_MW'] if 'AI_Forecast_MW' in df.columns else []) + (['AI_MW'] if 'AI_MW' in df.columns else [])
-    df = df.sort_values('Time').drop_duplicates('Time').tail(1000).copy()
+    df = df.sort_values('Time').drop_duplicates('Time').copy()
     for col in save_cols:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).round(3)
