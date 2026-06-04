@@ -54,7 +54,6 @@ def train_and_get_insights(df_h, df_f):
     existing_features = [c for c in target_features if c in df_h.columns and c in df_f.columns]
 
     # Включаємо нічні нулі — модель має знати що вночі генерації немає
-    # Фільтруємо лише рядки де Fact_MW взагалі є (не NaN і не порожньо)
     df_train = df_h[df_h['Fact_MW'].notna()].dropna(subset=[existing_features[0]])
 
     if len(df_train) < 20:
@@ -81,15 +80,26 @@ def train_and_get_insights(df_h, df_f):
         'План_ШІ': test_preds
     })
 
-    # 6. Аналіз за останні 5 днів
-    hist_5d = df_train.tail(24 * 5).copy()
-    hist_5d['AI_Plan'] = model.predict(hist_5d[existing_features].fillna(0).astype(float))
-    comparison_df = hist_5d.groupby(hist_5d['Time'].dt.date).agg({
-        'Fact_MW': 'sum',
-        'Forecast_MW': 'sum',
-        'AI_Plan': 'sum'
-    }).reset_index()
-    comparison_df.columns = ['Дата', 'Факт (АСКОЕ)', 'Прогноз Сайту', 'План ШІ']
+    # 6. Аналіз за останні 5 днів де є факт АСКОЕ
+    # Знаходимо останній запис з реальними даними і беремо 5 днів до нього
+    df_with_fact = df_train[df_train['Fact_MW'] > 0].sort_values('Time')
+    if not df_with_fact.empty:
+        last_fact_time = df_with_fact['Time'].max()
+        window_start = last_fact_time - pd.Timedelta(days=5)
+        hist_5d = df_with_fact[df_with_fact['Time'] >= window_start].copy()
+    else:
+        hist_5d = pd.DataFrame()
+
+    if not hist_5d.empty:
+        hist_5d['AI_Plan'] = model.predict(hist_5d[existing_features].fillna(0).astype(float))
+        comparison_df = hist_5d.groupby(hist_5d['Time'].dt.date).agg({
+            'Fact_MW': 'sum',
+            'Forecast_MW': 'sum',
+            'AI_Plan': 'sum'
+        }).reset_index()
+        comparison_df.columns = ['Дата', 'Факт (АСЬКЕ)', 'Прогноз Сайту', 'План ШІ']
+    else:
+        comparison_df = None
 
     # 7. Прогноз на майбутнє
     future_preds = model.predict(df_f[existing_features].fillna(0).astype(float))
