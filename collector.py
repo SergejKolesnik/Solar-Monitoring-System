@@ -59,27 +59,28 @@ def save_df_to_sheet(sheet, df):
                 r.append(row[col] if row[col] != '' else 0)
         rows.append(r)
 
-    all_data = [df.columns.tolist()] + rows
+    header = [df.columns.tolist()]
+    BATCH_SIZE = 500
+    import time as _t
+
     max_attempts = 3
     for attempt in range(1, max_attempts + 1):
         try:
             sheet.clear()
-            sheet.update(all_data)
+            sheet.update('A1', header)
+            for start in range(0, len(rows), BATCH_SIZE):
+                batch = rows[start:start + BATCH_SIZE]
+                row_num = start + 2
+                sheet.update(f'A{row_num}', batch)
+                if start + BATCH_SIZE < len(rows):
+                    _t.sleep(1)
             print(f"Google Sheet оновлено. Рядків: {len(df)}")
             return
         except Exception as e:
             print(f"Спроба {attempt}/{max_attempts} не вдалась: {e}")
             if attempt < max_attempts:
-                import time as t
-                t.sleep(5)
-
-    print("Не вдалось зберегти після 3 спроб — відновлюємо останній стан...")
-    try:
-        sheet.update(all_data)
-        print("Відновлення успішне")
-    except Exception as e:
-        print(f"Критична помилка відновлення: {e}")
-
+                _t.sleep(5)
+    print("Не вдалось зберегти після 3 спроб")
 def train_model(df):
     """Навчає модель на ВСІХ даних де є Fact_MW (включно з нічними нулями)."""
     features = [c for c in FEATURE_COLS if c in df.columns]
@@ -151,7 +152,7 @@ def parse_kwh_value(val_raw):
         return None
     return round(f_val / 1000, 3)
 
-def read_facts_from_email(days=90):
+def read_facts_from_email(days=30):
     facts = []
     try:
         mail = imaplib.IMAP4_SSL("imap.gmail.com")
@@ -232,7 +233,7 @@ def main():
     print(f"Завантажено: {len(df)} рядків")
 
     # Читаємо факти з пошти
-    facts = read_facts_from_email(days=90)
+    facts = read_facts_from_email(days=30)
     if facts:
         df_new = pd.DataFrame(facts)
         df_new = df_new.groupby('Time')['Fact_MW'].max().reset_index()
