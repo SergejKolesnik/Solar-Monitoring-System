@@ -29,6 +29,8 @@ def load_df_from_sheet(sheet):
     if not data:
         return pd.DataFrame(columns=['Time'] + NUMERIC_COLS)
     df = pd.DataFrame(data)
+    # Видаляємо застарілий стовпець AI_MW якщо він ще є в таблиці
+    df = df.drop(columns=['AI_MW'], errors='ignore')
     df['Time'] = pd.to_datetime(df['Time'])
     all_cols = NUMERIC_COLS + ['AI_Forecast_MW']
     for col in all_cols:
@@ -41,6 +43,8 @@ def load_df_from_sheet(sheet):
 
 def save_df_to_sheet(sheet, df):
     save_cols = NUMERIC_COLS + (['AI_Forecast_MW'] if 'AI_Forecast_MW' in df.columns else [])
+    # Гарантуємо що AI_MW не потрапить у збережені дані
+    df = df.drop(columns=['AI_MW'], errors='ignore')
     df = df.sort_values('Time').drop_duplicates('Time').copy()
     for col in save_cols:
         if col in df.columns:
