@@ -181,8 +181,13 @@ def draw_training_tab(df_h, accuracy_r2, importance, scatter_data, mse_error, co
     features = [c for c in ['Forecast_MW','CloudCover','Temp','WindSpeed','PrecipProb','Capacity_MW'] if c in df_h.columns]
     df_h3 = _clean_numeric(df_h, features + ['Fact_MW'])
     df_h3['Time'] = pd.to_datetime(df_h3['Time'])
-    df_recent = df_h3[df_h3['Fact_MW'] > 0].copy()
-    df_recent = df_recent.sort_values('Time').tail(24 * 5)
+    df_with_fact = df_h3[df_h3['Fact_MW'] > 0].sort_values('Time')
+    if not df_with_fact.empty:
+        last_fact_time = df_with_fact['Time'].max()
+        window_start = last_fact_time - pd.Timedelta(days=5)
+        df_recent = df_with_fact[df_with_fact['Time'] >= window_start].copy()
+    else:
+        df_recent = pd.DataFrame()
 
     if len(df_recent) >= 10:
         from sklearn.ensemble import RandomForestRegressor
