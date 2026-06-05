@@ -281,13 +281,26 @@ def main():
         df['Capacity_MW'] = 12.5
     df['Capacity_MW'] = df['Capacity_MW'].fillna(12.5)
 
-    # О 12:00 — навчаємо модель і оновлюємо прогноз на 3 дні вперед
-    if 11 <= now.hour <= 13:
-        print(f"Час {now.hour}:00 — навчаємо модель та оновлюємо AI_Forecast_MW...")
+    # Навчаємо модель якщо:
+    # 1. Час між 9:00 і 15:00 UTC (12:00-18:00 Київ) — основне вікно
+    # 2. АБО прогноз ШІ на сьогодні ще не заповнено (fallback якщо пропустили вікно)
+    today_str = now.date()
+    ai_col_exists = 'AI_Forecast_MW' in df.columns
+    today_mask = pd.to_datetime(df['Time']).dt.date == today_str
+    today_has_ai = (
+        ai_col_exists and
+        (df.loc[today_mask & (df['AI_Forecast_MW'] > 0), 'AI_Forecast_MW'].count() > 0)
+    )
+
+    should_train = (9 <= now.hour <= 15) or (not today_has_ai)
+
+    if should_train:
+        reason = "вікно 9-15 UTC" if (9 <= now.hour <= 15) else "прогноз на сьогодні відсутній (fallback)"
+        print(f"Час {now.hour}:00 UTC — навчаємо модель ({reason})...")
         model, features = train_model(df)
         df = save_ai_forecast(df, model, features)
     else:
-        print(f"Час {now.hour}:00 — прогноз ШІ оновлюється тільки о 12:00")
+        print(f"Час {now.hour}:00 UTC — прогноз вже є на сьогодні, пропускаємо навчання")
 
     save_df_to_sheet(sheet, df)
     print(f"Готово. Остання дата: {df['Time'].max()}")
