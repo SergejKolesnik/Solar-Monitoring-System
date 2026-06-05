@@ -233,7 +233,10 @@ def draw_base_tab(df_h):
         st.info("База даних порожня.")
         return
 
-    df = _clean_numeric(df_h.copy(), ['Fact_MW', 'Forecast_MW'])
+    num_cols = ['Fact_MW', 'Forecast_MW']
+    if 'AI_Forecast_MW' in df_h.columns:
+        num_cols.append('AI_Forecast_MW')
+    df = _clean_numeric(df_h.copy(), num_cols)
     df['Time'] = pd.to_datetime(df['Time'])
     df['Дата'] = df['Time'].dt.date
 
@@ -242,6 +245,8 @@ def draw_base_tab(df_h):
         agg['Факт (МВт·год)'] = ('Fact_MW', 'sum')
     if 'Forecast_MW' in df.columns:
         agg['Прогноз сайту (МВт·год)'] = ('Forecast_MW', 'sum')
+    if 'AI_Forecast_MW' in df.columns:
+        agg['Прогноз ШІ (МВт·год)'] = ('AI_Forecast_MW', 'sum')
 
     if not agg:
         st.warning("Немає числових колонок для статистики.")
@@ -273,34 +278,43 @@ def draw_base_tab(df_h):
             x=daily['Дата'], y=daily['Факт (МВт·год)'],
             name='Факт', marker_color='#378ADD'
         ))
+    if 'Прогноз ШІ (МВт·год)' in daily.columns:
+        # Показуємо тільки дні де є AI_Forecast_MW > 0
+        ai_daily = daily[daily['Прогноз ШІ (МВт·год)'] > 0]
+        if not ai_daily.empty:
+            fig.add_trace(go.Scatter(
+                x=ai_daily['Дата'], y=ai_daily['Прогноз ШІ (МВт·год)'],
+                name='Прогноз ШІ', mode='lines+markers',
+                line=dict(color='#1D9E75', width=2),
+                marker=dict(size=6)
+            ))
     if 'Прогноз сайту (МВт·год)' in daily.columns:
         fig.add_trace(go.Scatter(
             x=daily['Дата'], y=daily['Прогноз сайту (МВт·год)'],
             name='Прогноз сайту', mode='lines+markers',
-            line=dict(color='#D85A30', width=2, dash='dash')
+            line=dict(color='#D85A30', width=2, dash='dash'),
+            marker=dict(size=4)
         ))
     fig.update_layout(
-        height=280, margin=dict(l=0, r=0, t=10, b=0),
+        height=300, margin=dict(l=0, r=0, t=10, b=0),
         yaxis=dict(title='МВт·год'),
         legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0),
-        barmode='overlay'
+        barmode='overlay',
+        hovermode='x unified'
     )
     st.plotly_chart(fig, width='stretch')
 
-    st.dataframe(
-        daily.style.background_gradient(
-            subset=['Точність %'] if 'Точність %' in daily.columns else [],
-            cmap='RdYlGn', vmin=50, vmax=100
-        ),
-        width='stretch',
-        hide_index=True
-    )
-
-
-# ─────────────────────────────────────────────
-#  ВКЛАДКА 3: МЕТЕО
-# ─────────────────────────────────────────────
-
+    # Таблиця — показуємо тільки дні з фактом або прогнозом ШІ
+    display = daily[daily['Факт (МВт·год)'] > 0].copy() if 'Факт (МВт·год)' in daily.columns else daily.copy()
+    if not display.empty:
+        st.dataframe(
+            display.style.background_gradient(
+                subset=['Точність %'] if 'Точність %' in display.columns else [],
+                cmap='RdYlGn', vmin=50, vmax=100
+            ),
+            use_container_width=True,
+            hide_index=True
+        )
 def draw_meteo_tab(df_f):
     col_title, col_src = st.columns([6, 2])
     with col_title:
