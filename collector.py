@@ -282,7 +282,7 @@ def main():
     df['Capacity_MW'] = df['Capacity_MW'].fillna(12.5)
 
     # Навчаємо модель якщо:
-    # 1. Час між 9:00 і 15:00 UTC (12:00-18:00 Київ) — основне вікно
+    # 1. Час між 5:00 і 15:00 UTC (8:00-18:00 Київ) — основне вікно
     # 2. АБО прогноз ШІ на сьогодні ще не заповнено (fallback якщо пропустили вікно)
     today_str = now.date()
     ai_col_exists = 'AI_Forecast_MW' in df.columns
@@ -292,10 +292,10 @@ def main():
         (df.loc[today_mask & (df['AI_Forecast_MW'] > 0), 'AI_Forecast_MW'].count() > 0)
     )
 
-    should_train = (9 <= now.hour <= 15) or (not today_has_ai)
+    should_train = (5 <= now.hour <= 15) or (not today_has_ai)
 
     if should_train:
-        reason = "вікно 9-15 UTC" if (9 <= now.hour <= 15) else "прогноз на сьогодні відсутній (fallback)"
+        reason = "вікно 5-15 UTC" if (5 <= now.hour <= 15) else "прогноз на сьогодні відсутній (fallback)"
         print(f"Час {now.hour}:00 UTC — навчаємо модель ({reason})...")
         model, features = train_model(df)
         df = save_ai_forecast(df, model, features)
