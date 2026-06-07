@@ -604,7 +604,7 @@ def draw_plan_tab(df_h, df_f, df_plan, now_ua):
         ai_fc_day = pd.DataFrame()
 
     if ai_fc_day.empty:
-        st.info(f"⏳ Прогноз ШІ на {selected_date.strftime('%d.%m.%Y')} ще не збережено — він фіксується о 12:00 напередодні.")
+        st.info(f"⏳ Прогноз ШІ на {selected_date.strftime('%d.%m.%Y')} ще не збережено — він фіксується о 8:00 напередодні.")
     else:
         st.markdown(f"##### Замовлення vs Прогноз ШІ — {selected_date.strftime('%d.%m.%Y')}")
 
@@ -619,7 +619,7 @@ def draw_plan_tab(df_h, df_f, df_plan, now_ua):
             ))
         fig_ai.add_trace(go.Scatter(
             x=ai_fc_day['Time'], y=ai_fc_day['AI_Forecast_MW'],
-            name='Прогноз ШІ (о 12:00)', mode='lines+markers',
+            name='Прогноз ШІ (о 8:00)', mode='lines+markers',
             line=dict(color='#1D9E75', width=2.5),
             fill='tozeroy', fillcolor='rgba(29,158,117,0.07)',
             marker=dict(size=5)
