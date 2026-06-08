@@ -174,9 +174,9 @@ if not df_f.empty:
             if 'Capacity_MW' not in df_h.columns:
                 df_h['Capacity_MW'] = capacity_mw
 
-                        # Розраховуємо коефіцієнт k з реальних даних і перераховуємо Forecast_MW
-                        site_kef = calc_site_kef(df_h)
-                        df_f = calc_forecast_mw(df_f, capacity_mw, site_kef)
+            # Розраховуємо коефіцієнт k з реальних даних і перераховуємо Forecast_MW
+            site_kef = calc_site_kef(df_h)
+            df_f = calc_forecast_mw(df_f, capacity_mw, site_kef)
 
             try:
                 results = train_and_get_insights(df_h, df_f)
