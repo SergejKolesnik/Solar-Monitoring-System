@@ -5,7 +5,7 @@ import gspread
 from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
 
-from weather_service import fetch_weather_data
+from weather_service import fetch_weather_data, calc_site_kef, calc_forecast_mw
 from model_engine import train_and_get_insights
 from ui_components import draw_main_chart, draw_metrics, draw_training_tab, draw_base_tab, draw_meteo_tab, draw_plan_tab
 
@@ -173,6 +173,10 @@ if not df_f.empty:
             df_f['Capacity_MW'] = capacity_mw
             if 'Capacity_MW' not in df_h.columns:
                 df_h['Capacity_MW'] = capacity_mw
+
+                        # Розраховуємо коефіцієнт k з реальних даних і перераховуємо Forecast_MW
+                        site_kef = calc_site_kef(df_h)
+                        df_f = calc_forecast_mw(df_f, capacity_mw, site_kef)
 
             try:
                 results = train_and_get_insights(df_h, df_f)
