@@ -2,11 +2,9 @@ import streamlit as st
 import pandas as pd
 import requests
 import time
-from datetime import timedelta
 
-# Visual Crossing API повертає час в UTC.
-# Нікополь = UTC+3 (Europe/Kyiv).
-UTC_OFFSET_HOURS = 3
+# Visual Crossing повертає LOCAL time для заданих координат.
+# Для Нiкополя (UTC+3) час вже є київським -- конвертація НЕ потрiбна.
 
 @st.cache_data(ttl=600)
 def fetch_weather_data():
@@ -30,11 +28,8 @@ def fetch_weather_data():
             h_list = []
             for d in data['days']:
                 for hr in d['hours']:
-                    # Конвертуємо UTC -> Kyiv (UTC+3)
-                    t_utc = pd.to_datetime(f"{d['datetime']} {hr['datetime']}")
-                    t_kyiv = t_utc + timedelta(hours=UTC_OFFSET_HOURS)
                     h_list.append({
-                        'Time': t_kyiv,
+                        'Time': pd.to_datetime(f"{d['datetime']} {hr['datetime']}"),
                         'Rad': float(hr.get('solarradiation', 0)),
                         'Temp': float(hr.get('temp', 0)),
                         'CloudCover': float(hr.get('cloudcover', 0)),
@@ -52,9 +47,8 @@ def fetch_weather_data():
 
 
 def calc_site_kef(df_h):
-    """Розраховує питомий коефіцієнт k = Fact_MW / (Rad_est * Capacity_MW)
-    на основі наявних фактичних даних у базі.
-    Виключає фізично неможливi записи (Fact > Capacity).
+    """Розраховує коефiцiєнт k = Fact_MW / (Rad_est * Capacity_MW).
+    Виключає фiзично неможливi записи (Fact > 110% Capacity).
     """
     OLD_CONST = 0.0114
     DEFAULT_KEF = OLD_CONST / 12.5  # ~0.000912
@@ -71,31 +65,29 @@ def calc_site_kef(df_h):
             df['Capacity_MW'].astype(str).str.replace(',', '.'), errors='coerce'
         ).fillna(12.5)
 
-        # Тільки записи де є всі значення, без фізичних аномалій
+        # Тiльки записи де всi значення є, без фiзичних аномалiй
         mask = (
             (df['Forecast_MW'] > 0.05) &
             (df['Fact_MW'] > 0.05) &
             (df['Capacity_MW'] > 0) &
-            (df['Fact_MW'] <= df['Capacity_MW'] * 1.1)  # не більше 110% потужності
+            (df['Fact_MW'] <= df['Capacity_MW'] * 1.1)
         )
         df_clean = df[mask].copy()
 
         if len(df_clean) < 20:
             return DEFAULT_KEF
 
-        # Rad_est = Forecast_MW / OLD_CONST (як collector записував в базу)
         df_clean['k'] = df_clean['Fact_MW'] / (
             df_clean['Forecast_MW'] / OLD_CONST * df_clean['Capacity_MW']
         )
 
-        # Відкидаємо явні аномалії (нижні 5% та верхні 5%)
         q_low = df_clean['k'].quantile(0.05)
         q_high = df_clean['k'].quantile(0.95)
         df_trim = df_clean[(df_clean['k'] >= q_low) & (df_clean['k'] <= q_high)]
 
         kef = float(df_trim['k'].median())
 
-        # Захист: kef має бути в розумних межах для сонячних панелей
+        # Захист: kef має бути в розумних межах
         if kef <= 0 or kef > 0.005:
             return DEFAULT_KEF
 
@@ -106,7 +98,7 @@ def calc_site_kef(df_h):
 
 
 def calc_forecast_mw(df_f, capacity_mw, kef):
-    """Розраховує Forecast_MW = Rad * capacity_mw * kef."""
+    """Forecast_MW = Rad * capacity_mw * kef."""
     df = df_f.copy()
     df['Forecast_MW'] = (df['Rad'] * capacity_mw * kef).round(3)
     df['Forecast_MW'] = df['Forecast_MW'].clip(lower=0)
