@@ -65,22 +65,23 @@ def calc_site_kef(df_h: pd.DataFrame) -> float:
                                         - Якщо даних мало або щось пішло не так — повертаємо дефолт 0.00091
                                                 (відповідає приблизно 11.4 кВт / 12.5 МВт * корекція = ~0.00091)
                                                     """
-    DEFAULT_KEF = 0.00091  # запасний коефіцієнт якщо бракує даних
+    OLD_CONST = 0.0114
+    DEFAULT_KEF = OLD_CONST / 12.5  # ~0.000912 — еквівалент старої хардкодної формули
 
     try:
                 df = df_h.copy()
-        df['Rad'] = pd.to_numeric(df['Rad'].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
         df['Fact_MW'] = pd.to_numeric(df['Fact_MW'].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
+        df['Forecast_MW'] = pd.to_numeric(df['Forecast_MW'].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
         df['Capacity_MW'] = pd.to_numeric(df['Capacity_MW'].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
 
         # Тільки записи де є всі три значення > 0
-        mask = (df['Rad'] > 10) & (df['Fact_MW'] > 0) & (df['Capacity_MW'] > 0)
+                mask = (df['Forecast_MW'] > 0.01) & (df['Fact_MW'] > 0) & (df['Capacity_MW'] > 0)
         df_clean = df[mask].copy()
 
         if len(df_clean) < 20:
                         return DEFAULT_KEF
 
-        df_clean['k'] = df_clean['Fact_MW'] / (df_clean['Rad'] * df_clean['Capacity_MW'])
+                df_clean['k'] = df_clean['Fact_MW'] / (df_clean['Forecast_MW'] / OLD_CONST * df_clean['Capacity_MW'])
 
         # Відкидаємо явні аномалії (нижні 5% та верхні 5%)
         q_low = df_clean['k'].quantile(0.05)
