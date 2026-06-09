@@ -145,7 +145,7 @@ def train_and_get_insights(df_h, df_f, capacity_mw=None):
     }).sort_values('Вплив %', ascending=False)
 
     # ── 5. Scatter ─────────────────────────────────────────────────────────
-    scatter_data = pd.DataFrame({'Факт': y_test, 'План_ШI': test_preds})
+    scatter_data = pd.DataFrame({'Факт': y_test, 'План_ШІ': test_preds})
 
     # ── 6. Порiвняння за останнi 5 днiв ───────────────────────────────────
     last_time = df_clean['Time'].max()
@@ -168,7 +168,7 @@ def train_and_get_insights(df_h, df_f, capacity_mw=None):
             'Дата':           fact_sum.index,
             'Факт (АСКОЕ)':   fact_sum.values,
             'Прогноз Сайту':  fore_sum.values,
-            'План ШI':        ai_sum.values
+            'План ШІ':        ai_sum.values
         })
 
     # ── 7. Прогноз на майбутнє ─────────────────────────────────────────────
