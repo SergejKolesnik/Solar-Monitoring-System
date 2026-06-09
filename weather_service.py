@@ -4,7 +4,7 @@ import requests
 import time
 
 # Visual Crossing повертає LOCAL time для заданих координат.
-# Для Нiкополя (UTC+3) час вже є київським -- конвертація НЕ потрiбна.
+# Для Нiкополя (UTC+3) час вже є київським -- конвертацiя НЕ потрiбна.
 
 @st.cache_data(ttl=600)
 def fetch_weather_data():
@@ -37,7 +37,6 @@ def fetch_weather_data():
                         'PrecipProb': float(hr.get('precipprob', 0)),
                     })
             df = pd.DataFrame(h_list)
-            # Forecast_MW НЕ рахуємо тут -- це робиться в app.py через calc_forecast_mw()
             return df
         else:
             st.error(f"Помилка API: Статус {res.status_code}")
@@ -47,11 +46,12 @@ def fetch_weather_data():
 
 
 def calc_site_kef(df_h):
-    """Розраховує коефiцiєнт k = Fact_MW / (Rad_est * Capacity_MW).
-    Виключає фiзично неможливi записи (Fact > 110% Capacity).
     """
-    OLD_CONST = 0.0114
-    DEFAULT_KEF = OLD_CONST / 12.5  # ~0.000912
+    Розраховує коефiцiєнт k = Fact_MW / Forecast_MW.
+    Forecast_MW у базi вже є в МВт (Rad * 0.0114).
+    DEFAULT_KEF = 1.0 (нейтральний: прогноз ШI = прогноз сайту).
+    """
+    DEFAULT_KEF = 1.0
 
     try:
         df = df_h.copy()
@@ -65,7 +65,6 @@ def calc_site_kef(df_h):
             df['Capacity_MW'].astype(str).str.replace(',', '.'), errors='coerce'
         ).fillna(12.5)
 
-        # Тiльки записи де всi значення є, без фiзичних аномалiй
         mask = (
             (df['Forecast_MW'] > 0.05) &
             (df['Fact_MW'] > 0.05) &
@@ -77,9 +76,7 @@ def calc_site_kef(df_h):
         if len(df_clean) < 20:
             return DEFAULT_KEF
 
-        df_clean['k'] = df_clean['Fact_MW'] / (
-            df_clean['Forecast_MW'] / OLD_CONST * df_clean['Capacity_MW']
-        )
+        df_clean['k'] = df_clean['Fact_MW'] / df_clean['Forecast_MW']
 
         q_low = df_clean['k'].quantile(0.05)
         q_high = df_clean['k'].quantile(0.95)
@@ -87,19 +84,26 @@ def calc_site_kef(df_h):
 
         kef = float(df_trim['k'].median())
 
-        # Захист: kef має бути в розумних межах
-        if kef <= 0 or kef > 0.005:
+        if kef <= 0.3 or kef > 1.5:
             return DEFAULT_KEF
 
-        return round(kef, 6)
+        return round(kef, 4)
 
     except Exception:
         return DEFAULT_KEF
 
 
 def calc_forecast_mw(df_f, capacity_mw, kef):
-    """Forecast_MW = Rad * capacity_mw * kef."""
+    """
+    Forecast_MW = Rad * 0.0114 * (capacity_mw / 12.5) * kef
+    Масштабуємо базову формулу collector.py пiд поточну потужнiсть СЕС.
+    """
+    BASE_CAPACITY = 12.5
+    BASE_CONST = 0.0114
+
     df = df_f.copy()
-    df['Forecast_MW'] = (df['Rad'] * capacity_mw * kef).round(3)
+    df['Forecast_MW'] = (
+        df['Rad'] * BASE_CONST * (capacity_mw / BASE_CAPACITY) * kef
+    ).round(3)
     df['Forecast_MW'] = df['Forecast_MW'].clip(lower=0)
     return df
