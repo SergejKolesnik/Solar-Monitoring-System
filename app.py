@@ -211,7 +211,7 @@ if not df_f.empty:
 
             st.write("---")
             output = io.BytesIO()
-            df_export = df_f.head(72)[['Time', 'Forecast_MW', 'AI_Forecast_MW']].copy()
+            df_export = df_f.head(72)[['Time', 'Forecast_MW', 'AI_MW']].copy()
             df_export.columns = ['Час', 'Прогноз сайту (МВт)', 'План ШІ (МВт)']
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 df_export.to_excel(writer, index=False, sheet_name='Solar_Plan')
