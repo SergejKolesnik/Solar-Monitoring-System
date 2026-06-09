@@ -29,21 +29,24 @@ def _build_features(df, capacity_mw=None):
     """
     Формує матрицю фiч з сирих даних.
     Фiчi: Rad, CloudCover, Temp, WindSpeed, PrecipProb, Hour, Month, Capacity_MW
-    Rad береться напряму (df_f) або вiдновлюється з Forecast_MW (df_h бази).
     """
     df = df.copy()
 
-    # Rad: або є напряму, або вiдновлюємо з Forecast_MW бази
+    # Rad: або є напряму (df_f), або вiдновлюємо з Forecast_MW бази (df_h)
     if 'Rad' not in df.columns:
-        df['Rad'] = _to_numeric(df.get('Forecast_MW', pd.Series([0]*len(df)))) / BASE_CONST
+        df['Rad'] = _to_numeric(df.get('Forecast_MW', pd.Series([0]*len(df), index=df.index))) / BASE_CONST
 
     for col in ['Rad', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb']:
-        df[col] = _to_numeric(df[col]) if col in df.columns else 0.0
+        if col in df.columns:
+            df[col] = _to_numeric(df[col])
+        else:
+            df[col] = 0.0
 
     if capacity_mw is not None:
         df['Capacity_MW'] = float(capacity_mw)
     elif 'Capacity_MW' in df.columns:
-        df['Capacity_MW'] = _to_numeric(df['Capacity_MW']).replace(0, BASE_CAP_MW)
+        df['Capacity_MW'] = _to_numeric(df['Capacity_MW'])
+        df.loc[df['Capacity_MW'] == 0, 'Capacity_MW'] = BASE_CAP_MW
     else:
         df['Capacity_MW'] = BASE_CAP_MW
 
@@ -58,28 +61,31 @@ def _clean_history(df_h):
     Очищає iсторичнi данi для навчання:
     - тiльки денний час (5 <= Hour <= 21)
     - Fact_MW > 0
-    - Fact_MW <= Capacity_MW * 1.05  (прибираємо фiзичнi аномалiї)
+    - Fact_MW <= Capacity_MW * 1.05
     - Rad > 0
     """
     df = df_h.copy()
-    df['Time']       = pd.to_datetime(df['Time'], errors='coerce')
-    df['Fact_MW']    = _to_numeric(df.get('Fact_MW', pd.Series([0]*len(df))))
-    df['Capacity_MW']= _to_numeric(df.get('Capacity_MW', pd.Series([BASE_CAP_MW]*len(df)))).replace(0, BASE_CAP_MW)
+    df['Time']        = pd.to_datetime(df['Time'], errors='coerce')
+    df['Fact_MW']     = _to_numeric(df.get('Fact_MW',     pd.Series([0]*len(df), index=df.index)))
+    df['Capacity_MW'] = _to_numeric(df.get('Capacity_MW', pd.Series([BASE_CAP_MW]*len(df), index=df.index)))
+    df.loc[df['Capacity_MW'] == 0, 'Capacity_MW'] = BASE_CAP_MW
 
-    # Вiдновлюємо Rad
+    # Rad: або напряму, або з Forecast_MW
     if 'Rad' not in df.columns:
-        df['Rad'] = _to_numeric(df.get('Forecast_MW', pd.Series([0]*len(df)))) / BASE_CONST
+        df['Rad'] = _to_numeric(df.get('Forecast_MW', pd.Series([0]*len(df), index=df.index))) / BASE_CONST
     else:
         df['Rad'] = _to_numeric(df['Rad'])
 
     hour = df['Time'].dt.hour
 
+    # Важливо: всi умови в окремих дужках!
     mask = (
-        df['Fact_MW'] > 0.01 &
+        (df['Fact_MW'] > 0.01) &
         (df['Fact_MW'] <= df['Capacity_MW'] * 1.05) &
         (df['Rad'] > 5) &
-        (hour >= 5) & (hour <= 21) &
-        df['Time'].notna()
+        (hour >= 5) &
+        (hour <= 21) &
+        (df['Time'].notna())
     )
     return df[mask].copy()
 
@@ -103,11 +109,12 @@ def train_and_get_insights(df_h, df_f, capacity_mw=None):
         capacity_mw = BASE_CAP_MW
 
     if len(df_clean) < 30:
-        # Замало даних — проста фiзична формула як fallback
-        preds = (df_f['Rad'] * BASE_CONST * (capacity_mw / BASE_CAP_MW)).clip(lower=0)
+        # Fallback: проста фiзична формула
+        rad = _to_numeric(df_f.get('Rad', pd.Series([0]*len(df_f), index=df_f.index)))
+        preds = (rad * BASE_CONST * (capacity_mw / BASE_CAP_MW)).clip(lower=0)
         return preds.values, 0.0, None, None, 0.0, None
 
-    X_all = _build_features(df_clean, capacity_mw=None)  # capacity з самих даних
+    X_all = _build_features(df_clean, capacity_mw=None)
     y_all = df_clean['Fact_MW'].values
 
     # ── 2. Навчання / тест ─────────────────────────────────────────────────
@@ -141,27 +148,32 @@ def train_and_get_insights(df_h, df_f, capacity_mw=None):
     scatter_data = pd.DataFrame({'Факт': y_test, 'План_ШI': test_preds})
 
     # ── 6. Порiвняння за останнi 5 днiв ───────────────────────────────────
-    df_clean2 = df_clean.copy()
-    last_time  = df_clean2['Time'].max()
-    win_start  = last_time - pd.Timedelta(days=5)
-    hist_5d    = df_clean2[df_clean2['Time'] >= win_start].copy()
+    last_time = df_clean['Time'].max()
+    win_start = last_time - pd.Timedelta(days=5)
+    hist_5d   = df_clean[df_clean['Time'] >= win_start].copy()
 
     comparison_df = None
     if not hist_5d.empty:
         X_hist = _build_features(hist_5d, capacity_mw=None)
+        hist_5d = hist_5d.copy()
         hist_5d['AI_Plan'] = np.clip(model.predict(X_hist), 0, None)
-        comparison_df = (
-            hist_5d.groupby(hist_5d['Time'].dt.date)
-            .agg(Fact_MW=('Fact_MW', 'sum'),
-                 Forecast_MW=('Forecast_MW', 'sum') if 'Forecast_MW' in hist_5d.columns else ('Fact_MW', 'sum'),
-                 AI_Plan=('AI_Plan', 'sum'))
-            .reset_index()
-        )
-        comparison_df.columns = ['Дата', 'Факт (АСКОЕ)', 'Прогноз Сайту', 'План ШI']
+        grp = hist_5d.groupby(hist_5d['Time'].dt.date)
+        fact_sum     = grp['Fact_MW'].sum()
+        ai_sum       = grp['AI_Plan'].sum()
+        if 'Forecast_MW' in hist_5d.columns:
+            fore_sum = grp['Forecast_MW'].sum()
+        else:
+            fore_sum = fact_sum * 0
+        comparison_df = pd.DataFrame({
+            'Дата':           fact_sum.index,
+            'Факт (АСКОЕ)':   fact_sum.values,
+            'Прогноз Сайту':  fore_sum.values,
+            'План ШI':        ai_sum.values
+        })
 
     # ── 7. Прогноз на майбутнє ─────────────────────────────────────────────
-    X_future      = _build_features(df_f, capacity_mw=capacity_mw)
-    future_preds  = np.clip(model.predict(X_future), 0, capacity_mw)
+    X_future     = _build_features(df_f, capacity_mw=capacity_mw)
+    future_preds = np.clip(model.predict(X_future), 0, capacity_mw)
 
     # Нiчнi години → 0
     df_f2 = df_f.copy()
