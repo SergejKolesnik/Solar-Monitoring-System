@@ -5,11 +5,11 @@ import gspread
 from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
 
-from weather_service import fetch_weather_data, calc_site_kef, calc_forecast_mw
+from weather_service import fetch_weather_data, calc_forecast_mw
 from model_engine import train_and_get_insights
 from ui_components import draw_main_chart, draw_metrics, draw_training_tab, draw_base_tab, draw_meteo_tab, draw_plan_tab
 
-# Налаштування сторінки
+# Налаштування сторiнки
 st.set_page_config(page_title="SkyGrid Solar AI", layout="wide", page_icon="☀️")
 UA_TZ = pytz.timezone('Europe/Kyiv')
 now_ua = datetime.now(UA_TZ).replace(tzinfo=None)
@@ -57,64 +57,48 @@ def load_plan_from_sheets(month: int, year: int, nominal_kw: float):
         creds_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
         creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
         gc = gspread.authorize(creds)
-
         try:
             sh = gc.open_by_key(PLAN_SHEET_ID)
         except Exception as e:
             st.error(f"Немає доступу до таблиці плану: {type(e).__name__}: {e}")
             return pd.DataFrame()
-
         try:
             sheet_titles = [ws.title for ws in sh.worksheets()]
         except Exception as e:
             st.error(f"Не вдалось отримати список аркушів: {e}")
             return pd.DataFrame()
-
         if sheet_name not in sheet_titles:
             st.error(f"Аркуш '{sheet_name}' не знайдено. Доступні: {sheet_titles}")
             return pd.DataFrame()
-
         ws = sh.worksheet(sheet_name)
         raw = ws.get_all_values()
         df_raw = pd.DataFrame(raw)
-
         data = df_raw.iloc[4:, [1, 2] + list(range(3, 27))].copy()
         data.columns = ['Nominal', 'День'] + [f'П{i}' for i in range(1, 25)]
-
         for col in data.columns:
-            data[col] = data[col].astype(str).str.replace(' ', '').str.replace('\xa0', '').str.replace(',', '.').str.strip()
+            data[col] = data[col].astype(str).str.replace(' ', '').str.replace(' ', '').str.replace(',', '.').str.strip()
             data[col] = pd.to_numeric(data[col], errors='coerce')
-
         nominals = data['Nominal'].dropna().unique()
         nominal_kw_val = nominal_kw * 1000
         closest = min(nominals, key=lambda x: abs(x - nominal_kw_val)) if len(nominals) > 0 else None
-
         if closest is None:
             st.error("Не знайдено номінал генерації в таблиці")
             return pd.DataFrame()
-
         plan = data[(data['Nominal'] == closest) & (data['День'] >= 1) & (data['День'] <= 31)].copy()
         plan = plan.drop_duplicates(subset=['День'])
-
         rows = []
         for _, row in plan.iterrows():
             day = int(row['День'])
             for h in range(1, 25):
                 val = row.get(f'П{h}', 0)
                 if pd.notna(val):
-                    rows.append({
-                        'Time': datetime(year, month, day, h - 1, 0),
-                        'Plan_MW': round(float(val) / 1000, 3)
-                    })
-
+                    rows.append({'Time': datetime(year, month, day, h - 1, 0), 'Plan_MW': round(float(val) / 1000, 3)})
         if not rows:
             st.error("Дані плану порожні після парсингу")
             return pd.DataFrame()
-
         result = pd.DataFrame(rows)
         result['Time'] = pd.to_datetime(result['Time'])
         return result
-
     except Exception as e:
         st.error(f"Помилка завантаження плану: {type(e).__name__}: {e}")
         return pd.DataFrame()
@@ -127,19 +111,13 @@ with col_title:
     st.markdown("# ☀️ SkyGrid Solar AI")
     st.markdown("<span style='color:gray; font-size:13px;'>Система моніторингу та прогнозування сонячної генерації</span>", unsafe_allow_html=True)
 with col_logo:
-    st.markdown(
-        f"""
-<div style='display:flex; align-items:center; justify-content:flex-end; gap:12px; padding-top:8px;'>
+    st.markdown(f"""<div style='display:flex; align-items:center; justify-content:flex-end; gap:12px; padding-top:8px;'>
 <img src='{LOGO_URL}' width='48' style='vertical-align:middle;'/>
 <div style='text-align:left; line-height:1.3;'>
 <div style='font-weight:600; font-size:14px;'>Нікопольський завод</div>
 <div style='font-weight:600; font-size:14px;'>феросплавів</div>
 <div style='font-size:11px; color:gray;'><a href='https://www.nzf.com.ua' target='_blank' style='color:gray; text-decoration:none;'>nzf.com.ua</a></div>
-</div>
-</div>
-""",
-        unsafe_allow_html=True
-    )
+</div></div>""", unsafe_allow_html=True)
 
 st.markdown("---")
 
@@ -148,9 +126,8 @@ df_f = fetch_weather_data()
 
 if not df_f.empty:
     try:
-        # 2. Завантаження бази (включно з AI_Forecast_MW від collector.py)
+        # 2. База історичних даних
         df_h = load_base_from_sheets()
-
         if df_h.empty:
             st.warning("База даних порожня або недоступна.")
             st.stop()
@@ -174,36 +151,26 @@ if not df_f.empty:
             if 'Capacity_MW' not in df_h.columns:
                 df_h['Capacity_MW'] = capacity_mw
 
-            # Розраховуємо коефіцієнт k з реальних даних і перераховуємо Forecast_MW
-            site_kef = calc_site_kef(df_h)
-            df_f = calc_forecast_mw(df_f, capacity_mw, site_kef)
+            # Forecast_MW для графіка (прогноз сайту): Rad * 0.0114 * scale
+            df_f = calc_forecast_mw(df_f, capacity_mw, kef=1.0)
 
             try:
-                results = train_and_get_insights(df_h, df_f)
+                # Нова модель: передаємо capacity_mw як третій аргумент
+                results = train_and_get_insights(df_h, df_f, capacity_mw=capacity_mw)
                 if isinstance(results, tuple) and len(results) == 6:
                     predictions, accuracy, importance, scatter_data, pivot_error, comparison_df = results
-                elif isinstance(results, tuple) and len(results) == 4:
-                    predictions, accuracy, importance, scatter_data = results
-                    pivot_error, comparison_df = 0.0, None
                 else:
                     predictions = results[0] if isinstance(results, tuple) else results
                     accuracy, importance, scatter_data, pivot_error, comparison_df = 0.0, None, None, 0.0, None
 
-                # AI_Forecast_MW береться з бази (розраховано collector.py о 12:00)
-                if 'AI_Forecast_MW' in df_h.columns:
-                    ai_from_base = df_h[['Time', 'AI_Forecast_MW']].copy()
-                    df_f = df_f.merge(ai_from_base, on='Time', how='left')
-                    df_f['AI_Forecast_MW'] = df_f['AI_Forecast_MW'].fillna(0)
-                else:
-                    df_f['AI_Forecast_MW'] = 0.0
-
-                # Зберігаємо live-прогноз моделі як AI_MW для порівняння в UI
+                # Прогноз ШІ — з нової моделі
                 df_f['AI_MW'] = predictions
+                # Нічні години і незначна радіація → 0
                 df_f.loc[df_f['Rad'] < 5, 'AI_MW'] = 0.0
                 df_f.loc[df_f['Rad'] < 5, 'Forecast_MW'] = 0.0
 
             except Exception as model_err:
-                st.error(f"Помилка логіки моделі: {model_err}")
+                st.error(f"Помилка моделі: {model_err}")
                 st.stop()
 
             draw_metrics(df_f, now_ua, timedelta)
@@ -244,8 +211,8 @@ else:
 st.markdown("---")
 st.markdown(
     "<div style='text-align:center; color:gray; font-size:12px;'>"
-    "SkyGrid Solar AI v1.0 · Розробник: "
+    "SkyGrid Solar AI v2.0 · Розробник: "
     "<a href='https://github.com/SergejKolesnik/Solar-Monitoring-System' target='_blank' style='color:gray;'>Sergej Kolesnik</a>"
     "</div>",
     unsafe_allow_html=True
-)
+        )
