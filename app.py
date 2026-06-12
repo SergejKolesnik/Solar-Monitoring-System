@@ -216,3 +216,10 @@ st.markdown(
     "</div>",
     unsafe_allow_html=True
         )
+
+# --- Keep-alive: авто-пінг кожні 5 хвилин щоб сайт не засинав ---
+@st.fragment(run_every=300)
+def _keep_alive():
+        pass
+
+_keep_alive()
