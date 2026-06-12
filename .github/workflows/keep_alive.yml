@@ -12,3 +12,7 @@ jobs:
       - name: Wake up Streamlit
         run: |
           curl -s -o /dev/null -w "%{http_code}" --max-redirs 5 https://pd2b4edrjntm8tyeulappbo.streamlit.app/ || true
+      - name: Wait 30 seconds
+        run: sleep 30
+      - name: Ping 2 verify awake
+        run: curl -sL --max-time 60 -A Mozilla/5.0 https://pd2b4edrjntm8tyeulappbo.streamlit.app/ -o /dev/null || true
