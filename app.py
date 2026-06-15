@@ -170,7 +170,9 @@ if not df_f.empty:
             df_f['Time'] = pd.to_datetime(df_f['Time'])
 
             df_f = df_f.merge(df_ai, on='Time', how='left')
-            df_f['AI_MW'] = df_f['AI_Forecast_MW'].fillna(df_f['Forecast_MW'])
+            ai_from_sheet = pd.to_numeric(df_f['AI_Forecast_MW'], errors='coerce').fillna(0)
+            df_f['AI_MW'] = df_f['Forecast_MW']
+            df_f.loc[ai_from_sheet > 0, 'AI_MW'] = ai_from_sheet[ai_from_sheet > 0]
 
             # Нічні години і незначна радіація → 0
             if 'Rad' in df_f.columns:
@@ -179,26 +181,6 @@ if not df_f.empty:
 
             # Дані для вкладки "Навчання" тепер формуються з уже збережених помилок,
             # а не через повторне навчання моделі в app.py.
-            accuracy = 0.0
-            importance = None
-            scatter_data = None
-            pivot_error = 0.0
-            comparison_df = None
-
-            if all(c in df_h.columns for c in ['Fact_MW', 'Forecast_MW', 'AI_Forecast_MW']):
-                hist_mask = df_h['Fact_MW'].notna() & (df_h['Fact_MW'] > 0)
-                hist = df_h.loc[hist_mask].copy()
-                if not hist.empty:
-                    hist['Base_Abs_Error'] = (hist['Fact_MW'] - hist['Forecast_MW']).abs()
-                    hist['AI_Abs_Error'] = (hist['Fact_MW'] - hist['AI_Forecast_MW']).abs()
-                    base_mae = hist['Base_Abs_Error'].mean()
-                    ai_mae = hist['AI_Abs_Error'].mean()
-                    if base_mae and base_mae > 0:
-                        accuracy = round(max(0.0, (1 - ai_mae / base_mae) * 100), 1)
-                    pivot_error = round(float(ai_mae), 3) if pd.notna(ai_mae) else 0.0
-                    comparison_df = hist.tail(120)[['Time', 'Fact_MW', 'Forecast_MW', 'AI_Forecast_MW']].copy()
-                    comparison_df = comparison_df.rename(columns={'AI_Forecast_MW': 'AI_MW'})
-
             draw_metrics(df_f, now_ua, timedelta)
             draw_main_chart(df_f)
 
@@ -216,7 +198,7 @@ if not df_f.empty:
             )
 
         with tabs[1]:
-            draw_training_tab(df_h, accuracy, importance, scatter_data, pivot_error, comparison_df)
+            draw_training_tab(df_h)
 
         with tabs[2]:
             draw_base_tab(df_h)

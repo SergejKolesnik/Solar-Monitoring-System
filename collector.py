@@ -221,8 +221,8 @@ def train_model(df):
 
     # Навчаємося тільки там, де є реальний факт і є денна генерація/базовий прогноз
     df_train = df[
-        (pd.to_numeric(df['Fact_MW'], errors='coerce').fillna(0) > 0) &
-        (pd.to_numeric(df['Forecast_MW'], errors='coerce').fillna(0) > 0)
+        (pd.to_numeric(df['Fact_MW'], errors='coerce').fillna(0) > 0.05) &
+        (pd.to_numeric(df['Forecast_MW'], errors='coerce').fillna(0) > 0.05)
     ].copy()
 
     df_train = df_train.dropna(subset=features)
@@ -286,6 +286,11 @@ def save_ai_forecast(df, model, features):
 
         X_pred = df_pred[avail_features].fillna(0).astype(float)
         predicted_error = model.predict(X_pred)
+        error_limit = base_forecast.values * 0.30
+        predicted_error = [
+            min(max(float(err), -float(limit)), float(limit))
+            for err, limit in zip(predicted_error, error_limit)
+        ]
 
         preds = base_forecast.values + predicted_error
 

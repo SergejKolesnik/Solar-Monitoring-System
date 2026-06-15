@@ -68,7 +68,7 @@ def draw_main_chart(df_f):
 #  ВКЛАДКА 1: НАВЧАННЯ
 # ─────────────────────────────────────────────
 
-def draw_training_tab(df_h, accuracy_r2=None, importance=None, scatter_data=None, mse_error=None, comparison_df=None):
+def draw_training_tab(df_h):
     """
     Вкладка "Навчання" більше НЕ навчає модель у Streamlit.
     Вона тільки аналізує вже збережені результати з Google Sheet:
@@ -90,6 +90,15 @@ def draw_training_tab(df_h, accuracy_r2=None, importance=None, scatter_data=None
         st.info("Спочатку запусти оновлений collector.py, щоб він створив AI_Forecast_MW та колонки помилок.")
         return
 
+    error_cols = ['Forecast_Error_MW', 'Forecast_Error_Pct', 'AI_Error_MW', 'AI_Error_Pct']
+    missing_error_cols = [c for c in error_cols if c not in df_h.columns]
+    if missing_error_cols:
+        st.info(
+            "Колонки помилок ще не створені в Google Sheet: "
+            f"{', '.join(missing_error_cols)}. Запусти оновлений collector.py."
+        )
+        return
+
     num_cols = [
         'Fact_MW', 'Forecast_MW', 'AI_Forecast_MW',
         'Forecast_Error_MW', 'Forecast_Error_Pct',
@@ -101,18 +110,15 @@ def draw_training_tab(df_h, accuracy_r2=None, importance=None, scatter_data=None
     df = df.dropna(subset=['Time']).sort_values('Time')
 
     # Беремо тільки години, де є факт генерації. Нічні нулі не повинні прикрашати точність.
-    df_fact = df[df['Fact_MW'] > 0].copy()
+    df_fact = df[(df['Fact_MW'] > 0.05) & (df['Forecast_MW'] > 0.05)].copy()
     if df_fact.empty:
         st.info("Ще немає фактичних даних Fact_MW > 0 для аналізу якості прогнозу.")
         return
 
-    # Якщо collector.py ще не встиг створити колонки помилок — рахуємо їх на льоту для відображення.
-    df_fact['Forecast_Error_MW_calc'] = df_fact['Fact_MW'] - df_fact['Forecast_MW']
-    df_fact['AI_Error_MW_calc'] = df_fact['Fact_MW'] - df_fact['AI_Forecast_MW']
-    df_fact['Base_Abs_Error_MW'] = df_fact['Forecast_Error_MW_calc'].abs()
-    df_fact['AI_Abs_Error_MW'] = df_fact['AI_Error_MW_calc'].abs()
-    df_fact['Base_Abs_Error_Pct'] = (df_fact['Base_Abs_Error_MW'] / df_fact['Fact_MW'].replace(0, pd.NA) * 100).fillna(0)
-    df_fact['AI_Abs_Error_Pct'] = (df_fact['AI_Abs_Error_MW'] / df_fact['Fact_MW'].replace(0, pd.NA) * 100).fillna(0)
+    df_fact['Base_Abs_Error_MW'] = df_fact['Forecast_Error_MW'].abs()
+    df_fact['AI_Abs_Error_MW'] = df_fact['AI_Error_MW'].abs()
+    df_fact['Base_Abs_Error_Pct'] = df_fact['Forecast_Error_Pct'].abs()
+    df_fact['AI_Abs_Error_Pct'] = df_fact['AI_Error_Pct'].abs()
 
     base_mae = float(df_fact['Base_Abs_Error_MW'].mean())
     ai_mae = float(df_fact['AI_Abs_Error_MW'].mean())
@@ -155,6 +161,34 @@ def draw_training_tab(df_h, accuracy_r2=None, importance=None, scatter_data=None
     for col in daily.columns:
         if col != 'Дата':
             daily[col] = pd.to_numeric(daily[col], errors='coerce').round(2)
+
+    st.markdown("##### Денний графік: факт vs прогноз сайту vs ШІ")
+    recent_daily_energy = daily.tail(30)
+    fig_daily = go.Figure()
+    fig_daily.add_trace(go.Scatter(
+        x=recent_daily_energy['Дата'], y=recent_daily_energy['Факт (МВт·год)'],
+        name='Факт', mode='lines+markers',
+        line=dict(color='#378ADD', width=2.5)
+    ))
+    fig_daily.add_trace(go.Scatter(
+        x=recent_daily_energy['Дата'], y=recent_daily_energy['Прогноз сайту (МВт·год)'],
+        name='Прогноз сайту', mode='lines+markers',
+        line=dict(color='#D85A30', width=2, dash='dot')
+    ))
+    fig_daily.add_trace(go.Scatter(
+        x=recent_daily_energy['Дата'], y=recent_daily_energy['Прогноз ШІ (МВт·год)'],
+        name='Прогноз ШІ', mode='lines+markers',
+        line=dict(color='#1D9E75', width=2, dash='dash')
+    ))
+    fig_daily.update_layout(
+        height=300, margin=dict(l=0, r=0, t=10, b=0),
+        yaxis=dict(title='МВт·год'),
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0),
+        hovermode='x unified'
+    )
+    st.plotly_chart(fig_daily, width='stretch')
+
+    st.write("---")
 
     col_left, col_right = st.columns(2)
 
