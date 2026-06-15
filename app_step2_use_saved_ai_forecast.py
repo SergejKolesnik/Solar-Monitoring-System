@@ -1,0 +1,244 @@
+import streamlit as st
+import pandas as pd
+import time, io, pytz, json
+import gspread
+from datetime import datetime, timedelta
+from google.oauth2.service_account import Credentials
+
+from weather_service import fetch_weather_data, calc_forecast_mw
+from ui_components import draw_main_chart, draw_metrics, draw_training_tab, draw_base_tab, draw_meteo_tab, draw_plan_tab
+
+# Налаштування сторiнки
+st.set_page_config(page_title="SkyGrid Solar AI", layout="wide", page_icon="☀️")
+UA_TZ = pytz.timezone('Europe/Kyiv')
+now_ua = datetime.now(UA_TZ).replace(tzinfo=None)
+
+SHEET_ID = "1ckVoJla9DA3BLQfBDy30sXmaOyH2HSqCZ1FbZtUDr9Q"
+PLAN_SHEET_ID = "1U8639UXFyZUNzMOg6BHcg_gDAX_JS9g7fpBkdXOpODw"
+SCOPES = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+LOGO_URL = "https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/logo.gif"
+
+MONTHS_UK = {
+    1: 'Січень', 2: 'Лютий', 3: 'Березень', 4: 'Квітень',
+    5: 'Травень', 6: 'Червень', 7: 'Липень', 8: 'Серпень',
+    9: 'Вересень', 10: 'Жовтень', 11: 'Листопад', 12: 'Грудень'
+}
+
+@st.cache_data(ttl=300)
+def load_base_from_sheets():
+    try:
+        creds_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
+        creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+        gc = gspread.authorize(creds)
+        sh = gc.open_by_key(SHEET_ID)
+        data = sh.sheet1.get_all_records()
+        if not data:
+            return pd.DataFrame()
+        df = pd.DataFrame(data)
+        df['Time'] = pd.to_datetime(df['Time'])
+        num_cols = [
+            'Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb',
+            'Fact_MW', 'Capacity_MW', 'AI_Forecast_MW',
+            'Forecast_Error_MW', 'Forecast_Error_Pct',
+            'AI_Error_MW', 'AI_Error_Pct'
+        ]
+        for col in num_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(
+                    df[col].astype(str).str.replace(',', '.').str.strip(),
+                    errors='coerce'
+                ).fillna(0)
+        return df
+    except Exception as e:
+        st.error(f"Помилка читання Google Sheet: {e}")
+        return pd.DataFrame()
+
+@st.cache_data(ttl=3600)
+def load_plan_from_sheets(month: int, year: int, nominal_kw: float):
+    sheet_name = f"{MONTHS_UK[month]} {str(year)[2:]}"
+    try:
+        creds_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
+        creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+        gc = gspread.authorize(creds)
+        try:
+            sh = gc.open_by_key(PLAN_SHEET_ID)
+        except Exception as e:
+            st.error(f"Немає доступу до таблиці плану: {type(e).__name__}: {e}")
+            return pd.DataFrame()
+        try:
+            sheet_titles = [ws.title for ws in sh.worksheets()]
+        except Exception as e:
+            st.error(f"Не вдалось отримати список аркушів: {e}")
+            return pd.DataFrame()
+        if sheet_name not in sheet_titles:
+            st.error(f"Аркуш '{sheet_name}' не знайдено. Доступні: {sheet_titles}")
+            return pd.DataFrame()
+        ws = sh.worksheet(sheet_name)
+        raw = ws.get_all_values()
+        df_raw = pd.DataFrame(raw)
+        data = df_raw.iloc[4:, [1, 2] + list(range(3, 27))].copy()
+        data.columns = ['Nominal', 'День'] + [f'П{i}' for i in range(1, 25)]
+        for col in data.columns:
+            data[col] = data[col].astype(str).str.replace(' ', '').str.replace(' ', '').str.replace(',', '.').str.strip()
+            data[col] = pd.to_numeric(data[col], errors='coerce')
+        nominals = data['Nominal'].dropna().unique()
+        nominal_kw_val = nominal_kw * 1000
+        closest = min(nominals, key=lambda x: abs(x - nominal_kw_val)) if len(nominals) > 0 else None
+        if closest is None:
+            st.error("Не знайдено номінал генерації в таблиці")
+            return pd.DataFrame()
+        plan = data[(data['Nominal'] == closest) & (data['День'] >= 1) & (data['День'] <= 31)].copy()
+        plan = plan.drop_duplicates(subset=['День'])
+        rows = []
+        for _, row in plan.iterrows():
+            day = int(row['День'])
+            for h in range(1, 25):
+                val = row.get(f'П{h}', 0)
+                if pd.notna(val):
+                    rows.append({'Time': datetime(year, month, day, h - 1, 0), 'Plan_MW': round(float(val) / 1000, 3)})
+        if not rows:
+            st.error("Дані плану порожні після парсингу")
+            return pd.DataFrame()
+        result = pd.DataFrame(rows)
+        result['Time'] = pd.to_datetime(result['Time'])
+        return result
+    except Exception as e:
+        st.error(f"Помилка завантаження плану: {type(e).__name__}: {e}")
+        return pd.DataFrame()
+
+# --- Заголовок ---
+st.sidebar.markdown("🚀 **Status: SkyGrid_Active**")
+
+col_title, col_spacer, col_logo = st.columns([5, 1, 2])
+with col_title:
+    st.markdown("# ☀️ SkyGrid Solar AI")
+    st.markdown("<span style='color:gray; font-size:13px;'>Система моніторингу та прогнозування сонячної генерації</span>", unsafe_allow_html=True)
+with col_logo:
+    st.markdown(f"""<div style='display:flex; align-items:center; justify-content:flex-end; gap:12px; padding-top:8px;'>
+<img src='{LOGO_URL}' width='48' style='vertical-align:middle;'/>
+<div style='text-align:left; line-height:1.3;'>
+<div style='font-weight:600; font-size:14px;'>Нікопольський завод</div>
+<div style='font-weight:600; font-size:14px;'>феросплавів</div>
+<div style='font-size:11px; color:gray;'><a href='https://www.nzf.com.ua' target='_blank' style='color:gray; text-decoration:none;'>nzf.com.ua</a></div>
+</div></div>""", unsafe_allow_html=True)
+
+st.markdown("---")
+
+# 1. Завантаження погоди
+df_f = fetch_weather_data()
+
+if not df_f.empty:
+    try:
+        # 2. База історичних даних
+        df_h = load_base_from_sheets()
+        if df_h.empty:
+            st.warning("База даних порожня або недоступна.")
+            st.stop()
+
+        # 3. Вкладки
+        tabs = st.tabs(["📊 МОНІТОРИНГ", "🧠 НАВЧАННЯ", "📅 БАЗА", "🌤 МЕТЕО", "📋 ПЛАН"])
+
+        with tabs[0]:
+            col_cap, col_info = st.columns([1, 3])
+            with col_cap:
+                capacity_mw = st.number_input(
+                    "⚡ Потужність СЕС (МВт)",
+                    min_value=1.0, max_value=100.0,
+                    value=12.5, step=0.5,
+                    help="Змінюй при введенні нових черг СЕС"
+                )
+            with col_info:
+                st.markdown(f"<br>Прогноз розраховано для **{capacity_mw} МВт** · Нікополь", unsafe_allow_html=True)
+
+            df_f['Capacity_MW'] = capacity_mw
+            if 'Capacity_MW' not in df_h.columns:
+                df_h['Capacity_MW'] = capacity_mw
+
+            # Forecast_MW для графіка (прогноз сайту): Rad * 0.0114 * scale
+            df_f = calc_forecast_mw(df_f, capacity_mw, kef=1.0)
+
+            # ВАЖЛИВО:
+            # Streamlit-додаток більше НЕ навчає модель при відкритті сторінки.
+            # AI-прогноз бере тільки з Google Sheet, куди його записує collector.py.
+            # Це прибирає конфлікт між двома різними моделями і робить прогноз чесним:
+            # collector.py створив AI_Forecast_MW наперед → app.py тільки показав його.
+            if 'AI_Forecast_MW' not in df_h.columns:
+                df_h['AI_Forecast_MW'] = 0.0
+
+            df_ai = df_h[['Time', 'AI_Forecast_MW']].copy()
+            df_ai['Time'] = pd.to_datetime(df_ai['Time'])
+            df_f['Time'] = pd.to_datetime(df_f['Time'])
+
+            df_f = df_f.merge(df_ai, on='Time', how='left')
+            df_f['AI_MW'] = df_f['AI_Forecast_MW'].fillna(df_f['Forecast_MW'])
+
+            # Нічні години і незначна радіація → 0
+            if 'Rad' in df_f.columns:
+                df_f.loc[df_f['Rad'] < 5, 'AI_MW'] = 0.0
+                df_f.loc[df_f['Rad'] < 5, 'Forecast_MW'] = 0.0
+
+            # Дані для вкладки "Навчання" тепер формуються з уже збережених помилок,
+            # а не через повторне навчання моделі в app.py.
+            accuracy = 0.0
+            importance = None
+            scatter_data = None
+            pivot_error = 0.0
+            comparison_df = None
+
+            if all(c in df_h.columns for c in ['Fact_MW', 'Forecast_MW', 'AI_Forecast_MW']):
+                hist_mask = df_h['Fact_MW'].notna() & (df_h['Fact_MW'] > 0)
+                hist = df_h.loc[hist_mask].copy()
+                if not hist.empty:
+                    hist['Base_Abs_Error'] = (hist['Fact_MW'] - hist['Forecast_MW']).abs()
+                    hist['AI_Abs_Error'] = (hist['Fact_MW'] - hist['AI_Forecast_MW']).abs()
+                    base_mae = hist['Base_Abs_Error'].mean()
+                    ai_mae = hist['AI_Abs_Error'].mean()
+                    if base_mae and base_mae > 0:
+                        accuracy = round(max(0.0, (1 - ai_mae / base_mae) * 100), 1)
+                    pivot_error = round(float(ai_mae), 3) if pd.notna(ai_mae) else 0.0
+                    comparison_df = hist.tail(120)[['Time', 'Fact_MW', 'Forecast_MW', 'AI_Forecast_MW']].copy()
+                    comparison_df = comparison_df.rename(columns={'AI_Forecast_MW': 'AI_MW'})
+
+            draw_metrics(df_f, now_ua, timedelta)
+            draw_main_chart(df_f)
+
+            st.write("---")
+            output = io.BytesIO()
+            df_export = df_f.head(72)[['Time', 'Forecast_MW', 'AI_MW']].copy()
+            df_export.columns = ['Час', 'Прогноз сайту (МВт)', 'План ШІ (МВт)']
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df_export.to_excel(writer, index=False, sheet_name='Solar_Plan')
+            st.download_button(
+                label="📥 Завантажити План в Excel",
+                data=output.getvalue(),
+                file_name=f"Solar_Plan_{now_ua.strftime('%d_%m')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
+        with tabs[1]:
+            draw_training_tab(df_h, accuracy, importance, scatter_data, pivot_error, comparison_df)
+
+        with tabs[2]:
+            draw_base_tab(df_h)
+
+        with tabs[3]:
+            draw_meteo_tab(df_f)
+
+        with tabs[4]:
+            df_plan = load_plan_from_sheets(now_ua.month, now_ua.year, capacity_mw)
+            draw_plan_tab(df_h, df_f, df_plan, now_ua)
+
+    except Exception as e:
+        st.error(f"Критична помилка додатка: {e}")
+else:
+    st.warning("Не вдалося отримати дані про погоду.")
+
+# --- Підпис розробника ---
+st.markdown("---")
+st.markdown(
+    "<div style='text-align:center; color:gray; font-size:12px;'>"
+    "SkyGrid Solar AI v2.0 · Розробник: "
+    "<a href='https://github.com/SergejKolesnik/Solar-Monitoring-System' target='_blank' style='color:gray;'>Sergej Kolesnik</a>"
+    "</div>",
+    unsafe_allow_html=True
+        )
