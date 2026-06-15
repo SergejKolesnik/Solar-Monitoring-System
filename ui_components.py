@@ -91,12 +91,10 @@ def draw_training_tab(df_h):
         return
 
     error_cols = ['Forecast_Error_MW', 'Forecast_Error_Pct', 'AI_Error_MW', 'AI_Error_Pct']
-    missing_error_cols = [c for c in error_cols if c not in df_h.columns]
+    required_error_pct_cols = ['Forecast_Error_Pct', 'AI_Error_Pct']
+    missing_error_cols = [c for c in required_error_pct_cols if c not in df_h.columns]
     if missing_error_cols:
-        st.info(
-            "Колонки помилок ще не створені в Google Sheet: "
-            f"{', '.join(missing_error_cols)}. Запусти оновлений collector.py."
-        )
+        st.info("Недостатньо історичних даних для аналізу.")
         return
 
     num_cols = [
@@ -112,26 +110,28 @@ def draw_training_tab(df_h):
     # Беремо тільки години, де є факт генерації. Нічні нулі не повинні прикрашати точність.
     df_fact = df[(df['Fact_MW'] > 0.05) & (df['Forecast_MW'] > 0.05)].copy()
     if df_fact.empty:
-        st.info("Ще немає фактичних даних Fact_MW > 0 для аналізу якості прогнозу.")
+        st.info("Недостатньо історичних даних для аналізу.")
         return
 
-    df_fact['Base_Abs_Error_MW'] = df_fact['Forecast_Error_MW'].abs()
-    df_fact['AI_Abs_Error_MW'] = df_fact['AI_Error_MW'].abs()
     df_fact['Base_Abs_Error_Pct'] = df_fact['Forecast_Error_Pct'].abs()
     df_fact['AI_Abs_Error_Pct'] = df_fact['AI_Error_Pct'].abs()
 
-    base_mae = float(df_fact['Base_Abs_Error_MW'].mean())
-    ai_mae = float(df_fact['AI_Abs_Error_MW'].mean())
+    df_errors = df_fact[
+        (df_fact['Base_Abs_Error_Pct'] > 0) |
+        (df_fact['AI_Abs_Error_Pct'] > 0)
+    ].copy()
+    if df_errors.empty:
+        st.info("Недостатньо історичних даних для аналізу.")
+        return
+
     base_mape = float(df_fact['Base_Abs_Error_Pct'].mean())
     ai_mape = float(df_fact['AI_Abs_Error_Pct'].mean())
-    improvement_pct = (1 - ai_mae / base_mae) * 100 if base_mae > 0 else 0
-    improvement_delta = base_mape - ai_mape
+    improvement_pct = 100 * (base_mape - ai_mape) / base_mape if base_mape > 0 else 0
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Помилка сайту MAE", f"{base_mae:.3f} МВт", f"{base_mape:.1f}%")
-    c2.metric("Помилка ШІ MAE", f"{ai_mae:.3f} МВт", f"{ai_mape:.1f}%")
-    c3.metric("Покращення ШІ", f"{improvement_pct:.1f}%", f"{improvement_delta:+.1f} п.п.")
-    c4.metric("Годин з фактом", f"{len(df_fact):,}")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Середній |Forecast_Error_Pct|", f"{base_mape:.1f}%")
+    c2.metric("Середній |AI_Error_Pct|", f"{ai_mape:.1f}%")
+    c3.metric("Покращення AI", f"{improvement_pct:.1f}%")
 
     st.caption(
         "Тут більше немає повторного навчання моделі. Вкладка показує тільки реальні помилки "
@@ -147,15 +147,15 @@ def draw_training_tab(df_h):
             'Факт (МВт·год)': ('Fact_MW', 'sum'),
             'Прогноз сайту (МВт·год)': ('Forecast_MW', 'sum'),
             'Прогноз ШІ (МВт·год)': ('AI_Forecast_MW', 'sum'),
-            'MAE сайту (МВт)': ('Base_Abs_Error_MW', 'mean'),
-            'MAE ШІ (МВт)': ('AI_Abs_Error_MW', 'mean'),
             'MAPE сайту %': ('Base_Abs_Error_Pct', 'mean'),
             'MAPE ШІ %': ('AI_Abs_Error_Pct', 'mean')
         }
     ).reset_index().sort_values('Дата')
 
     daily['Покращення ШІ %'] = (
-        (1 - daily['MAE ШІ (МВт)'] / daily['MAE сайту (МВт)'].replace(0, pd.NA)) * 100
+        100 * (
+            daily['MAPE сайту %'] - daily['MAPE ШІ %']
+        ) / daily['MAPE сайту %'].replace(0, pd.NA)
     ).fillna(0).round(1)
 
     for col in daily.columns:
