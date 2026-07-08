@@ -1,0 +1,1625 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#177184">
+  <meta name="description" content="Офлайн PWA планер Camino del Norte 2026.">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Camino 2026">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Camino del Norte 2026 Planner</title>
+  <link rel="manifest" href="./manifest.json">
+  <link rel="icon" href="./icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="./icon-192.png">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
+  <style>
+    :root {
+      --bg: #f7f1e8;
+      --card: #fffaf1;
+      --white: #fff;
+      --text: #17252b;
+      --muted: #69777c;
+      --ocean: #177184;
+      --ocean-dark: #0d5263;
+      --sand: #eecb8f;
+      --sun: #d98245;
+      --green: #397d57;
+      --red: #b9584f;
+      --line: rgba(23, 37, 43, .12);
+      --shadow: 0 12px 34px rgba(21, 52, 61, .12);
+      --radius: 18px;
+      --tap: 48px;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(238, 203, 143, .45), transparent 30rem),
+        linear-gradient(180deg, #dff1f0 0%, var(--bg) 34%, var(--bg) 100%);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      line-height: 1.45;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    button, input, select, textarea { font: inherit; }
+    button { cursor: pointer; }
+    a { color: var(--ocean-dark); font-weight: 800; }
+
+    .app {
+      width: min(100%, 960px);
+      min-height: 100vh;
+      margin: 0 auto;
+      padding: 0 14px calc(100px + env(safe-area-inset-bottom));
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      margin: 0 -14px;
+      padding: calc(12px + env(safe-area-inset-top)) 14px 12px;
+      background: rgba(247, 241, 232, .92);
+      border-bottom: 1px solid var(--line);
+      backdrop-filter: blur(18px);
+    }
+
+    .brand-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    h1, h2, h3 { margin: 0; letter-spacing: 0; }
+    h1 { font-size: clamp(22px, 7vw, 34px); line-height: 1; }
+    h2 { font-size: 22px; }
+    h3 { font-size: 17px; color: var(--ocean-dark); }
+    p { margin: 8px 0 0; }
+    .brand p { margin-top: 5px; color: var(--muted); font-size: 14px; }
+
+    .install-btn {
+      display: none;
+      min-height: var(--tap);
+      border: 0;
+      border-radius: 999px;
+      padding: 0 15px;
+      color: #fff;
+      background: var(--ocean);
+      font-weight: 900;
+      box-shadow: var(--shadow);
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 32px;
+      margin: 4px 5px 0 0;
+      padding: 0 10px;
+      border-radius: 999px;
+      background: #edf8f7;
+      color: var(--ocean-dark);
+      font-size: 13px;
+      font-weight: 900;
+    }
+    .chip.sun { background: #fff0df; color: #884b1f; }
+    .chip.green { background: #eaf7ef; color: #216040; }
+    .chip.red { background: #fff0ef; color: #8f4039; }
+
+    .offline-chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 34px;
+      margin-top: 12px;
+      padding: 0 12px;
+      border-radius: 999px;
+      background: rgba(255, 250, 241, .82);
+      border: 1px solid var(--line);
+      color: var(--ocean-dark);
+      font-size: 13px;
+      font-weight: 900;
+    }
+
+    main { padding-top: 14px; }
+    .screen { display: none; }
+    .screen.active { display: block; animation: lift .16s ease-out; }
+    @keyframes lift { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+    .hero {
+      padding: 18px;
+      border-radius: 24px;
+      color: #fff;
+      background: linear-gradient(135deg, rgba(13, 82, 99, .94), rgba(23, 113, 132, .78)), linear-gradient(45deg, #0d5263, #d98245);
+      box-shadow: var(--shadow);
+    }
+    .hero h2 { font-size: 28px; line-height: 1.06; }
+    .hero p { color: rgba(255,255,255,.86); }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-top: 14px;
+    }
+    .stat { min-width: 0; padding: 10px; border-radius: 16px; background: rgba(255,255,255,.16); }
+    .stat b { display: block; font-size: 18px; }
+    .stat span { display: block; color: rgba(255,255,255,.78); font-size: 12px; }
+
+    .card {
+      margin: 12px 0;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(255, 250, 241, .94);
+      box-shadow: var(--shadow);
+    }
+    .soft {
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(255,255,255,.66);
+    }
+    .muted { color: var(--muted); }
+    .small { font-size: 13px; }
+
+    .grid { display: grid; gap: 10px; }
+    .form-grid { display: grid; grid-template-columns: 1fr; gap: 10px; }
+    .field label {
+      display: block;
+      margin-bottom: 5px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 900;
+    }
+    .field input, .field select, .field textarea {
+      width: 100%;
+      min-height: 50px;
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      padding: 11px 12px;
+      background: rgba(255,255,255,.86);
+      color: var(--text);
+      outline-color: var(--ocean);
+    }
+    textarea { resize: vertical; }
+    textarea.notes { min-height: 280px; line-height: 1.55; }
+
+    .btn {
+      min-height: var(--tap);
+      border: 0;
+      border-radius: 15px;
+      padding: 0 15px;
+      color: #fff;
+      background: var(--ocean);
+      font-weight: 900;
+    }
+    .btn.secondary { color: var(--text); background: #eadfce; }
+    .btn.danger { color: #fff; background: var(--red); }
+    .btn.ghost { color: var(--ocean-dark); background: rgba(23,113,132,.11); }
+    .btn.full { width: 100%; }
+    .icon-btn {
+      width: 44px;
+      height: 44px;
+      border: 0;
+      border-radius: 14px;
+      color: var(--text);
+      background: #eadfce;
+      font-weight: 900;
+    }
+    .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+
+    .timeline { display: grid; gap: 12px; }
+    .point {
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(255,255,255,.68);
+    }
+    .point-top {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: start;
+    }
+    .point-title { font-size: 17px; font-weight: 950; }
+    .point-meta { color: var(--muted); font-size: 13px; }
+    .point-note { margin-top: 8px; color: var(--muted); }
+    .mini-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+    .attachments { display: grid; gap: 8px; margin-top: 10px; }
+    .attachment {
+      display: grid;
+      grid-template-columns: 56px 1fr;
+      gap: 10px;
+      align-items: center;
+      padding: 8px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(255,250,241,.88);
+    }
+    .thumb {
+      width: 56px;
+      height: 56px;
+      object-fit: cover;
+      border-radius: 12px;
+      background: #eadfce;
+      display: grid;
+      place-items: center;
+      color: var(--ocean-dark);
+      font-weight: 900;
+      font-size: 12px;
+    }
+
+    .modal {
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      display: none;
+      padding: 18px 14px calc(18px + env(safe-area-inset-bottom));
+      background: rgba(10,24,30,.42);
+      overflow: auto;
+    }
+    .modal.active { display: block; }
+    .modal-panel {
+      width: min(100%, 760px);
+      margin: 0 auto;
+      padding: 16px;
+      border-radius: 22px;
+      background: var(--card);
+      box-shadow: var(--shadow);
+    }
+
+    .items { display: grid; gap: 8px; margin-top: 12px; }
+    label.item {
+      display: grid;
+      grid-template-columns: 32px 1fr;
+      align-items: center;
+      min-height: 54px;
+      gap: 12px;
+      padding: 9px 10px;
+      border-radius: 15px;
+      background: rgba(255,255,255,.66);
+      border: 1px solid var(--line);
+    }
+    input[type="checkbox"] { width: 28px; height: 28px; margin: 0; accent-color: var(--green); }
+    label.item input:checked + span { color: var(--muted); text-decoration: line-through; }
+    .progress { height: 12px; margin: 8px 0 3px; border-radius: 999px; overflow: hidden; background: rgba(23,37,43,.1); }
+    .bar { height: 100%; width: 0; border-radius: inherit; background: linear-gradient(90deg, var(--green), var(--ocean)); transition: width .2s ease; }
+
+    .expense-list { display: grid; gap: 8px; margin-top: 12px; }
+    .expense {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: center;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(255,255,255,.68);
+    }
+    .total {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px;
+      border-radius: 18px;
+      color: #fff;
+      background: var(--ocean-dark);
+      font-weight: 900;
+    }
+    .empty { padding: 16px; border-radius: 16px; background: rgba(255,255,255,.58); color: var(--muted); text-align: center; }
+
+    details { margin: 10px 0; padding: 12px; border: 1px solid var(--line); border-radius: 16px; background: rgba(255,255,255,.62); }
+    summary { min-height: 34px; cursor: pointer; font-weight: 900; }
+    ul.clean { margin: 8px 0 0; padding-left: 20px; }
+
+    .bottom-nav {
+      position: fixed;
+      z-index: 20;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+      background: rgba(255,250,241,.94);
+      border-top: 1px solid var(--line);
+      backdrop-filter: blur(18px);
+    }
+    .bottom-nav::before,
+    .bottom-nav::after {
+      content: "";
+      position: absolute;
+      top: 8px;
+      bottom: calc(18px + env(safe-area-inset-bottom));
+      z-index: 1;
+      width: 22px;
+      pointer-events: none;
+    }
+    .bottom-nav::before {
+      left: 0;
+      background: linear-gradient(90deg, rgba(255,250,241,.98), rgba(255,250,241,0));
+    }
+    .bottom-nav::after {
+      right: 0;
+      background: linear-gradient(270deg, rgba(255,250,241,.98), rgba(255,250,241,0));
+    }
+    .nav-scroller {
+      display: flex;
+      gap: 7px;
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 0 14px 7px;
+      overflow-x: auto;
+      overflow-y: hidden;
+      overscroll-behavior-x: contain;
+      scroll-snap-type: x proximity;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(23,113,132,.55) rgba(23,113,132,.12);
+      -webkit-overflow-scrolling: touch;
+    }
+    .nav-scroller::-webkit-scrollbar { height: 6px; }
+    .nav-scroller::-webkit-scrollbar-track {
+      border-radius: 999px;
+      background: rgba(23,113,132,.12);
+    }
+    .nav-scroller::-webkit-scrollbar-thumb {
+      border-radius: 999px;
+      background: rgba(23,113,132,.55);
+    }
+    .nav-btn {
+      display: grid;
+      justify-items: center;
+      align-content: center;
+      gap: 2px;
+      flex: 0 0 82px;
+      min-height: 64px;
+      border: 0;
+      border-radius: 18px;
+      color: var(--muted);
+      background: transparent;
+      font-size: 11px;
+      font-weight: 900;
+      scroll-snap-align: center;
+    }
+    .nav-btn .icon { font-size: 17px; line-height: 1; }
+    .nav-btn.active { color: #fff; background: var(--ocean); }
+
+    @media (min-width: 720px) {
+      .app { padding-left: 22px; padding-right: 22px; }
+      .topbar { margin-left: -22px; margin-right: -22px; padding-left: 22px; padding-right: 22px; }
+      .form-grid { grid-template-columns: repeat(2, 1fr); }
+      .timeline { grid-template-columns: repeat(2, 1fr); }
+      .nav-btn { flex-basis: 92px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand-row">
+        <div>
+          <h1>Camino del Norte 2026</h1>
+          <p>Дніпро → Варшава → Більбао → Сантандер → Таріфа → додому</p>
+        </div>
+        <button id="installBtn" class="install-btn" type="button">Встановити</button>
+      </div>
+      <div id="offlineStatus" class="offline-chip">Готово до офлайн-роботи</div>
+    </header>
+    <main id="screens"></main>
+  </div>
+
+  <nav class="bottom-nav" aria-label="Основна навігація">
+    <div id="nav" class="nav-scroller"></div>
+  </nav>
+
+  <div id="modal" class="modal" role="dialog" aria-modal="true">
+    <div class="modal-panel">
+      <div id="modalContent"></div>
+    </div>
+  </div>
+
+  <input id="importFile" type="file" accept="application/json,.json" hidden>
+
+  <script>
+    const ROUTE_KEY = "camino2026_route_points";
+    const BOOKINGS_KEY = "camino2026_booking_records";
+    const SYNC_CONFIG_KEY = "camino2026_supabase_config";
+    const SYNC_META_KEY = "camino2026_sync_meta";
+    const SYNC_STATUS_KEY = "camino2026_sync_status";
+    const SYNC_LOG_KEY = "camino2026_sync_log";
+    const EXPORT_VERSION = 2;
+    const types = ["поїзд", "літак", "автобус", "авто", "пішки", "готель", "інше"];
+    const statuses = ["заплановано", "куплено", "підтверджено", "виконано"];
+    const bookingTypes = ["квиток", "готель", "страховка", "інше"];
+    const attachmentKinds = ["квиток", "QR", "бронювання", "скрін карти", "інше"];
+
+    const defaultRoutePoints = [
+      point("2026-07-25", "", "поїзд", "Дніпро", "Хелм", "", "Вокзал Дніпро / Chełm", "Перший великий переїзд у бік Польщі.", "", "заплановано"),
+      point("2026-07-26", "", "поїзд", "Хелм", "Варшава", "", "Chełm / Warszawa", "Доїхати до Варшави із запасом часу.", "", "заплановано"),
+      point("2026-07-26", "", "готель", "Варшава", "Варшава", "Ночівля у Варшаві", "", "Відпочинок перед перельотом.", "", "заплановано"),
+      point("2026-07-26", "15:40", "літак", "Варшава", "Більбао", "WAW → BIO", "Warszawa Chopin / Bilbao Airport", "Приліт 19:05.", "", "заплановано"),
+      point("2026-07-27", "", "пішки", "Більбао", "Portugalete", "Camino del Norte", "", "~17 км, перший день без поспіху.", "", "заплановано"),
+      point("2026-07-28", "", "пішки", "Portugalete", "Castro-Urdiales", "Camino del Norte", "", "~27 км, важкий день.", "", "заплановано"),
+      point("2026-07-29", "", "пішки", "Castro-Urdiales", "Laredo", "Camino del Norte", "", "~27 км, берегти ноги.", "", "заплановано"),
+      point("2026-07-30", "", "пішки", "Laredo", "Güemes", "Camino del Norte", "", "~29 км, головний день для Плану Б.", "", "заплановано"),
+      point("2026-07-31", "", "пішки", "Güemes", "Santander", "Camino del Norte", "", "~18 км, фінал Camino-сегмента.", "", "заплановано"),
+      point("2026-08-01", "15:40", "літак", "Santander", "Jerez", "Santander → Jerez", "Santander Airport / Jerez Airport", "Приліт 17:15.", "", "заплановано"),
+      point("2026-08-01", "", "авто", "Jerez", "Tarifa", "", "Jerez Airport / Tarifa", "Переїзд до Таріфи.", "", "заплановано"),
+      point("2026-08-02", "", "інше", "Tarifa", "Tarifa", "Відпочинок", "", "Пляжі, родина, повільний режим.", "", "заплановано"),
+      point("2026-08-06", "", "авто", "Tarifa", "Málaga", "", "Tarifa / Málaga Airport", "Переїзд на повернення.", "", "заплановано"),
+      point("2026-08-06", "", "літак", "Málaga", "Варшава", "Málaga → Warszawa", "Málaga Airport / Warszawa", "Дата може бути 6 або 7 серпня.", "", "заплановано"),
+      point("2026-08-07", "", "поїзд", "Варшава", "Україна / Дніпро", "", "Warszawa / Дніпро", "Повернення додому.", "", "заплановано")
+    ];
+
+    const checklists = {
+      serhii: { title: "Чек-лист Сергія", storage: "camino2026_serhii", items: ["Закордонний паспорт", "Банківська картка + трохи готівки", "Рюкзак 25-30 л", "Чохол від дощу на рюкзак", "Розношені трекінгові кросівки", "Легкі сандалі / друге взуття", "2 футболки для ходьби", "2 пари шортів", "Легкі штани", "Фліс / легка кофта", "Вітрівка або легкий дощовик", "Кепка / панама", "Баф", "3 пари трекінгових шкарпеток", "3 комплекти білизни", "Одяг для сну", "Плавки для Таріфи", "Телефон + зарядний пристрій", "Кабель USB", "Павербанк", "Навушники", "Сонцезахисні окуляри"] },
+      oksana: { title: "Чек-лист Оксани", storage: "camino2026_oksana", items: ["Закордонний паспорт", "Банківська картка + трохи готівки", "Рюкзак 25-30 л", "Чохол від дощу на рюкзак", "Розношені трекінгові кросівки", "Легкі сандалі / друге взуття", "2 футболки для ходьби", "2 пари шортів / легкий низ", "Легкі штани або легінси", "Фліс / легка кофта", "Вітрівка або легкий дощовик", "Кепка / панама", "Баф", "3 пари трекінгових шкарпеток", "3 комплекти білизни", "Одяг для сну", "Купальник для Таріфи", "Телефон + зарядний пристрій", "Кабель USB", "Павербанк за потреби", "Сонцезахисні окуляри", "Особиста косметика мінімум"] },
+      shared: { title: "Спільні речі", storage: "camino2026_shared", items: ["Медична страховка", "Квитки в телефоні", "Бронювання готелів", "Копії документів у телефоні", "Пляшка для води кожному 1-1,5 л", "Маленький рушник із мікрофібри", "SPF 50", "Гігієнічна помада", "Малий пральний засіб / капсули", "2-4 прищіпки", "Zip-lock пакети", "Пакет для брудного або мокрого одягу", "Горіхи / батончики на перший день", "Офлайн-карти", "Маршрути Camino в телефоні"] },
+      med: { title: "Аптечка", storage: "camino2026_med", items: ["Особисті ліки", "Гідроколоїдні пластирі від мозолів", "Звичайні пластирі", "Еластичний бинт", "Антисептик", "Знеболювальне", "Протизапальний гель", "Засіб від розладу шлунка", "Антигістамінний препарат", "Крем / вазелін від натирання", "Манікюрні ножиці", "Кусачки для нігтів"] }
+    };
+
+    const screens = [
+      { id: "today", icon: "Д", label: "Сьогодні", render: renderToday },
+      { id: "timeline", icon: "Т", label: "Таймлайн", render: renderTimeline },
+      { id: "bookings", icon: "К", label: "Квитки", render: renderBookings },
+      { id: "serhii", icon: "С", label: "Сергій", render: () => renderChecklist("serhii") },
+      { id: "oksana", icon: "О", label: "Оксана", render: () => renderChecklist("oksana") },
+      { id: "shared", icon: "Р", label: "Речі", render: () => renderChecklist("shared") },
+      { id: "med", icon: "+", label: "Аптечка", render: () => renderChecklist("med") },
+      { id: "planb", icon: "Б", label: "План Б", render: renderPlanB },
+      { id: "budget", icon: "€", label: "Бюджет", render: renderBudget },
+      { id: "notes", icon: "Н", label: "Нотатки", render: renderNotes },
+      { id: "sync", icon: "", label: "☁️ Синхр.", render: renderSync },
+      { id: "data", icon: "JSON", label: "Дані", render: renderData }
+    ];
+
+    const screenRoot = document.getElementById("screens");
+    const navRoot = document.getElementById("nav");
+    const modal = document.getElementById("modal");
+    const modalContent = document.getElementById("modalContent");
+
+    function generateId() {
+      if (window.crypto && typeof window.crypto["randomUUID"] === "function") {
+        return window.crypto["randomUUID"]();
+      }
+      return "id_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 10);
+    }
+
+    function point(date, time, type, from, to, title, address, note, mapsUrl, status) {
+      return { id: generateId(), date, time, type, from, to, title, address, note, mapsUrl, status };
+    }
+
+    function escapeHtml(value = "") {
+      return String(value).replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char]));
+    }
+
+    function readJSON(key, fallback) {
+      try { return JSON.parse(localStorage.getItem(key) || "null") ?? fallback; } catch { return fallback; }
+    }
+
+    function nowISO() {
+      return new Date().toISOString();
+    }
+
+    function getSyncMeta() {
+      return readJSON(SYNC_META_KEY, { route_points: {}, tickets: {}, expenses: {}, checklists: {}, notes: "1970-01-01T00:00:00.000Z" });
+    }
+
+    function saveSyncMeta(meta) {
+      localStorage.setItem(SYNC_META_KEY, JSON.stringify(meta));
+    }
+
+    function touchSync(scope, id = "") {
+      const meta = getSyncMeta();
+      if (scope === "notes") {
+        meta.notes = nowISO();
+      } else {
+        meta[scope] = meta[scope] || {};
+        meta[scope][id] = nowISO();
+      }
+      saveSyncMeta(meta);
+      setSyncStatus("Є локальні зміни");
+    }
+
+    function touchMany(scope, ids) {
+      const meta = getSyncMeta();
+      meta[scope] = meta[scope] || {};
+      const stamp = nowISO();
+      ids.forEach(id => { meta[scope][id] = stamp; });
+      saveSyncMeta(meta);
+      setSyncStatus("Є локальні зміни");
+    }
+
+    function getLocalUpdated(scope, id = "") {
+      const meta = getSyncMeta();
+      if (scope === "notes") return meta.notes || "1970-01-01T00:00:00.000Z";
+      return meta[scope]?.[id] || "1970-01-01T00:00:00.000Z";
+    }
+
+    function setLocalUpdated(scope, id, value) {
+      const meta = getSyncMeta();
+      if (scope === "notes") meta.notes = value;
+      else {
+        meta[scope] = meta[scope] || {};
+        meta[scope][id] = value;
+      }
+      saveSyncMeta(meta);
+    }
+
+    function setSyncStatus(value) {
+      localStorage.setItem(SYNC_STATUS_KEY, value);
+      const status = document.getElementById("syncStatusText");
+      if (status) status.textContent = value;
+    }
+
+    function getSyncLog() {
+      return readJSON(SYNC_LOG_KEY, []);
+    }
+
+    function addSyncLog(event, detail = "") {
+      const item = { at: nowISO(), event, detail };
+      const next = [item, ...getSyncLog()].slice(0, 10);
+      localStorage.setItem(SYNC_LOG_KEY, JSON.stringify(next));
+      const log = document.getElementById("syncLog");
+      if (log) log.innerHTML = renderSyncLogItems(next);
+    }
+
+    function renderSyncLogItems(items = getSyncLog()) {
+      return items.length
+        ? items.map(item => `<div class="soft"><strong>${escapeHtml(item.event)}</strong><div class="small muted">${new Date(item.at).toLocaleString("uk-UA")}${item.detail ? " · " + escapeHtml(item.detail) : ""}</div></div>`).join("")
+        : `<div class="empty">Журнал поки порожній.</div>`;
+    }
+
+    function getSyncConfig() {
+      return readJSON(SYNC_CONFIG_KEY, { url: "", anonKey: "", tripCode: "camino-2026" });
+    }
+
+    function getRoutePoints() {
+      const saved = readJSON(ROUTE_KEY, null);
+      if (Array.isArray(saved) && saved.length) return saved;
+      localStorage.setItem(ROUTE_KEY, JSON.stringify(defaultRoutePoints));
+      return defaultRoutePoints;
+    }
+
+    function saveRoutePoints(points, options = {}) {
+      localStorage.setItem(ROUTE_KEY, JSON.stringify(points));
+      if (options.markDirty !== false) touchMany("route_points", points.map(item => item.id));
+      refresh();
+    }
+
+    function getBookings() { return readJSON(BOOKINGS_KEY, []); }
+    function saveBookings(items, options = {}) {
+      localStorage.setItem(BOOKINGS_KEY, JSON.stringify(items));
+      if (options.markDirty !== false) touchMany("tickets", items.map(item => item.id));
+      refresh();
+    }
+
+    function todayISO() {
+      const now = new Date();
+      return new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString().slice(0, 10);
+    }
+
+    function closestPoint() {
+      const points = getRoutePoints().slice().sort(sortPoints);
+      return points.find(item => item.date >= todayISO()) || points[points.length - 1];
+    }
+
+    function sortPoints(a, b) {
+      return `${a.date || ""} ${a.time || ""}`.localeCompare(`${b.date || ""} ${b.time || ""}`);
+    }
+
+    function renderToday() {
+      const item = closestPoint();
+      return `
+        <section class="screen active" id="screen-today">
+          <div class="hero">
+            <h2>Найближча точка</h2>
+            <p>${escapeHtml(item.date)} ${escapeHtml(item.time || "")} · ${escapeHtml(item.from)} → ${escapeHtml(item.to)}</p>
+            <div class="stats">
+              <div class="stat"><b>${escapeHtml(item.type)}</b><span>тип</span></div>
+              <div class="stat"><b>${escapeHtml(item.status)}</b><span>статус</span></div>
+              <div class="stat"><b>${getRoutePoints().length}</b><span>точок</span></div>
+            </div>
+          </div>
+          <div class="card">
+            <h2>${escapeHtml(item.title || "Маршрутна точка")}</h2>
+            <p class="muted">${escapeHtml(item.note || "Додайте примітку, адресу, квитки або бронювання в таймлайні.")}</p>
+            <div class="actions">
+              <button class="btn" type="button" onclick="activateScreen('timeline')">Відкрити таймлайн</button>
+              <button class="btn secondary" type="button" onclick="openPointForm()">Додати точку</button>
+            </div>
+          </div>
+        </section>
+      `;
+    }
+
+    function renderTimeline() {
+      const points = getRoutePoints();
+      return `
+        <section class="screen" id="screen-timeline">
+          <div class="card">
+            <h2>Маршрут / Таймлайн</h2>
+            <p class="muted">Редагований список усіх точок від Дніпра до повернення додому. Файли для точок зберігаються в IndexedDB на цьому пристрої.</p>
+            <div class="actions">
+              <button class="btn" type="button" onclick="openPointForm()">Додати точку</button>
+              <button class="btn secondary" type="button" onclick="resetBaseRoute()">Відновити базовий маршрут</button>
+            </div>
+          </div>
+          <div class="timeline" id="timelineList">
+            ${points.map((item, index) => pointCard(item, index, points.length)).join("")}
+          </div>
+        </section>
+      `;
+    }
+
+    function pointCard(item, index, total) {
+      return `
+        <article class="point">
+          <div class="point-top">
+            <div>
+              <div class="point-title">${escapeHtml(item.from)} → ${escapeHtml(item.to)}</div>
+              <div class="point-meta">${escapeHtml(item.date || "без дати")} ${escapeHtml(item.time || "")}</div>
+            </div>
+            <span class="chip ${item.status === "виконано" ? "green" : item.status === "куплено" ? "sun" : ""}">${escapeHtml(item.status)}</span>
+          </div>
+          <div>
+            <span class="chip">${escapeHtml(item.type)}</span>
+            ${item.title ? `<span class="chip sun">${escapeHtml(item.title)}</span>` : ""}
+          </div>
+          ${item.address ? `<p class="point-note"><b>Адреса:</b> ${escapeHtml(item.address)}</p>` : ""}
+          ${item.note ? `<p class="point-note">${escapeHtml(item.note)}</p>` : ""}
+          ${item.mapsUrl ? `<p><a href="${escapeHtml(item.mapsUrl)}" target="_blank" rel="noopener">Google Maps</a></p>` : ""}
+          <div class="attachments" data-route-files="${item.id}"></div>
+          <div class="actions">
+            <button class="btn ghost" type="button" onclick="openPointForm('${item.id}')">Редагувати</button>
+            <button class="btn ghost" type="button" onclick="copyPoint('${item.id}')">Скопіювати</button>
+            <button class="btn secondary" type="button" onclick="movePoint('${item.id}', -1)" ${index === 0 ? "disabled" : ""}>Вгору</button>
+            <button class="btn secondary" type="button" onclick="movePoint('${item.id}', 1)" ${index === total - 1 ? "disabled" : ""}>Вниз</button>
+            <button class="btn ghost" type="button" onclick="openRouteFileForm('${item.id}')">Додати файл</button>
+            <button class="btn danger" type="button" onclick="deletePoint('${item.id}')">Видалити</button>
+          </div>
+        </article>
+      `;
+    }
+
+    function renderBookings() {
+      const bookings = getBookings();
+      const points = getRoutePoints();
+      return `
+        <section class="screen" id="screen-bookings">
+          <div class="card">
+            <h2>Квитки та бронювання</h2>
+            <p class="muted">Записи зберігаються в localStorage, файли та скріни - в IndexedDB на конкретному телефоні.</p>
+            <div class="actions"><button class="btn" type="button" onclick="openBookingForm()">Додати запис</button></div>
+          </div>
+          <div class="timeline">
+            ${bookings.length ? bookings.map(item => bookingCard(item, points)).join("") : `<div class="empty">Ще немає квитків або бронювань.</div>`}
+          </div>
+        </section>
+      `;
+    }
+
+    function bookingCard(item, points) {
+      const point = points.find(p => p.id === item.routePointId);
+      return `
+        <article class="point">
+          <div class="point-top">
+            <div>
+              <div class="point-title">${escapeHtml(item.name || "Без назви")}</div>
+              <div class="point-meta">${escapeHtml(item.date || "без дати")} · ${escapeHtml(item.type || "інше")}</div>
+            </div>
+            <span class="chip">${escapeHtml(item.bookingNumber || "без номера")}</span>
+          </div>
+          ${point ? `<p class="point-note"><b>Точка:</b> ${escapeHtml(point.from)} → ${escapeHtml(point.to)}</p>` : ""}
+          ${item.note ? `<p class="point-note">${escapeHtml(item.note)}</p>` : ""}
+          <div class="attachments" data-booking-files="${item.id}"></div>
+          <div class="actions">
+            <button class="btn ghost" type="button" onclick="openBookingForm('${item.id}')">Редагувати</button>
+            <button class="btn ghost" type="button" onclick="openBookingFileForm('${item.id}')">Додати файл</button>
+            <button class="btn danger" type="button" onclick="deleteBooking('${item.id}')">Видалити</button>
+          </div>
+        </article>
+      `;
+    }
+
+    function renderChecklist(id) {
+      const list = checklists[id];
+      return `
+        <section class="screen" id="screen-${id}">
+          <div class="card checklist" data-storage="${list.storage}">
+            <h2>${list.title}</h2>
+            <p class="small muted doneText"></p>
+            <div class="progress"><div class="bar"></div></div>
+            <div class="items">${list.items.map(item => `<label class="item"><input type="checkbox"><span>${item}</span></label>`).join("")}</div>
+            <div class="actions"><button class="btn secondary reset" type="button">Скинути галочки</button></div>
+          </div>
+        </section>
+      `;
+    }
+
+    function renderPlanB() {
+      return `
+        <section class="screen" id="screen-planb">
+          <div class="card">
+            <h2>План Б / транспорт</h2>
+            <p class="muted">Скорочення маршруту - це керування подорожжю, а не поразка.</p>
+            <details open><summary>Коли варто скорочувати</summary><ul class="clean"><li>мозолі змінюють ходу;</li><li>болить коліно, ахілл або стопа;</li><li>спека сильна, а попереду ще 10+ км;</li><li>після 14:00 ви сильно відстаєте від плану.</li></ul></details>
+            <details><summary>Найлогічніші дні</summary><ul class="clean"><li>Portugalete → Castro-Urdiales</li><li>Castro-Urdiales → Laredo</li><li>Laredo → Güemes</li></ul></details>
+          </div>
+        </section>
+      `;
+    }
+
+    function renderBudget() {
+      return `
+        <section class="screen" id="screen-budget">
+          <div class="card">
+            <h2>Бюджет</h2>
+            <div class="form-grid">
+              <div class="field"><label for="expenseName">Витрата</label><input id="expenseName" type="text" placeholder="Наприклад: вечеря в Laredo"></div>
+              <div class="field"><label for="expenseCategory">Категорія</label><select id="expenseCategory"><option>Їжа</option><option>Житло</option><option>Транспорт</option><option>Аптека</option><option>Пляж</option><option>Інше</option></select></div>
+              <div class="field"><label for="expenseAmount">Сума, €</label><input id="expenseAmount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.00"></div>
+              <div class="field"><label>&nbsp;</label><button id="addExpense" class="btn full" type="button">Додати витрату</button></div>
+            </div>
+          </div>
+          <div class="total"><span>Підсумок</span><span id="budgetTotal">0 €</span></div>
+          <div id="expenseList" class="expense-list"></div>
+        </section>
+      `;
+    }
+
+    function renderNotes() {
+      return `
+        <section class="screen" id="screen-notes">
+          <div class="card">
+            <h2>Нотатки</h2>
+            <p class="muted">Поле з автозбереженням у цьому браузері.</p>
+            <div class="field"><label for="notesArea">Ваші нотатки</label><textarea id="notesArea" class="notes" placeholder="Ідеї, адреси, телефони, важливі дрібниці..."></textarea></div>
+            <p id="notesSaved" class="small muted">Збережено локально.</p>
+          </div>
+        </section>
+      `;
+    }
+
+    function renderSync() {
+      const config = getSyncConfig();
+      const status = localStorage.getItem(SYNC_STATUS_KEY) || (navigator.onLine ? "офлайн fallback активний" : "офлайн");
+      return `
+        <section class="screen" id="screen-sync">
+          <div class="card">
+            <h2>Синхронізація</h2>
+            <p class="muted">Supabase є додатковим шаром. Якщо його не налаштовано, усе працює локально як раніше.</p>
+            <div class="form-grid">
+              <div class="field"><label for="syncUrl">Supabase URL</label><input id="syncUrl" type="url" value="${escapeHtml(config.url)}" placeholder="https://xxxx.supabase.co"></div>
+              <div class="field"><label for="syncAnonKey">Publishable (anon) key</label><input id="syncAnonKey" type="password" value="${escapeHtml(config.anonKey)}" placeholder="eyJ..."></div>
+              <div class="field"><label for="syncTripCode">Trip Code</label><input id="syncTripCode" type="text" value="${escapeHtml(config.tripCode || "camino-2026")}" placeholder="camino-2026"></div>
+              <div class="field"><label>Статус</label><div id="syncStatusText" class="soft">${escapeHtml(status)}</div></div>
+            </div>
+            <div class="actions">
+              <button class="btn" type="button" onclick="connectSupabase()">Підключити</button>
+              <button class="btn ghost" type="button" onclick="testSupabase()">Перевірити Supabase</button>
+              <button class="btn secondary" type="button" onclick="uploadLocalToCloud()">Upload</button>
+              <button class="btn secondary" type="button" onclick="pullCloudToLocal()">Download</button>
+              <button class="btn" type="button" onclick="syncNow()">Sync</button>
+            </div>
+          </div>
+          <div class="card">
+            <h3>Вкладення</h3>
+            <p class="muted">Скріншоти квитків зберігаються тільки на цьому пристрої. Для другого телефона їх потрібно додати окремо.</p>
+          </div>
+          <div class="card">
+            <h3>Журнал синхронізації</h3>
+            <div id="syncLog" class="grid">${renderSyncLogItems()}</div>
+          </div>
+        </section>
+      `;
+    }
+
+    function renderData() {
+      return `
+        <section class="screen" id="screen-data">
+          <div class="card">
+            <h2>Дані</h2>
+            <p class="muted">Експорт JSON містить маршрут, записи квитків, бюджет, нотатки та чек-листи. Файли не експортуються.</p>
+            <div class="actions">
+              <button class="btn" type="button" onclick="exportJSON()">Експорт JSON</button>
+              <button class="btn secondary" type="button" onclick="document.getElementById('importFile').click()">Імпорт JSON</button>
+              <button class="btn danger" type="button" onclick="resetBaseRoute()">Скинути демо-дані / відновити базовий маршрут</button>
+            </div>
+          </div>
+          <div class="card"><h3>Важливо</h3><p class="muted">Скріни, PDF і вкладення зберігаються тільки на цьому телефоні або в цьому браузері через IndexedDB.</p></div>
+        </section>
+      `;
+    }
+
+    function init() {
+      getRoutePoints();
+      screenRoot.innerHTML = screens.map(s => s.render()).join("");
+      navRoot.innerHTML = screens.map((s, i) => `<button class="nav-btn ${i === 0 ? "active" : ""}" type="button" data-target="${s.id}"><span class="icon">${s.icon}</span><span>${s.label}</span></button>`).join("");
+      document.querySelectorAll(".screen").forEach((screen, index) => screen.classList.toggle("active", index === 0));
+      document.querySelectorAll(".nav-btn").forEach(button => button.addEventListener("click", () => activateScreen(button.dataset.target)));
+      document.querySelectorAll(".checklist").forEach(initChecklist);
+      initBudget();
+      initNotes();
+      initSyncSettings();
+      initImport();
+      initPWA();
+      updateNetworkStatus();
+      renderAllAttachments();
+    }
+
+    function refresh() {
+      const active = document.querySelector(".screen.active")?.id.replace("screen-", "") || "today";
+      screenRoot.innerHTML = screens.map(s => s.render()).join("");
+      document.querySelectorAll(".screen").forEach(screen => screen.classList.toggle("active", screen.id === `screen-${active}`));
+      document.querySelectorAll(".checklist").forEach(initChecklist);
+      initBudget();
+      initNotes();
+      initSyncSettings();
+      renderAllAttachments();
+    }
+
+    function activateScreen(id) {
+      document.querySelectorAll(".screen").forEach(screen => screen.classList.toggle("active", screen.id === `screen-${id}`));
+      document.querySelectorAll(".nav-btn").forEach(button => button.classList.toggle("active", button.dataset.target === id));
+      document.querySelector(`.nav-btn[data-target="${id}"]`)?.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      renderAllAttachments();
+    }
+
+    function initChecklist(card) {
+      const key = card.dataset.storage;
+      const boxes = [...card.querySelectorAll('input[type="checkbox"]')];
+      const saved = readJSON(key, []);
+      boxes.forEach((box, index) => {
+        box.checked = Boolean(saved[index]);
+        box.addEventListener("change", save);
+      });
+      card.querySelector(".reset")?.addEventListener("click", () => {
+        if (confirm("Скинути галочки у цьому розділі?")) {
+          boxes.forEach(box => box.checked = false);
+          save();
+        }
+      });
+      function save() {
+        localStorage.setItem(key, JSON.stringify(boxes.map(box => box.checked)));
+        touchSync("checklists", key);
+        update();
+      }
+      function update() {
+        const done = boxes.filter(box => box.checked).length;
+        const total = boxes.length;
+        const pct = total ? Math.round(done / total * 100) : 0;
+        card.querySelector(".bar").style.width = `${pct}%`;
+        card.querySelector(".doneText").textContent = `Виконано: ${done} з ${total} (${pct}%)`;
+      }
+      update();
+    }
+
+    function openPointForm(id = "") {
+      const item = getRoutePoints().find(p => p.id === id) || point("", "", "поїзд", "", "", "", "", "", "", "заплановано");
+      modalContent.innerHTML = `
+        <h2>${id ? "Редагувати точку" : "Додати точку"}</h2>
+        <div class="form-grid">
+          ${field("Дата", "date", "date", item.date)}
+          ${field("Час", "time", "time", item.time)}
+          ${selectField("Тип", "type", types, item.type)}
+          ${field("Звідки", "from", "text", item.from)}
+          ${field("Куди", "to", "text", item.to)}
+          ${field("Рейс або поїзд", "title", "text", item.title)}
+          ${field("Адреса / станція / аеропорт", "address", "text", item.address)}
+          ${field("Google Maps", "mapsUrl", "url", item.mapsUrl)}
+          ${selectField("Статус", "status", statuses, item.status)}
+          <div class="field"><label for="note">Примітка</label><textarea id="note">${escapeHtml(item.note)}</textarea></div>
+        </div>
+        <div class="actions"><button class="btn" type="button" onclick="savePoint('${item.id}', ${id ? "true" : "false"})">Зберегти</button><button class="btn secondary" type="button" onclick="closeModal()">Скасувати</button></div>
+      `;
+      openModal();
+    }
+
+    function savePoint(id, exists) {
+      const updated = {
+        id,
+        date: val("date"), time: val("time"), type: val("type"), from: val("from"), to: val("to"),
+        title: val("title"), address: val("address"), note: val("note"), mapsUrl: val("mapsUrl"), status: val("status")
+      };
+      const points = getRoutePoints();
+      const next = exists ? points.map(p => p.id === id ? updated : p) : [...points, updated];
+      saveRoutePoints(next);
+      closeModal();
+    }
+
+    function movePoint(id, delta) {
+      const points = getRoutePoints();
+      const index = points.findIndex(p => p.id === id);
+      const nextIndex = index + delta;
+      if (index < 0 || nextIndex < 0 || nextIndex >= points.length) return;
+      [points[index], points[nextIndex]] = [points[nextIndex], points[index]];
+      saveRoutePoints(points);
+    }
+
+    function copyPoint(id) {
+      const points = getRoutePoints();
+      const item = points.find(p => p.id === id);
+      if (!item) return;
+      const copy = { ...item, id: generateId(), title: `${item.title || item.from + " → " + item.to} (копія)` };
+      points.splice(points.findIndex(p => p.id === id) + 1, 0, copy);
+      saveRoutePoints(points);
+    }
+
+    async function deletePoint(id) {
+      if (!confirm("Видалити цю точку маршруту? Файли точки також буде видалено.")) return;
+      saveRoutePoints(getRoutePoints().filter(p => p.id !== id));
+      await deleteFilesByOwner("routeAttachments", id);
+    }
+
+    function resetBaseRoute() {
+      if (!confirm("Відновити базовий маршрут? Поточні маршрутні точки буде замінено.")) return;
+      const restored = defaultRoutePoints.map(item => ({ ...item, id: generateId() }));
+      localStorage.setItem(ROUTE_KEY, JSON.stringify(restored));
+      touchMany("route_points", restored.map(item => item.id));
+      refresh();
+    }
+
+    function openBookingForm(id = "") {
+      const item = getBookings().find(b => b.id === id) || { id: generateId(), type: "квиток", name: "", date: "", routePointId: "", bookingNumber: "", note: "" };
+      const pointOptions = [`<option value="">Без прив'язки</option>`].concat(getRoutePoints().map(p => `<option value="${p.id}" ${p.id === item.routePointId ? "selected" : ""}>${escapeHtml(p.date)} · ${escapeHtml(p.from)} → ${escapeHtml(p.to)}</option>`)).join("");
+      modalContent.innerHTML = `
+        <h2>${id ? "Редагувати запис" : "Додати квиток / бронювання"}</h2>
+        <div class="form-grid">
+          ${selectField("Тип", "type", bookingTypes, item.type)}
+          ${field("Назва", "name", "text", item.name)}
+          ${field("Дата", "date", "date", item.date)}
+          <div class="field"><label for="routePointId">Пов'язана точка маршруту</label><select id="routePointId">${pointOptions}</select></div>
+          ${field("Номер бронювання", "bookingNumber", "text", item.bookingNumber)}
+          <div class="field"><label for="note">Примітка</label><textarea id="note">${escapeHtml(item.note)}</textarea></div>
+        </div>
+        <div class="actions"><button class="btn" type="button" onclick="saveBooking('${item.id}', ${id ? "true" : "false"})">Зберегти</button><button class="btn secondary" type="button" onclick="closeModal()">Скасувати</button></div>
+      `;
+      openModal();
+    }
+
+    function saveBooking(id, exists) {
+      const updated = { id, type: val("type"), name: val("name"), date: val("date"), routePointId: val("routePointId"), bookingNumber: val("bookingNumber"), note: val("note") };
+      const items = getBookings();
+      saveBookings(exists ? items.map(item => item.id === id ? updated : item) : [updated, ...items]);
+      closeModal();
+    }
+
+    async function deleteBooking(id) {
+      if (!confirm("Видалити запис і його файл?")) return;
+      saveBookings(getBookings().filter(item => item.id !== id));
+      await deleteFilesByOwner("attachments", id);
+    }
+
+    function field(label, id, type, value = "") {
+      return `<div class="field"><label for="${id}">${label}</label><input id="${id}" type="${type}" value="${escapeHtml(value)}"></div>`;
+    }
+
+    function selectField(label, id, options, value) {
+      return `<div class="field"><label for="${id}">${label}</label><select id="${id}">${options.map(option => `<option ${option === value ? "selected" : ""}>${option}</option>`).join("")}</select></div>`;
+    }
+
+    function val(id) { return document.getElementById(id)?.value.trim() || ""; }
+    function openModal() { modal.classList.add("active"); }
+    function closeModal() { modal.classList.remove("active"); modalContent.innerHTML = ""; }
+    modal.addEventListener("click", event => { if (event.target === modal) closeModal(); });
+
+    function openRouteFileForm(ownerId) { openFileForm("routeAttachments", ownerId, true); }
+    function openBookingFileForm(ownerId) { openFileForm("attachments", ownerId, false); }
+
+    function openFileForm(store, ownerId, withKind) {
+      modalContent.innerHTML = `
+        <h2>Додати файл</h2>
+        <div class="form-grid">
+          ${withKind ? selectField("Тип файлу", "fileKind", attachmentKinds, "квиток") : ""}
+          <div class="field"><label for="fileInput">Файл / зображення / PDF</label><input id="fileInput" type="file" accept="image/*,.pdf"></div>
+        </div>
+        <div class="actions"><button class="btn" type="button" onclick="saveFile('${store}', '${ownerId}')">Зберегти файл</button><button class="btn secondary" type="button" onclick="closeModal()">Скасувати</button></div>
+      `;
+      openModal();
+    }
+
+    function openDB() {
+      return new Promise((resolve, reject) => {
+        const request = indexedDB.open("camino2026_db", 1);
+        request.onupgradeneeded = () => {
+          const db = request.result;
+          if (!db.objectStoreNames.contains("attachments")) db.createObjectStore("attachments", { keyPath: "id" });
+          if (!db.objectStoreNames.contains("routeAttachments")) db.createObjectStore("routeAttachments", { keyPath: "id" });
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+    }
+
+    async function dbAll(storeName) {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(storeName, "readonly");
+        const req = tx.objectStore(storeName).getAll();
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    }
+
+    async function dbPut(storeName, value) {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(storeName, "readwrite");
+        tx.objectStore(storeName).put(value);
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+      });
+    }
+
+    async function dbDelete(storeName, id) {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(storeName, "readwrite");
+        tx.objectStore(storeName).delete(id);
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+      });
+    }
+
+    async function saveFile(storeName, ownerId) {
+      const input = document.getElementById("fileInput");
+      const file = input.files?.[0];
+      if (!file) { alert("Оберіть файл."); return; }
+      await dbPut(storeName, {
+        id: generateId(),
+        ownerId,
+        kind: document.getElementById("fileKind")?.value || "",
+        blob: file,
+        filename: file.name,
+        mimeType: file.type || "application/octet-stream",
+        createdAt: new Date().toISOString()
+      });
+      closeModal();
+      renderAllAttachments();
+    }
+
+    async function renderAllAttachments() {
+      await renderFiles("routeAttachments", "[data-route-files]");
+      await renderFiles("attachments", "[data-booking-files]");
+    }
+
+    async function renderFiles(storeName, selector) {
+      const containers = [...document.querySelectorAll(selector)];
+      if (!containers.length) return;
+      const files = await dbAll(storeName);
+      containers.forEach(container => {
+        const ownerId = container.dataset.routeFiles || container.dataset.bookingFiles;
+        const own = files.filter(file => file.ownerId === ownerId);
+        container.innerHTML = own.map(file => fileView(storeName, file)).join("");
+      });
+    }
+
+    function fileView(storeName, file) {
+      const url = URL.createObjectURL(file.blob);
+      const isImage = file.mimeType.startsWith("image/");
+      return `
+        <div class="attachment">
+          ${isImage ? `<img class="thumb" src="${url}" alt="${escapeHtml(file.filename)}">` : `<div class="thumb">PDF</div>`}
+          <div>
+            <strong>${escapeHtml(file.kind ? file.kind + ": " : "")}${escapeHtml(file.filename)}</strong>
+            <div class="small muted">${escapeHtml(file.mimeType)} · ${new Date(file.createdAt).toLocaleDateString("uk-UA")}</div>
+            <div class="actions">
+              <a class="btn ghost" href="${url}" target="_blank" rel="noopener">Відкрити</a>
+              <button class="btn danger" type="button" onclick="deleteFile('${storeName}', '${file.id}')">Видалити файл</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    async function deleteFile(storeName, id) {
+      await dbDelete(storeName, id);
+      renderAllAttachments();
+    }
+
+    async function deleteFilesByOwner(storeName, ownerId) {
+      const files = await dbAll(storeName);
+      await Promise.all(files.filter(file => file.ownerId === ownerId).map(file => dbDelete(storeName, file.id)));
+      renderAllAttachments();
+    }
+
+    function getExpenses() { return readJSON("camino2026_expenses", []); }
+    function saveExpenses(expenses, options = {}) {
+      localStorage.setItem("camino2026_expenses", JSON.stringify(expenses));
+      if (options.markDirty !== false) touchMany("expenses", expenses.map(item => String(item.id)));
+      renderExpenses();
+    }
+    function initBudget() {
+      const add = document.getElementById("addExpense");
+      if (!add) return;
+      add.addEventListener("click", () => {
+        const name = val("expenseName");
+        const category = val("expenseCategory");
+        const amount = Number(val("expenseAmount"));
+        if (!name || !Number.isFinite(amount) || amount <= 0) { alert("Додайте назву витрати і суму більше нуля."); return; }
+        saveExpenses([{ id: generateId(), name, category, amount, currency: "EUR", date: todayISO() }, ...getExpenses()]);
+        document.getElementById("expenseName").value = "";
+        document.getElementById("expenseAmount").value = "";
+      });
+      renderExpenses();
+    }
+
+    function renderExpenses() {
+      const list = document.getElementById("expenseList");
+      const total = document.getElementById("budgetTotal");
+      if (!list || !total) return;
+      const expenses = getExpenses();
+      total.textContent = `${expenses.reduce((sum, item) => sum + Number(item.amount || 0), 0).toFixed(2)} €`;
+      list.innerHTML = expenses.length ? expenses.map(item => `
+        <div class="expense"><div><strong>${escapeHtml(item.name)}</strong><div class="small muted">${escapeHtml(item.category)} · ${Number(item.amount).toFixed(2)} €</div></div><button class="icon-btn" type="button" onclick="saveExpenses(getExpenses().filter(x => String(x.id) !== '${item.id}'))">×</button></div>
+      `).join("") : `<div class="empty">Поки немає витрат.</div>`;
+    }
+
+    function initNotes() {
+      const area = document.getElementById("notesArea");
+      if (!area) return;
+      area.value = localStorage.getItem("camino2026_notes") || "";
+      area.addEventListener("input", () => {
+        localStorage.setItem("camino2026_notes", area.value);
+        touchSync("notes");
+        document.getElementById("notesSaved").textContent = `Збережено локально: ${new Date().toLocaleTimeString("uk-UA", { hour: "2-digit", minute: "2-digit" })}`;
+      });
+    }
+
+    function exportJSON() {
+      const data = {
+        version: EXPORT_VERSION,
+        exportedAt: new Date().toISOString(),
+        routePoints: getRoutePoints(),
+        bookings: getBookings(),
+        expenses: getExpenses(),
+        notes: localStorage.getItem("camino2026_notes") || "",
+        checklists: Object.fromEntries(Object.values(checklists).map(list => [list.storage, readJSON(list.storage, [])]))
+      };
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `camino-2026-export-${new Date().toISOString().slice(0,10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function initImport() {
+      document.getElementById("importFile").addEventListener("change", event => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+          try {
+            const data = JSON.parse(reader.result);
+            if (Array.isArray(data.routePoints)) localStorage.setItem(ROUTE_KEY, JSON.stringify(data.routePoints));
+            if (Array.isArray(data.bookings)) localStorage.setItem(BOOKINGS_KEY, JSON.stringify(data.bookings));
+            if (Array.isArray(data.expenses)) localStorage.setItem("camino2026_expenses", JSON.stringify(data.expenses));
+            if (typeof data.notes === "string") localStorage.setItem("camino2026_notes", data.notes);
+            if (data.checklists) Object.entries(data.checklists).forEach(([key, value]) => localStorage.setItem(key, JSON.stringify(value)));
+            alert("Імпорт завершено. Файли не імпортуються з JSON.");
+            refresh();
+          } catch {
+            alert("Не вдалося прочитати JSON.");
+          }
+        };
+        reader.readAsText(file);
+        event.target.value = "";
+      });
+    }
+
+    function readSyncForm() {
+      return {
+        url: document.getElementById("syncUrl")?.value.trim() || "",
+        anonKey: document.getElementById("syncAnonKey")?.value.trim() || "",
+        tripCode: document.getElementById("syncTripCode")?.value.trim() || "camino-2026"
+      };
+    }
+
+    function saveSyncConfig(config) {
+      localStorage.setItem(SYNC_CONFIG_KEY, JSON.stringify(config));
+    }
+
+    function initSyncSettings() {
+      const fields = ["syncUrl", "syncAnonKey", "syncTripCode"].map(id => document.getElementById(id)).filter(Boolean);
+      fields.forEach(field => {
+        field.addEventListener("input", () => {
+          saveSyncConfig(readSyncForm());
+        });
+      });
+    }
+
+    function getSupabaseClient() {
+      const config = readSyncForm();
+      saveSyncConfig(config);
+      if (!config.url || !config.anonKey || !config.tripCode) {
+        throw new Error("Заповніть Supabase URL, anon key і код подорожі.");
+      }
+      if (!window.supabase || typeof window.supabase.createClient !== "function") {
+        throw new Error("Supabase CDN ще не завантажився або немає інтернету.");
+      }
+      return { client: window.supabase.createClient(config.url, config.anonKey), tripCode: config.tripCode };
+    }
+
+    async function connectSupabase() {
+      try {
+        const { client, tripCode } = getSupabaseClient();
+        await upsertTrip(client, tripCode);
+        setSyncStatus("Підключено");
+        addSyncLog("підключено", tripCode);
+      } catch (error) {
+        setSyncStatus(`Помилка підключення: ${error.message}`);
+        addSyncLog("помилка", error.message);
+      }
+    }
+
+    async function testSupabase() {
+      try {
+        setSyncStatus("перевірка Supabase...");
+        const { client, tripCode } = getSupabaseClient();
+        await upsertTrip(client, tripCode);
+        addSyncLog("підключено", `test ${tripCode}`);
+
+        const testId = `sync_test_${generateId()}`;
+        const testRow = {
+          id: testId,
+          trip_code: tripCode,
+          date: todayISO(),
+          time: "",
+          type: "інше",
+          from_place: "Supabase test",
+          to_place: "Camino PWA",
+          title: "Тест синхронізації",
+          address: "",
+          note: "Автоматична тестова точка. Можна видалити в Supabase.",
+          maps_url: "",
+          status: "підтверджено",
+          sort_order: 9999,
+          updated_at: nowISO()
+        };
+        await cloudUpsert(client, "route_points", [testRow]);
+        addSyncLog("записано маршрут", testId);
+
+        const { data, error } = await client.from("route_points").select("*").eq("id", testId).eq("trip_code", tripCode).maybeSingle();
+        if (error) throw error;
+        if (!data || data.id !== testId) throw new Error("Тестову точку не знайдено після запису.");
+        addSyncLog("прочитано маршрут", testId);
+        setSyncStatus("Supabase працює");
+      } catch (error) {
+        setSyncStatus(`помилка: ${error.message}`);
+        addSyncLog("помилка", error.message);
+      }
+    }
+
+    async function upsertTrip(client, tripCode) {
+      const { error } = await client.from("trips").upsert({
+        code: tripCode,
+        title: "Camino del Norte 2026",
+        updated_at: nowISO()
+      }, { onConflict: "code" });
+      if (error) throw error;
+    }
+
+    function routeToRow(item, index, tripCode) {
+      const updated_at = getLocalUpdated("route_points", item.id) === "1970-01-01T00:00:00.000Z" ? nowISO() : getLocalUpdated("route_points", item.id);
+      setLocalUpdated("route_points", item.id, updated_at);
+      return {
+        id: item.id,
+        trip_code: tripCode,
+        date: item.date || "",
+        time: item.time || "",
+        type: item.type || "",
+        from_place: item.from || "",
+        to_place: item.to || "",
+        title: item.title || "",
+        address: item.address || "",
+        note: item.note || "",
+        maps_url: item.mapsUrl || "",
+        status: item.status || "",
+        sort_order: index,
+        updated_at
+      };
+    }
+
+    function rowToRoute(row) {
+      setLocalUpdated("route_points", row.id, row.updated_at || nowISO());
+      return {
+        id: row.id,
+        date: row.date || "",
+        time: row.time || "",
+        type: row.type || "",
+        from: row.from_place || "",
+        to: row.to_place || "",
+        title: row.title || "",
+        address: row.address || "",
+        note: row.note || "",
+        mapsUrl: row.maps_url || "",
+        status: row.status || "заплановано"
+      };
+    }
+
+    function ticketToRow(item, tripCode) {
+      const updated_at = getLocalUpdated("tickets", item.id) === "1970-01-01T00:00:00.000Z" ? nowISO() : getLocalUpdated("tickets", item.id);
+      setLocalUpdated("tickets", item.id, updated_at);
+      return {
+        id: item.id,
+        trip_code: tripCode,
+        type: item.type || "",
+        title: item.name || item.title || "",
+        date: item.date || "",
+        related_point_id: item.routePointId || "",
+        booking_number: item.bookingNumber || "",
+        note: item.note || "",
+        updated_at
+      };
+    }
+
+    function rowToTicket(row) {
+      setLocalUpdated("tickets", row.id, row.updated_at || nowISO());
+      return {
+        id: row.id,
+        type: row.type || "квиток",
+        name: row.title || "",
+        date: row.date || "",
+        routePointId: row.related_point_id || "",
+        bookingNumber: row.booking_number || "",
+        note: row.note || ""
+      };
+    }
+
+    function expenseToRow(item, tripCode) {
+      const id = String(item.id || generateId());
+      const updated_at = getLocalUpdated("expenses", id) === "1970-01-01T00:00:00.000Z" ? nowISO() : getLocalUpdated("expenses", id);
+      setLocalUpdated("expenses", id, updated_at);
+      return {
+        id,
+        trip_code: tripCode,
+        category: item.category || "",
+        title: item.name || item.title || "",
+        amount: Number(item.amount || 0),
+        currency: item.currency || "EUR",
+        date: item.date || "",
+        updated_at
+      };
+    }
+
+    function rowToExpense(row) {
+      setLocalUpdated("expenses", row.id, row.updated_at || nowISO());
+      return {
+        id: row.id,
+        category: row.category || "",
+        name: row.title || "",
+        amount: Number(row.amount || 0),
+        currency: row.currency || "EUR",
+        date: row.date || ""
+      };
+    }
+
+    async function cloudSelect(client, table, tripCode) {
+      const { data, error } = await client.from(table).select("*").eq("trip_code", tripCode);
+      if (error) throw error;
+      return data || [];
+    }
+
+    async function cloudUpsert(client, table, rows, onConflict = "id") {
+      if (!rows.length) return;
+      const { error } = await client.from(table).upsert(rows, { onConflict });
+      if (error) throw error;
+    }
+
+    async function cloudReplace(client, table, tripCode, rows, onConflict = "id") {
+      const { error: deleteError } = await client.from(table).delete().eq("trip_code", tripCode);
+      if (deleteError) throw deleteError;
+      await cloudUpsert(client, table, rows, onConflict);
+    }
+
+    async function uploadLocalToCloud() {
+      try {
+        setSyncStatus("синхронізація...");
+        const { client, tripCode } = getSupabaseClient();
+        await upsertTrip(client, tripCode);
+        await cloudReplace(client, "route_points", tripCode, getRoutePoints().map((item, index) => routeToRow(item, index, tripCode)));
+        addSyncLog("записано маршрут", `${getRoutePoints().length} точок`);
+        await cloudReplace(client, "tickets", tripCode, getBookings().map(item => ticketToRow(item, tripCode)));
+        await cloudReplace(client, "expenses", tripCode, getExpenses().map(item => expenseToRow(item, tripCode)));
+        await uploadNotes(client, tripCode);
+        await uploadChecklists(client, tripCode);
+        setSyncStatus("синхронізовано");
+        addSyncLog("синхронізовано", "локальні дані завантажено в хмару");
+      } catch (error) {
+        setSyncStatus(`помилка: ${error.message}`);
+        addSyncLog("помилка", error.message);
+      }
+    }
+
+    async function pullCloudToLocal() {
+      try {
+        setSyncStatus("синхронізація...");
+        const { client, tripCode } = getSupabaseClient();
+        const [routes, tickets, expenses] = await Promise.all([
+          cloudSelect(client, "route_points", tripCode),
+          cloudSelect(client, "tickets", tripCode),
+          cloudSelect(client, "expenses", tripCode)
+        ]);
+        localStorage.setItem(ROUTE_KEY, JSON.stringify(routes.sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0)).map(rowToRoute)));
+        localStorage.setItem(BOOKINGS_KEY, JSON.stringify(tickets.map(rowToTicket)));
+        localStorage.setItem("camino2026_expenses", JSON.stringify(expenses.map(rowToExpense)));
+        await pullNotes(client, tripCode);
+        await pullChecklists(client, tripCode);
+        setSyncStatus("синхронізовано");
+        addSyncLog("прочитано маршрут", `${routes.length} точок`);
+        addSyncLog("синхронізовано", "хмарні дані підтягнуто локально");
+        refresh();
+      } catch (error) {
+        setSyncStatus(`помилка: ${error.message}`);
+        addSyncLog("помилка", error.message);
+      }
+    }
+
+    function isCloudNewer(localUpdated, cloudUpdated) {
+      return new Date(cloudUpdated || "1970-01-01T00:00:00.000Z").getTime() > new Date(localUpdated || "1970-01-01T00:00:00.000Z").getTime();
+    }
+
+    async function syncNow() {
+      try {
+        setSyncStatus("синхронізація...");
+        const { client, tripCode } = getSupabaseClient();
+        await upsertTrip(client, tripCode);
+
+        const cloudRoutes = await cloudSelect(client, "route_points", tripCode);
+        const localRoutes = getRoutePoints();
+        const routeResult = mergeByUpdatedAt(localRoutes, cloudRoutes, "route_points", rowToRoute, (item, index) => routeToRow(item, index, tripCode));
+        localStorage.setItem(ROUTE_KEY, JSON.stringify(routeResult.local));
+        await cloudUpsert(client, "route_points", routeResult.pushRows);
+        addSyncLog("записано маршрут", `${routeResult.pushRows.length} локальних оновлень`);
+        addSyncLog("прочитано маршрут", `${cloudRoutes.length} хмарних записів`);
+
+        const cloudTickets = await cloudSelect(client, "tickets", tripCode);
+        const ticketResult = mergeByUpdatedAt(getBookings(), cloudTickets, "tickets", rowToTicket, item => ticketToRow(item, tripCode));
+        localStorage.setItem(BOOKINGS_KEY, JSON.stringify(ticketResult.local));
+        await cloudUpsert(client, "tickets", ticketResult.pushRows);
+
+        const cloudExpenses = await cloudSelect(client, "expenses", tripCode);
+        const expenseResult = mergeByUpdatedAt(getExpenses(), cloudExpenses, "expenses", rowToExpense, item => expenseToRow(item, tripCode));
+        localStorage.setItem("camino2026_expenses", JSON.stringify(expenseResult.local));
+        await cloudUpsert(client, "expenses", expenseResult.pushRows);
+
+        await syncNotes(client, tripCode);
+        await syncChecklists(client, tripCode);
+        setSyncStatus("синхронізовано");
+        addSyncLog("синхронізовано", "lastUpdated wins");
+        refresh();
+      } catch (error) {
+        setSyncStatus(`помилка: ${error.message}`);
+        addSyncLog("помилка", error.message);
+      }
+    }
+
+    function mergeByUpdatedAt(localItems, cloudRows, scope, rowToLocal, localToRow) {
+      const localMap = new Map(localItems.map(item => [String(item.id), item]));
+      const cloudMap = new Map(cloudRows.map(row => [String(row.id), row]));
+      const local = [...localItems];
+      const pushRows = [];
+
+      localItems.forEach((item, index) => {
+        const cloud = cloudMap.get(String(item.id));
+        const localUpdated = getLocalUpdated(scope, String(item.id));
+        if (!cloud || !isCloudNewer(localUpdated, cloud.updated_at)) {
+          pushRows.push(localToRow(item, index));
+        }
+      });
+
+      cloudRows.forEach(row => {
+        const localItem = localMap.get(String(row.id));
+        if (!localItem) {
+          local.push(rowToLocal(row));
+          return;
+        }
+        if (isCloudNewer(getLocalUpdated(scope, String(row.id)), row.updated_at)) {
+          const index = local.findIndex(item => String(item.id) === String(row.id));
+          local[index] = rowToLocal(row);
+        }
+      });
+
+      return { local, pushRows };
+    }
+
+    async function uploadNotes(client, tripCode) {
+      const updated_at = getLocalUpdated("notes") === "1970-01-01T00:00:00.000Z" ? nowISO() : getLocalUpdated("notes");
+      setLocalUpdated("notes", "", updated_at);
+      const { error } = await client.from("notes").upsert({ trip_code: tripCode, content: localStorage.getItem("camino2026_notes") || "", updated_at }, { onConflict: "trip_code" });
+      if (error) throw error;
+    }
+
+    async function pullNotes(client, tripCode) {
+      const { data, error } = await client.from("notes").select("*").eq("trip_code", tripCode).maybeSingle();
+      if (error) throw error;
+      if (data) {
+        localStorage.setItem("camino2026_notes", data.content || "");
+        setLocalUpdated("notes", "", data.updated_at || nowISO());
+      }
+    }
+
+    async function syncNotes(client, tripCode) {
+      const { data, error } = await client.from("notes").select("*").eq("trip_code", tripCode).maybeSingle();
+      if (error) throw error;
+      const localUpdated = getLocalUpdated("notes");
+      if (data && isCloudNewer(localUpdated, data.updated_at)) {
+        localStorage.setItem("camino2026_notes", data.content || "");
+        setLocalUpdated("notes", "", data.updated_at || nowISO());
+      } else {
+        await uploadNotes(client, tripCode);
+      }
+    }
+
+    function checklistRows(tripCode) {
+      return Object.values(checklists).map(list => {
+        const updated_at = getLocalUpdated("checklists", list.storage) === "1970-01-01T00:00:00.000Z" ? nowISO() : getLocalUpdated("checklists", list.storage);
+        setLocalUpdated("checklists", list.storage, updated_at);
+        return { trip_code: tripCode, list_key: list.storage, state: readJSON(list.storage, []), updated_at };
+      });
+    }
+
+    async function uploadChecklists(client, tripCode) {
+      await cloudReplace(client, "checklists", tripCode, checklistRows(tripCode), "trip_code,list_key");
+      addSyncLog("синхронізовано чек-листи", "upload");
+    }
+
+    async function pullChecklists(client, tripCode) {
+      const rows = await cloudSelect(client, "checklists", tripCode);
+      rows.forEach(row => {
+        localStorage.setItem(row.list_key, JSON.stringify(row.state || []));
+        setLocalUpdated("checklists", row.list_key, row.updated_at || nowISO());
+      });
+      addSyncLog("синхронізовано чек-листи", `pull ${rows.length}`);
+    }
+
+    async function syncChecklists(client, tripCode) {
+      const cloudRows = await cloudSelect(client, "checklists", tripCode);
+      const pushRows = [];
+      checklistRows(tripCode).forEach(localRow => {
+        const cloud = cloudRows.find(row => row.list_key === localRow.list_key);
+        if (cloud && isCloudNewer(getLocalUpdated("checklists", localRow.list_key), cloud.updated_at)) {
+          localStorage.setItem(cloud.list_key, JSON.stringify(cloud.state || []));
+          setLocalUpdated("checklists", cloud.list_key, cloud.updated_at || nowISO());
+        } else {
+          pushRows.push(localRow);
+        }
+      });
+      await cloudUpsert(client, "checklists", pushRows, "trip_code,list_key");
+      addSyncLog("синхронізовано чек-листи", `sync ${pushRows.length} upload`);
+    }
+
+    function updateNetworkStatus() {
+      const chip = document.getElementById("offlineStatus");
+      chip.textContent = navigator.onLine ? "Готово до офлайн-роботи" : "Офлайн-режим активний";
+    }
+
+    function initPWA() {
+      if ("serviceWorker" in navigator) navigator.serviceWorker.register("./service-worker.js", { scope: "./" });
+      let deferredPrompt;
+      const installBtn = document.getElementById("installBtn");
+      window.addEventListener("beforeinstallprompt", event => {
+        event.preventDefault();
+        deferredPrompt = event;
+        installBtn.style.display = "inline-flex";
+      });
+      installBtn.addEventListener("click", async () => {
+        if (!deferredPrompt) return;
+        deferredPrompt.prompt();
+        await deferredPrompt.userChoice;
+        deferredPrompt = null;
+        installBtn.style.display = "none";
+      });
+      window.addEventListener("online", updateNetworkStatus);
+      window.addEventListener("offline", updateNetworkStatus);
+    }
+
+    init();
+  </script>
+</body>
+</html>
