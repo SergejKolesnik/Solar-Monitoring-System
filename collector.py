@@ -5,6 +5,7 @@ import imaplib
 import email
 import io
 import json
+import csv
 import gspread
 from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
@@ -12,6 +13,10 @@ from sklearn.ensemble import HistGradientBoostingRegressor
 
 SHEET_ID = "1ckVoJla9DA3BLQfBDy30sXmaOyH2HSqCZ1FbZtUDr9Q"
 SCOPES = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+SETTINGS_SHEET_NAME = "Settings"
+DEFAULT_CAPACITY_MW = 12.5
+BASE_CAPACITY_MW = 12.5
+BASE_FORECAST_CONST = 0.0114
 
 # Основні числові колонки, які зберігаються у Google Sheet
 NUMERIC_COLS = [
@@ -49,7 +54,7 @@ TIME_FEATURE_COLS = [
 FEATURE_COLS = BASE_FEATURE_COLS + TIME_FEATURE_COLS
 
 
-def get_sheet():
+def get_spreadsheet():
     creds_json = os.getenv('GOOGLE_CREDENTIALS')
     if not creds_json:
         raise Exception("GOOGLE_CREDENTIALS не знайдено")
@@ -57,7 +62,32 @@ def get_sheet():
     creds_dict = json.loads(creds_json)
     creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
     gc = gspread.authorize(creds)
-    return gc.open_by_key(SHEET_ID).sheet1
+    return gc.open_by_key(SHEET_ID)
+
+
+def get_sheet():
+    return get_spreadsheet().sheet1
+
+
+def load_capacity_from_settings(spreadsheet):
+    try:
+        try:
+            ws = spreadsheet.worksheet(SETTINGS_SHEET_NAME)
+        except Exception:
+            ws = spreadsheet.add_worksheet(title=SETTINGS_SHEET_NAME, rows=10, cols=2)
+            ws.update("A1:B2", [["Key", "Value"], ["Capacity_MW", DEFAULT_CAPACITY_MW]])
+            return DEFAULT_CAPACITY_MW
+
+        for row in ws.get_all_records():
+            if str(row.get("Key", "")).strip() == "Capacity_MW":
+                value = str(row.get("Value", DEFAULT_CAPACITY_MW)).replace(",", ".").strip()
+                capacity = float(value)
+                if 1.0 <= capacity <= 100.0:
+                    return capacity
+    except Exception as e:
+        print(f"Не вдалося прочитати Capacity_MW з Settings: {e}")
+
+    return DEFAULT_CAPACITY_MW
 
 
 def ensure_columns(df):
@@ -345,6 +375,11 @@ def parse_kwh_value(val_raw):
     return round(f_val / 1000, 3)
 
 
+def get_email_folders():
+    raw = os.getenv('EMAIL_FOLDERS', 'FusionSolar,INBOX,"[Gmail]/All Mail"')
+    return [folder.strip() for folder in next(csv.reader([raw])) if folder.strip()]
+
+
 def read_facts_from_email(days=30):
     facts = []
 
@@ -354,9 +389,11 @@ def read_facts_from_email(days=30):
 
         ids = []
 
-        for folder in ['INBOX', '"[Gmail]/All Mail"']:
+        for folder in get_email_folders():
             try:
                 status, _ = mail.select(folder)
+                if status != 'OK' and not (folder.startswith('"') and folder.endswith('"')):
+                    status, _ = mail.select(f'"{folder}"')
 
                 if status != 'OK':
                     continue
@@ -466,7 +503,7 @@ def update_facts(df, facts):
     return df
 
 
-def update_weather(df, now):
+def update_weather(df, now, capacity_mw):
     try:
         api_key = os.getenv('WEATHER_API_KEY')
 
@@ -499,7 +536,13 @@ def update_weather(df, now):
 
                 mask = df['Time'] == dt
 
-                df.loc[mask, 'Forecast_MW'] = round(float(hr.get('solarradiation', 0)) * 0.0114, 3)
+                df.loc[mask, 'Forecast_MW'] = round(
+                    float(hr.get('solarradiation', 0)) *
+                    BASE_FORECAST_CONST *
+                    (float(capacity_mw) / BASE_CAPACITY_MW),
+                    3
+                )
+                df.loc[mask, 'Capacity_MW'] = float(capacity_mw)
                 df.loc[mask, 'CloudCover'] = float(hr.get('cloudcover', 0))
                 df.loc[mask, 'Temp'] = float(hr.get('temp', 0))
                 df.loc[mask, 'WindSpeed'] = float(hr.get('windspeed', 0))
@@ -517,7 +560,10 @@ def main():
     now = datetime.now()
     print(f"СТАРТ: {now.strftime('%Y-%m-%d %H:%M:%S')}")
 
-    sheet = get_sheet()
+    spreadsheet = get_spreadsheet()
+    sheet = spreadsheet.sheet1
+    capacity_mw = load_capacity_from_settings(spreadsheet)
+    print(f"Поточна потужність СЕС: {capacity_mw:.3f} МВт")
     df = load_df_from_sheet(sheet)
     df = ensure_columns(df)
 
@@ -528,16 +574,16 @@ def main():
     df = update_facts(df, facts)
 
     # Оновлення погоди
-    df = update_weather(df, now)
+    df = update_weather(df, now, capacity_mw)
 
     # Гарантуємо встановлену потужність
     df = ensure_columns(df)
 
     if 'Capacity_MW' not in df.columns:
-        df['Capacity_MW'] = 12.5
+        df['Capacity_MW'] = capacity_mw
 
-    df['Capacity_MW'] = pd.to_numeric(df['Capacity_MW'], errors='coerce').fillna(12.5)
-    df.loc[df['Capacity_MW'] <= 0, 'Capacity_MW'] = 12.5
+    df['Capacity_MW'] = pd.to_numeric(df['Capacity_MW'], errors='coerce').fillna(capacity_mw)
+    df.loc[df['Capacity_MW'] <= 0, 'Capacity_MW'] = capacity_mw
 
     # Спочатку рахуємо помилки за вже наявними фактами
     df = calculate_errors(df)

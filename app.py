@@ -17,6 +17,8 @@ SHEET_ID = "1ckVoJla9DA3BLQfBDy30sXmaOyH2HSqCZ1FbZtUDr9Q"
 PLAN_SHEET_ID = "1U8639UXFyZUNzMOg6BHcg_gDAX_JS9g7fpBkdXOpODw"
 SCOPES = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 LOGO_URL = "https://raw.githubusercontent.com/SergejKolesnik/Solar-Monitoring-System/main/logo.gif"
+SETTINGS_SHEET_NAME = "Settings"
+DEFAULT_CAPACITY_MW = 12.5
 
 MONTHS_UK = {
     1: 'Січень', 2: 'Лютий', 3: 'Березень', 4: 'Квітень',
@@ -24,13 +26,47 @@ MONTHS_UK = {
     9: 'Вересень', 10: 'Жовтень', 11: 'Листопад', 12: 'Грудень'
 }
 
+def open_main_spreadsheet():
+    creds_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
+    creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+    gc = gspread.authorize(creds)
+    return gc.open_by_key(SHEET_ID)
+
+def get_or_create_settings_ws(sh):
+    try:
+        return sh.worksheet(SETTINGS_SHEET_NAME)
+    except Exception:
+        ws = sh.add_worksheet(title=SETTINGS_SHEET_NAME, rows=10, cols=2)
+        ws.update("A1:B2", [["Key", "Value"], ["Capacity_MW", DEFAULT_CAPACITY_MW]])
+        return ws
+
+@st.cache_data(ttl=300)
+def load_capacity_from_sheets():
+    try:
+        sh = open_main_spreadsheet()
+        ws = get_or_create_settings_ws(sh)
+        rows = ws.get_all_records()
+        for row in rows:
+            if str(row.get("Key", "")).strip() == "Capacity_MW":
+                value = str(row.get("Value", DEFAULT_CAPACITY_MW)).replace(",", ".").strip()
+                capacity = float(value)
+                if 1.0 <= capacity <= 100.0:
+                    return capacity
+        ws.update("A1:B2", [["Key", "Value"], ["Capacity_MW", DEFAULT_CAPACITY_MW]])
+    except Exception as e:
+        st.warning(f"Не вдалося прочитати збережену потужність СЕС: {e}")
+    return DEFAULT_CAPACITY_MW
+
+def save_capacity_to_sheets(capacity_mw: float):
+    sh = open_main_spreadsheet()
+    ws = get_or_create_settings_ws(sh)
+    ws.update("A1:B2", [["Key", "Value"], ["Capacity_MW", round(float(capacity_mw), 3)]])
+    load_capacity_from_sheets.clear()
+
 @st.cache_data(ttl=300)
 def load_base_from_sheets():
     try:
-        creds_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
-        creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
-        gc = gspread.authorize(creds)
-        sh = gc.open_by_key(SHEET_ID)
+        sh = open_main_spreadsheet()
         data = sh.sheet1.get_all_records()
         if not data:
             return pd.DataFrame()
@@ -139,14 +175,22 @@ if not df_f.empty:
         tabs = st.tabs(["📊 МОНІТОРИНГ", "🧠 НАВЧАННЯ", "📅 БАЗА", "🌤 МЕТЕО", "📋 ПЛАН"])
 
         with tabs[0]:
+            saved_capacity_mw = load_capacity_from_sheets()
             col_cap, col_info = st.columns([1, 3])
             with col_cap:
                 capacity_mw = st.number_input(
                     "⚡ Потужність СЕС (МВт)",
                     min_value=1.0, max_value=100.0,
-                    value=12.5, step=0.5,
+                    value=float(saved_capacity_mw), step=0.5,
+                    key="capacity_mw",
                     help="Змінюй при введенні нових черг СЕС"
                 )
+                if abs(float(capacity_mw) - float(saved_capacity_mw)) > 0.001:
+                    try:
+                        save_capacity_to_sheets(capacity_mw)
+                        st.success("Потужність СЕС збережено")
+                    except Exception as e:
+                        st.error(f"Не вдалося зберегти потужність СЕС: {e}")
             with col_info:
                 st.markdown(f"<br>Прогноз розраховано для **{capacity_mw} МВт** · Нікополь", unsafe_allow_html=True)
 
