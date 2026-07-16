@@ -754,10 +754,30 @@ def update_weather(df, now, capacity_mw):
             f"&key={api_key}&contentType=json"
         )
 
-        w_res = requests.get(url, timeout=30).json()
+        w_res = None
+        last_error = None
 
-        if 'days' not in w_res:
-            print(f"Погода: некоректна відповідь API: {w_res}")
+        import time as _t
+        for attempt in range(1, 4):
+            try:
+                response = requests.get(url, timeout=30)
+                response.raise_for_status()
+                w_res = response.json()
+
+                if not isinstance(w_res, dict) or 'days' not in w_res:
+                    raise ValueError(f"invalid API response: {w_res}")
+
+                if attempt > 1:
+                    print(f"Weather updated after retry {attempt}/3")
+                break
+            except Exception as e:
+                last_error = e
+                print(f"Weather attempt {attempt}/3 failed: {e}")
+                if attempt < 3:
+                    _t.sleep(5)
+
+        if not isinstance(w_res, dict) or 'days' not in w_res:
+            print(f"Weather not updated after 3 attempts: {last_error}")
             return df
 
         for d in w_res['days']:
