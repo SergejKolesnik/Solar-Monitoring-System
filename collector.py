@@ -21,6 +21,7 @@ BASE_FORECAST_CONST = 0.0114
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
 SUPABASE_BATCH_SIZE = 500
 WEATHER_LAST_UPDATE_KEY = "Weather_Last_Update"
+WEATHER_LAST_FAILED_UPDATE_KEY = "Weather_Last_Failed_Update"
 
 # Основні числові колонки, які зберігаються у Google Sheet
 NUMERIC_COLS = [
@@ -785,6 +786,17 @@ def update_weather(df, now, capacity_mw, spreadsheet):
             )
             return df
 
+        failure_cooldown_hours = float(os.getenv("WEATHER_FAILURE_COOLDOWN_HOURS", "12"))
+        last_failed_raw = load_setting_value(spreadsheet, WEATHER_LAST_FAILED_UPDATE_KEY)
+        last_failed = pd.to_datetime(last_failed_raw, errors='coerce')
+        if pd.notna(last_failed) and now - last_failed.to_pydatetime() < timedelta(hours=failure_cooldown_hours):
+            age = now - last_failed.to_pydatetime()
+            print(
+                f"Weather API skipped after recent failure: "
+                f"{age.total_seconds() / 3600:.1f}h ago"
+            )
+            return df
+
         url = (
             f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/"
             f"47.631494,34.348690/"
@@ -818,6 +830,7 @@ def update_weather(df, now, capacity_mw, spreadsheet):
                     _t.sleep(5)
 
         if not isinstance(w_res, dict) or 'days' not in w_res:
+            save_setting_value(spreadsheet, WEATHER_LAST_FAILED_UPDATE_KEY, now.isoformat(timespec='seconds'))
             print(f"Weather not updated after 3 attempts: {last_error}")
             return df
 
@@ -843,6 +856,7 @@ def update_weather(df, now, capacity_mw, spreadsheet):
                 df.loc[mask, 'PrecipProb'] = float(hr.get('precipprob', 0))
 
         save_setting_value(spreadsheet, WEATHER_LAST_UPDATE_KEY, now.isoformat(timespec='seconds'))
+        save_setting_value(spreadsheet, WEATHER_LAST_FAILED_UPDATE_KEY, "")
 
         print("Погоду оновлено")
 
