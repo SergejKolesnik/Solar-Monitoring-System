@@ -163,16 +163,28 @@ def save_df_to_sheet(sheet, df):
     BATCH_SIZE = 500
     import time as _t
 
+    required_rows = len(rows) + 1
+    required_cols = len(df.columns)
+    target_rows = max(required_rows + 100, getattr(sheet, "row_count", 1))
+    target_cols = max(required_cols, getattr(sheet, "col_count", 1))
+
     max_attempts = 3
     for attempt in range(1, max_attempts + 1):
         try:
+            if sheet.row_count < required_rows or sheet.col_count < required_cols:
+                sheet.resize(rows=target_rows, cols=target_cols)
+                print(
+                    f"Google Sheet resized to "
+                    f"{target_rows} rows, {target_cols} columns"
+                )
+
             sheet.clear()
-            sheet.update('A1', header)
+            sheet.update(values=header, range_name='A1')
 
             for start in range(0, len(rows), BATCH_SIZE):
                 batch = rows[start:start + BATCH_SIZE]
                 row_num = start + 2
-                sheet.update(f'A{row_num}', batch)
+                sheet.update(values=batch, range_name=f'A{row_num}')
 
                 if start + BATCH_SIZE < len(rows):
                     _t.sleep(1)
