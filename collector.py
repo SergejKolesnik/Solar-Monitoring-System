@@ -8,6 +8,7 @@ import json
 import csv
 import gspread
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from google.oauth2.service_account import Credentials
 from sklearn.ensemble import HistGradientBoostingRegressor
 
@@ -17,6 +18,8 @@ SETTINGS_SHEET_NAME = "Settings"
 DEFAULT_CAPACITY_MW = 12.5
 BASE_CAPACITY_MW = 12.5
 BASE_FORECAST_CONST = 0.0114
+KYIV_TZ = ZoneInfo("Europe/Kyiv")
+SUPABASE_BATCH_SIZE = 500
 
 # Основні числові колонки, які зберігаються у Google Sheet
 NUMERIC_COLS = [
@@ -183,6 +186,224 @@ def save_df_to_sheet(sheet, df):
                 _t.sleep(5)
 
     print("Не вдалось зберегти після 3 спроб")
+
+
+def _to_float(value, default=0.0):
+    try:
+        if pd.isna(value):
+            return default
+        return round(float(value), 3)
+    except Exception:
+        return default
+
+
+def _to_supabase_time(value):
+    ts = pd.to_datetime(value, errors='coerce')
+    if pd.isna(ts):
+        return None
+    if ts.tzinfo is None:
+        ts = ts.tz_localize(KYIV_TZ)
+    else:
+        ts = ts.tz_convert(KYIV_TZ)
+    return ts.isoformat()
+
+
+def _supabase_config():
+    url = (os.getenv('SUPABASE_URL') or '').rstrip('/')
+    key = os.getenv('SUPABASE_SERVICE_ROLE_KEY') or os.getenv('SUPABASE_KEY') or ''
+    if not url or not key:
+        return None
+    return url, key
+
+
+def _supabase_headers(key, prefer=None):
+    headers = {
+        'apikey': key,
+        'Authorization': f'Bearer {key}',
+        'Content-Type': 'application/json',
+    }
+    if prefer:
+        headers['Prefer'] = prefer
+    return headers
+
+
+def _supabase_post(url, key, table, rows, prefer='return=minimal', params=None):
+    if not rows:
+        return
+
+    endpoint = f"{url}/rest/v1/{table}"
+    if params:
+        endpoint = f"{endpoint}?{params}"
+
+    for start in range(0, len(rows), SUPABASE_BATCH_SIZE):
+        batch = rows[start:start + SUPABASE_BATCH_SIZE]
+        res = requests.post(
+            endpoint,
+            headers=_supabase_headers(key, prefer=prefer),
+            data=json.dumps(batch),
+            timeout=30
+        )
+        if res.status_code >= 300:
+            raise Exception(f"{table}: HTTP {res.status_code}: {res.text[:500]}")
+
+
+def _sync_capacity_to_supabase(url, key, capacity_mw, run_at):
+    valid_from = run_at.date().isoformat()
+    row = {
+        'valid_from': f"{valid_from}T00:00:00+00:00",
+        'capacity_mw': _to_float(capacity_mw),
+        'comment': 'synced from collector settings'
+    }
+    _supabase_post(
+        url, key, 'plant_capacity_history', [row],
+        prefer='resolution=merge-duplicates,return=minimal',
+        params='on_conflict=valid_from'
+    )
+
+
+def _sync_measurements_to_supabase(url, key, df, cutoff):
+    rows = []
+    df_fact = df[pd.to_datetime(df['Time'], errors='coerce') >= cutoff].copy()
+    df_fact['Fact_MW'] = pd.to_numeric(df_fact['Fact_MW'], errors='coerce').fillna(0)
+    df_fact = df_fact[df_fact['Fact_MW'] > 0]
+
+    for _, row in df_fact.iterrows():
+        time_value = _to_supabase_time(row['Time'])
+        if not time_value:
+            continue
+        rows.append({
+            'time': time_value,
+            'fact_mw': _to_float(row['Fact_MW']),
+            'source': 'email'
+        })
+
+    _supabase_post(
+        url, key, 'solar_measurements', rows,
+        prefer='resolution=merge-duplicates,return=minimal',
+        params='on_conflict=time'
+    )
+    return len(rows)
+
+
+def _sync_weather_to_supabase(url, key, df, cutoff, run_at):
+    rows = []
+    df_weather = df[pd.to_datetime(df['Time'], errors='coerce') >= cutoff].copy()
+    loaded_at = run_at.replace(tzinfo=KYIV_TZ).isoformat() if run_at.tzinfo is None else run_at.isoformat()
+
+    for _, row in df_weather.iterrows():
+        time_value = _to_supabase_time(row['Time'])
+        if not time_value:
+            continue
+        capacity_mw = _to_float(row.get('Capacity_MW', DEFAULT_CAPACITY_MW), DEFAULT_CAPACITY_MW)
+        rad = 0.0
+        if capacity_mw > 0:
+            rad = _to_float(row.get('Forecast_MW', 0)) / (BASE_FORECAST_CONST * (capacity_mw / BASE_CAPACITY_MW))
+        rows.append({
+            'time': time_value,
+            'provider': 'visual_crossing',
+            'rad': round(rad, 3),
+            'cloudcover': _to_float(row.get('CloudCover', 0)),
+            'temp': _to_float(row.get('Temp', 0)),
+            'windspeed': _to_float(row.get('WindSpeed', 0)),
+            'precipprob': _to_float(row.get('PrecipProb', 0)),
+            'loaded_at': loaded_at
+        })
+
+    _supabase_post(url, key, 'weather_forecasts', rows)
+    return len(rows)
+
+
+def _sync_generation_forecasts_to_supabase(url, key, df, cutoff, run_at):
+    rows = []
+    df_forecast = df[pd.to_datetime(df['Time'], errors='coerce') >= cutoff].copy()
+    run_at_iso = run_at.replace(tzinfo=KYIV_TZ).isoformat() if run_at.tzinfo is None else run_at.isoformat()
+
+    for _, row in df_forecast.iterrows():
+        time_value = _to_supabase_time(row['Time'])
+        if not time_value:
+            continue
+        forecast_mw = _to_float(row.get('Forecast_MW', 0))
+        ai_mw = _to_float(row.get('AI_Forecast_MW', 0))
+        if forecast_mw <= 0 and ai_mw <= 0:
+            continue
+        rows.append({
+            'target_time': time_value,
+            'forecast_mw': forecast_mw,
+            'ai_forecast_mw': ai_mw,
+            'capacity_mw': _to_float(row.get('Capacity_MW', DEFAULT_CAPACITY_MW), DEFAULT_CAPACITY_MW),
+            'model_version': 'collector-hist-gradient-error-v1',
+            'forecast_run_at': run_at_iso,
+            'source': 'collector'
+        })
+
+    _supabase_post(url, key, 'generation_forecasts', rows)
+    return len(rows)
+
+
+def _sync_quality_to_supabase(url, key, df, cutoff):
+    dfq = df[pd.to_datetime(df['Time'], errors='coerce') >= cutoff].copy()
+    dfq['Time'] = pd.to_datetime(dfq['Time'], errors='coerce')
+    for col in ['Fact_MW', 'Forecast_MW', 'AI_Forecast_MW']:
+        dfq[col] = pd.to_numeric(dfq[col], errors='coerce').fillna(0)
+    dfq = dfq[(dfq['Fact_MW'] > 0) & (dfq['Forecast_MW'] > 0)]
+    if dfq.empty:
+        return 0
+
+    dfq['date'] = dfq['Time'].dt.date
+    rows = []
+    for day, group in dfq.groupby('date'):
+        fact_mwh = float(group['Fact_MW'].sum())
+        base_mwh = float(group['Forecast_MW'].sum())
+        ai_mwh = float(group['AI_Forecast_MW'].sum())
+        base_error = fact_mwh - base_mwh
+        ai_error = fact_mwh - ai_mwh
+        base_abs_pct = (abs(group['Fact_MW'] - group['Forecast_MW']) / group['Fact_MW'] * 100).mean()
+        ai_abs_pct = (abs(group['Fact_MW'] - group['AI_Forecast_MW']) / group['Fact_MW'] * 100).mean()
+        improvement = 100 * (base_abs_pct - ai_abs_pct) / base_abs_pct if base_abs_pct > 0 else 0
+        rows.append({
+            'date': day.isoformat(),
+            'fact_mwh': round(fact_mwh, 3),
+            'base_mwh': round(base_mwh, 3),
+            'ai_mwh': round(ai_mwh, 3),
+            'base_error_mwh': round(base_error, 3),
+            'ai_error_mwh': round(ai_error, 3),
+            'base_mape_pct': round(float(base_abs_pct), 2),
+            'ai_mape_pct': round(float(ai_abs_pct), 2),
+            'ai_improvement_pct': round(float(improvement), 2)
+        })
+
+    _supabase_post(
+        url, key, 'forecast_quality_daily', rows,
+        prefer='resolution=merge-duplicates,return=minimal',
+        params='on_conflict=date'
+    )
+    return len(rows)
+
+
+def sync_to_supabase_shadow(df, capacity_mw, run_at):
+    config = _supabase_config()
+    if not config:
+        print("Supabase sync skipped: SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY не задано")
+        return
+
+    try:
+        url, key = config
+        sync_days = int(os.getenv('SUPABASE_SYNC_DAYS', '40'))
+        cutoff = pd.Timestamp(run_at - timedelta(days=sync_days))
+
+        _sync_capacity_to_supabase(url, key, capacity_mw, run_at)
+        facts_count = _sync_measurements_to_supabase(url, key, df, cutoff)
+        weather_count = _sync_weather_to_supabase(url, key, df, cutoff, run_at)
+        forecast_count = _sync_generation_forecasts_to_supabase(url, key, df, cutoff, run_at)
+        quality_count = _sync_quality_to_supabase(url, key, df, cutoff)
+
+        print(
+            "Supabase shadow sync: "
+            f"facts={facts_count}, weather={weather_count}, "
+            f"forecasts={forecast_count}, quality_days={quality_count}"
+        )
+    except Exception as e:
+        print(f"Supabase shadow sync failed (Google Sheet збережено): {e}")
 
 
 def add_time_features(df):
@@ -619,6 +840,7 @@ def main():
     df = df.drop(columns=TIME_FEATURE_COLS, errors='ignore')
 
     save_df_to_sheet(sheet, df)
+    sync_to_supabase_shadow(df, capacity_mw, now)
     print(f"Готово. Остання дата: {df['Time'].max()}")
 
 

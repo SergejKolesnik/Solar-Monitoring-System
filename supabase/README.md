@@ -18,6 +18,18 @@ All tables enable RLS and this schema intentionally creates no public `anon` or 
 
 Do not paste service-role keys into source code or chat. Store Supabase secrets in Streamlit Secrets when the collector integration is added.
 
+## Collector shadow sync secrets
+
+When the collector shadow sync is enabled, add these values to the runtime environment or Streamlit Secrets:
+
+```toml
+SUPABASE_URL = "https://<project-ref>.supabase.co"
+SUPABASE_SERVICE_ROLE_KEY = "<server-only-service-role-key>"
+SUPABASE_SYNC_DAYS = "40"
+```
+
+If `SUPABASE_URL` or `SUPABASE_SERVICE_ROLE_KEY` is missing, the collector skips Supabase sync and continues updating Google Sheets.
+
 ## Applying manually
 
 1. Open Supabase Dashboard.
