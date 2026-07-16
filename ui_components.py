@@ -170,15 +170,6 @@ def draw_training_tab(df_h):
             f"Дані не оновлювались {days_since_fact} дн."
         )
 
-    daily['Добова похибка сайту (МВт·год)'] = (
-        daily['Прогноз сайту (МВт·год)'] - daily['Факт (МВт·год)']
-    ).round(2)
-    daily['Добова похибка ШІ (МВт·год)'] = (
-        daily['Прогноз ШІ (МВт·год)'] - daily['Факт (МВт·год)']
-    ).round(2)
-    daily['|Добова похибка сайту|'] = daily['Добова похибка сайту (МВт·год)'].abs()
-    daily['|Добова похибка ШІ|'] = daily['Добова похибка ШІ (МВт·год)'].abs()
-
     def _quality_window(window_days):
         recent_quality = daily.tail(window_days).copy()
         if recent_quality.empty:
@@ -187,13 +178,7 @@ def draw_training_tab(df_h):
         ai = float(recent_quality['MAPE ШІ %'].mean())
         improvement = 100 * (base - ai) / base if base > 0 else 0
         better_days = float((recent_quality['Покращення ШІ %'] > 0).mean() * 100)
-        base_daily_mae = float(recent_quality['|Добова похибка сайту|'].mean())
-        ai_daily_mae = float(recent_quality['|Добова похибка ШІ|'].mean())
-        daily_improvement = 100 * (base_daily_mae - ai_daily_mae) / base_daily_mae if base_daily_mae > 0 else 0
-        daily_better_days = float(
-            (recent_quality['|Добова похибка ШІ|'] < recent_quality['|Добова похибка сайту|']).mean() * 100
-        )
-        return base, ai, improvement, better_days, len(recent_quality), base_daily_mae, ai_daily_mae, daily_improvement, daily_better_days
+        return base, ai, improvement, better_days, len(recent_quality)
 
     q7 = _quality_window(7)
     q30 = _quality_window(30)
@@ -206,14 +191,6 @@ def draw_training_tab(df_h):
         if q30:
             c3.metric("MAPE ШІ за 30 днів", f"{q30[1]:.1f}%", f"{q30[2]:+.1f}% до сайту")
             c4.metric("Стабільність ШІ", f"{q30[3]:.0f}%", f"{q30[4]} дн.")
-
-        e1, e2, e3, e4 = st.columns(4)
-        if q7:
-            e1.metric("Добова MAE ШІ за 7 днів", f"{q7[6]:.1f} МВт·год", f"{q7[7]:+.1f}% до сайту")
-            e2.metric("Діб, де ШІ ближче", f"{q7[8]:.0f}%", f"{q7[4]} дн.")
-        if q30:
-            e3.metric("Добова MAE ШІ за 30 днів", f"{q30[6]:.1f} МВт·год", f"{q30[7]:+.1f}% до сайту")
-            e4.metric("Базова добова MAE", f"{q30[5]:.1f} МВт·год", "сайт")
 
         if q7 and q7[2] < -5:
             st.warning("За останні 7 днів ШІ погіршує прогноз відносно базового сайту. Варто перевірити факти, погоду або параметри моделі.")
@@ -333,7 +310,6 @@ def draw_training_tab(df_h):
 
     st.markdown("##### Таблиця якості по днях")
     display = daily.sort_values('Дата', ascending=False).copy()
-    display = display.drop(columns=['|Добова похибка сайту|', '|Добова похибка ШІ|'], errors='ignore')
     st.dataframe(
         display.style.background_gradient(
             subset=['Покращення ШІ %'], cmap='RdYlGn', vmin=-30, vmax=30
