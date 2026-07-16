@@ -20,6 +20,7 @@ BASE_CAPACITY_MW = 12.5
 BASE_FORECAST_CONST = 0.0114
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
 SUPABASE_BATCH_SIZE = 500
+WEATHER_LAST_UPDATE_KEY = "Weather_Last_Update"
 
 # Основні числові колонки, які зберігаються у Google Sheet
 NUMERIC_COLS = [
@@ -72,15 +73,44 @@ def get_sheet():
     return get_spreadsheet().sheet1
 
 
+def get_or_create_settings_ws(spreadsheet):
+    try:
+        return spreadsheet.worksheet(SETTINGS_SHEET_NAME)
+    except Exception:
+        ws = spreadsheet.add_worksheet(title=SETTINGS_SHEET_NAME, rows=10, cols=2)
+        ws.update("A1:B2", [["Key", "Value"], ["Capacity_MW", DEFAULT_CAPACITY_MW]])
+        return ws
+
+
+def load_setting_value(spreadsheet, key, default=None):
+    try:
+        ws = get_or_create_settings_ws(spreadsheet)
+        for row in ws.get_all_records():
+            if str(row.get("Key", "")).strip() == key:
+                return row.get("Value", default)
+    except Exception as e:
+        print(f"Settings read failed for {key}: {e}")
+    return default
+
+
+def save_setting_value(spreadsheet, key, value):
+    ws = get_or_create_settings_ws(spreadsheet)
+    rows = ws.get_all_records()
+
+    for idx, row in enumerate(rows, start=2):
+        if str(row.get("Key", "")).strip() == key:
+            ws.update(values=[[key, value]], range_name=f"A{idx}:B{idx}")
+            return
+
+    next_row = len(rows) + 2
+    if ws.row_count < next_row:
+        ws.resize(rows=next_row + 5, cols=max(ws.col_count, 2))
+    ws.update(values=[[key, value]], range_name=f"A{next_row}:B{next_row}")
+
+
 def load_capacity_from_settings(spreadsheet):
     try:
-        try:
-            ws = spreadsheet.worksheet(SETTINGS_SHEET_NAME)
-        except Exception:
-            ws = spreadsheet.add_worksheet(title=SETTINGS_SHEET_NAME, rows=10, cols=2)
-            ws.update("A1:B2", [["Key", "Value"], ["Capacity_MW", DEFAULT_CAPACITY_MW]])
-            return DEFAULT_CAPACITY_MW
-
+        ws = get_or_create_settings_ws(spreadsheet)
         for row in ws.get_all_records():
             if str(row.get("Key", "")).strip() == "Capacity_MW":
                 value = str(row.get("Value", DEFAULT_CAPACITY_MW)).replace(",", ".").strip()
@@ -736,12 +766,23 @@ def update_facts(df, facts):
     return df
 
 
-def update_weather(df, now, capacity_mw):
+def update_weather(df, now, capacity_mw, spreadsheet):
     try:
         api_key = os.getenv('WEATHER_API_KEY')
 
         if not api_key:
             print("WEATHER_API_KEY не знайдено — погоду не оновлено")
+            return df
+
+        refresh_hours = float(os.getenv("WEATHER_REFRESH_HOURS", "6"))
+        last_update_raw = load_setting_value(spreadsheet, WEATHER_LAST_UPDATE_KEY)
+        last_update = pd.to_datetime(last_update_raw, errors='coerce')
+        if pd.notna(last_update) and now - last_update.to_pydatetime() < timedelta(hours=refresh_hours):
+            age = now - last_update.to_pydatetime()
+            print(
+                f"Weather API skipped: last successful update "
+                f"{age.total_seconds() / 3600:.1f}h ago"
+            )
             return df
 
         url = (
@@ -801,6 +842,8 @@ def update_weather(df, now, capacity_mw):
                 df.loc[mask, 'WindSpeed'] = float(hr.get('windspeed', 0))
                 df.loc[mask, 'PrecipProb'] = float(hr.get('precipprob', 0))
 
+        save_setting_value(spreadsheet, WEATHER_LAST_UPDATE_KEY, now.isoformat(timespec='seconds'))
+
         print("Погоду оновлено")
 
     except Exception as e:
@@ -827,7 +870,7 @@ def main():
     df = update_facts(df, facts)
 
     # Оновлення погоди
-    df = update_weather(df, now, capacity_mw)
+    df = update_weather(df, now, capacity_mw, spreadsheet)
 
     # Гарантуємо встановлену потужність
     df = ensure_columns(df)

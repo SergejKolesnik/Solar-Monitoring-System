@@ -40,6 +40,21 @@ def get_or_create_settings_ws(sh):
         ws.update("A1:B2", [["Key", "Value"], ["Capacity_MW", DEFAULT_CAPACITY_MW]])
         return ws
 
+
+def save_setting_value(ws, key, value):
+    rows = ws.get_all_records()
+
+    for idx, row in enumerate(rows, start=2):
+        if str(row.get("Key", "")).strip() == key:
+            ws.update(values=[[key, value]], range_name=f"A{idx}:B{idx}")
+            return
+
+    next_row = len(rows) + 2
+    if ws.row_count < next_row:
+        ws.resize(rows=next_row + 5, cols=max(ws.col_count, 2))
+    ws.update(values=[[key, value]], range_name=f"A{next_row}:B{next_row}")
+
+
 @st.cache_data(ttl=300)
 def load_capacity_from_sheets():
     try:
@@ -52,7 +67,7 @@ def load_capacity_from_sheets():
                 capacity = float(value)
                 if 1.0 <= capacity <= 100.0:
                     return capacity
-        ws.update("A1:B2", [["Key", "Value"], ["Capacity_MW", DEFAULT_CAPACITY_MW]])
+        save_setting_value(ws, "Capacity_MW", DEFAULT_CAPACITY_MW)
     except Exception as e:
         st.warning(f"Не вдалося прочитати збережену потужність СЕС: {e}")
     return DEFAULT_CAPACITY_MW
@@ -60,7 +75,7 @@ def load_capacity_from_sheets():
 def save_capacity_to_sheets(capacity_mw: float):
     sh = open_main_spreadsheet()
     ws = get_or_create_settings_ws(sh)
-    ws.update("A1:B2", [["Key", "Value"], ["Capacity_MW", round(float(capacity_mw), 3)]])
+    save_setting_value(ws, "Capacity_MW", round(float(capacity_mw), 3))
     load_capacity_from_sheets.clear()
 
 @st.cache_data(ttl=300)
