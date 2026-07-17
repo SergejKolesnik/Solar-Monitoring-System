@@ -36,8 +36,12 @@ def draw_app_header(logo_url):
             border-bottom: 1px solid rgba(255,255,255,0.06);
             gap: 12px;
         }}
+        div[data-testid="stTabs"] [role="tablist"] {{
+            gap: 12px;
+        }}
         div[data-testid="stTabBar"] button,
-        button[data-baseweb="tab"] {{
+        button[data-baseweb="tab"],
+        div[data-testid="stTabs"] button[role="tab"] {{
             color: #8a94a6 !important;
             font-weight: 650 !important;
             font-size: 16px !important;
@@ -45,14 +49,29 @@ def draw_app_header(logo_url):
             padding: 10px 14px !important;
             margin-right: 8px !important;
         }}
+        div[data-testid="stTabBar"] button p,
+        button[data-baseweb="tab"] p,
+        div[data-testid="stTabs"] button[role="tab"] p {{
+            color: #8a94a6 !important;
+            font-size: 16px !important;
+            font-weight: 650 !important;
+        }}
         div[data-testid="stTabBar"] button[aria-selected="true"],
-        button[data-baseweb="tab"][aria-selected="true"] {{
+        button[data-baseweb="tab"][aria-selected="true"],
+        div[data-testid="stTabs"] button[role="tab"][aria-selected="true"] {{
             color: #ffffff !important;
             background: rgba(255,184,0,0.06) !important;
             border-bottom: 2px solid #ffb800 !important;
         }}
+        div[data-testid="stTabBar"] button[aria-selected="true"] p,
+        button[data-baseweb="tab"][aria-selected="true"] p,
+        div[data-testid="stTabs"] button[role="tab"][aria-selected="true"] p {{
+            color: #ffffff !important;
+        }}
         div[data-testid="stTabBarHighlight"],
-        div[data-baseweb="tab-highlight-id"] {{
+        div[data-baseweb="tab-highlight-id"],
+        div[data-baseweb="tab-highlight"],
+        div[data-testid="stTabs"] [data-baseweb="tab-highlight"] {{
             background-color: #ffb800 !important;
         }}
         .app-shell-header {{
