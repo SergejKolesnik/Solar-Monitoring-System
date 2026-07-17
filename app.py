@@ -34,21 +34,25 @@ def draw_app_header(logo_url):
         <style>
         div[data-testid="stTabBar"] {{
             border-bottom: 1px solid rgba(255,255,255,0.06);
-            gap: 8px;
+            gap: 12px;
         }}
-        div[data-testid="stTabBar"] button {{
-            color: #64748b !important;
+        div[data-testid="stTabBar"] button,
+        button[data-baseweb="tab"] {{
+            color: #8a94a6 !important;
             font-weight: 650 !important;
-            font-size: 14px !important;
+            font-size: 16px !important;
             border: none !important;
             padding: 10px 14px !important;
+            margin-right: 8px !important;
         }}
-        div[data-testid="stTabBar"] button[aria-selected="true"] {{
-            color: #ffb800 !important;
+        div[data-testid="stTabBar"] button[aria-selected="true"],
+        button[data-baseweb="tab"][aria-selected="true"] {{
+            color: #ffffff !important;
             background: rgba(255,184,0,0.06) !important;
             border-bottom: 2px solid #ffb800 !important;
         }}
-        div[data-testid="stTabBarHighlight"] {{
+        div[data-testid="stTabBarHighlight"],
+        div[data-baseweb="tab-highlight-id"] {{
             background-color: #ffb800 !important;
         }}
         .app-shell-header {{
@@ -96,11 +100,11 @@ def draw_app_header(logo_url):
             font-size: 11px;
             margin-top: 5px;
             text-transform: uppercase;
-            letter-spacing: 0.02em;
+            letter-spacing: 0;
         }}
         .partner-card {{
-            background: rgba(255,255,255,0.025);
-            border: 1px solid rgba(255,255,255,0.07);
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.10);
             border-radius: 8px;
             padding: 10px 14px;
             display: flex;
