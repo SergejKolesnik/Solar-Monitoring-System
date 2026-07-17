@@ -496,6 +496,71 @@ def calculate_errors(df):
     return df
 
 
+def log_data_quality(df, now, capacity_mw):
+    dfq = ensure_columns(df).copy()
+    dfq['Time'] = pd.to_datetime(dfq['Time'], errors='coerce')
+    dfq = dfq[dfq['Time'].notna()].copy()
+
+    if dfq.empty:
+        print("Data quality warning: base table is empty after time parsing")
+        return
+
+    fact = pd.to_numeric(dfq['Fact_MW'], errors='coerce').fillna(0)
+    forecast = pd.to_numeric(dfq['Forecast_MW'], errors='coerce').fillna(0)
+    ai = pd.to_numeric(dfq['AI_Forecast_MW'], errors='coerce').fillna(0)
+    capacity = pd.to_numeric(dfq['Capacity_MW'], errors='coerce').fillna(capacity_mw)
+    capacity = capacity.mask(capacity <= 0, capacity_mw)
+
+    warnings = []
+
+    fact_rows = dfq[fact > 0.01]
+    if fact_rows.empty:
+        warnings.append("no positive facts in table")
+    else:
+        latest_fact = fact_rows['Time'].max()
+        fact_age_hours = (now - latest_fact.to_pydatetime()).total_seconds() / 3600
+        if fact_age_hours > 36:
+            warnings.append(f"latest positive fact is {fact_age_hours:.1f}h old ({latest_fact})")
+
+    recent_start = now - timedelta(hours=30)
+    recent_fact_rows = dfq[(dfq['Time'] >= recent_start) & (fact > 0.01)]
+    if recent_fact_rows.empty:
+        warnings.append("no positive facts in last 30h")
+
+    recent_daylight = dfq[
+        (dfq['Time'] >= recent_start) &
+        (dfq['Time'].dt.hour.between(8, 17))
+    ]
+    if not recent_daylight.empty:
+        daylight_fact = pd.to_numeric(recent_daylight['Fact_MW'], errors='coerce').fillna(0)
+        zero_daylight_count = int((daylight_fact <= 0.01).sum())
+        if zero_daylight_count >= 6:
+            warnings.append(f"{zero_daylight_count} daylight hours with zero/empty fact in last 30h")
+
+    limit = capacity * 1.10
+    fact_over = int((fact > limit).sum())
+    forecast_over = int((forecast > limit).sum())
+    ai_over = int((ai > limit).sum())
+    if fact_over:
+        warnings.append(f"{fact_over} fact rows exceed 110% of capacity")
+    if forecast_over:
+        warnings.append(f"{forecast_over} forecast rows exceed 110% of capacity")
+    if ai_over:
+        warnings.append(f"{ai_over} AI forecast rows exceed 110% of capacity")
+
+    future_end = now + timedelta(hours=24)
+    future_rows = dfq[(dfq['Time'] >= now) & (dfq['Time'] <= future_end)]
+    future_forecast_hours = int((pd.to_numeric(future_rows['Forecast_MW'], errors='coerce').fillna(0) > 0).sum())
+    if future_forecast_hours < 6:
+        warnings.append(f"only {future_forecast_hours} positive forecast hours in next 24h")
+
+    if warnings:
+        print("Data quality warning: " + " | ".join(warnings))
+    else:
+        latest_fact_text = fact_rows['Time'].max() if not fact_rows.empty else "n/a"
+        print(f"Data quality: OK (latest fact: {latest_fact_text}, rows: {len(dfq)})")
+
+
 def train_model(df):
     """
     Навчає модель НЕ напряму на Fact_MW.
@@ -894,6 +959,8 @@ def main():
 
     df['Capacity_MW'] = pd.to_numeric(df['Capacity_MW'], errors='coerce').fillna(capacity_mw)
     df.loc[df['Capacity_MW'] <= 0, 'Capacity_MW'] = capacity_mw
+
+    log_data_quality(df, now, capacity_mw)
 
     # Спочатку рахуємо помилки за вже наявними фактами
     df = calculate_errors(df)
