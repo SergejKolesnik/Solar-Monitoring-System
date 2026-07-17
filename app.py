@@ -241,7 +241,7 @@ if not df_f.empty:
 
             # Дані для вкладки "Навчання" тепер формуються з уже збережених помилок,
             # а не через повторне навчання моделі в app.py.
-            draw_metrics(df_f, now_ua, timedelta)
+            draw_metrics(df_f, df_h, now_ua, timedelta)
             st.write("")
             draw_weather_strip(df_f, now_ua, timedelta)
 
