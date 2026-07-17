@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
 
 from weather_service import fetch_weather_data, calc_forecast_mw
-from dashboard_components import draw_app_header, draw_main_chart, draw_metrics, draw_weather_strip
+from dashboard_components import draw_main_chart, draw_metrics, draw_weather_strip
 from ui_components import draw_training_tab, draw_base_tab, draw_meteo_tab, draw_plan_tab
 
 # Налаштування сторiнки
@@ -26,6 +26,139 @@ MONTHS_UK = {
     5: 'Травень', 6: 'Червень', 7: 'Липень', 8: 'Серпень',
     9: 'Вересень', 10: 'Жовтень', 11: 'Листопад', 12: 'Грудень'
 }
+
+
+def draw_app_header(logo_url):
+    st.markdown(
+        f"""
+        <style>
+        div[data-testid="stTabBar"] {{
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+            gap: 8px;
+        }}
+        div[data-testid="stTabBar"] button {{
+            color: #64748b !important;
+            font-weight: 650 !important;
+            font-size: 14px !important;
+            border: none !important;
+            padding: 10px 14px !important;
+        }}
+        div[data-testid="stTabBar"] button[aria-selected="true"] {{
+            color: #ffb800 !important;
+            background: rgba(255,184,0,0.06) !important;
+            border-bottom: 2px solid #ffb800 !important;
+        }}
+        div[data-testid="stTabBarHighlight"] {{
+            background-color: #ffb800 !important;
+        }}
+        .app-shell-header {{
+            background: linear-gradient(135deg, rgba(17,22,34,0.98) 0%, rgba(11,17,26,0.98) 100%);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 8px;
+            padding: 18px 22px;
+            margin: 10px 0 18px;
+            box-shadow: 0 18px 36px rgba(0,0,0,0.28);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 24px;
+        }}
+        .app-brand {{
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            min-width: 0;
+        }}
+        .app-brand__mark {{
+            width: 42px;
+            height: 42px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(255,184,0,0.14);
+            color: #ffb800;
+            box-shadow: 0 0 24px rgba(255,184,0,0.24);
+            font-size: 22px;
+            font-weight: 800;
+        }}
+        .app-brand__title {{
+            font-size: 27px;
+            line-height: 1.05;
+            font-weight: 800;
+            background: linear-gradient(90deg, #ffffff 0%, #ffb800 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            white-space: nowrap;
+        }}
+        .app-brand__subtitle {{
+            color: rgba(255,255,255,0.44);
+            font-size: 11px;
+            margin-top: 5px;
+            text-transform: uppercase;
+            letter-spacing: 0.02em;
+        }}
+        .partner-card {{
+            background: rgba(255,255,255,0.025);
+            border: 1px solid rgba(255,255,255,0.07);
+            border-radius: 8px;
+            padding: 10px 14px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-width: 260px;
+            justify-content: flex-start;
+        }}
+        .partner-card img {{
+            width: 38px;
+            height: 38px;
+            object-fit: contain;
+        }}
+        .partner-card__name {{
+            color: rgba(255,255,255,0.86);
+            font-size: 12px;
+            line-height: 1.25;
+            font-weight: 750;
+        }}
+        .partner-card__link {{
+            color: rgba(255,255,255,0.42);
+            font-size: 10px;
+            text-decoration: none;
+        }}
+        @media (max-width: 900px) {{
+            .app-shell-header {{
+                align-items: flex-start;
+                flex-direction: column;
+            }}
+            .app-brand__title {{
+                font-size: 24px;
+                white-space: normal;
+            }}
+            .partner-card {{
+                width: 100%;
+                min-width: 0;
+            }}
+        }}
+        </style>
+        <div class="app-shell-header">
+            <div class="app-brand">
+                <div class="app-brand__mark">☼</div>
+                <div>
+                    <div class="app-brand__title">SkyGrid Solar AI</div>
+                    <div class="app-brand__subtitle">Система моніторингу та прогнозування сонячної генерації</div>
+                </div>
+            </div>
+            <div class="partner-card">
+                <img src="{logo_url}" alt="НЗФ logo">
+                <div>
+                    <div class="partner-card__name">Нікопольський завод феросплавів</div>
+                    <a class="partner-card__link" href="https://www.nzf.com.ua" target="_blank">nzf.com.ua</a>
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 def open_main_spreadsheet():
     creds_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
