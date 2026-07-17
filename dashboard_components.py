@@ -23,74 +23,171 @@ def _style_forecast_dashboard():
         """
         <style>
         .forecast-card {
-            background: rgba(255,255,255,0.055);
-            border: 1px solid rgba(255,255,255,0.10);
+            position: relative;
+            overflow: hidden;
+            background: linear-gradient(135deg, rgba(17,22,34,0.98) 0%, rgba(11,17,26,0.98) 100%);
+            border: 1px solid var(--card-border);
             border-radius: 8px;
-            padding: 18px 18px 16px;
-            min-height: 138px;
+            padding: 22px 22px 20px;
+            min-height: 164px;
+            box-shadow: 0 18px 36px rgba(0,0,0,0.28);
         }
         .forecast-card__label {
             color: rgba(255,255,255,0.72);
             font-size: 13px;
             font-weight: 650;
-            margin-bottom: 10px;
+            text-transform: uppercase;
+            margin-bottom: 22px;
+            padding-right: 48px;
         }
         .forecast-card__value {
-            color: #ffffff;
+            color: var(--card-accent);
             font-size: 34px;
             line-height: 1.1;
             font-weight: 750;
             white-space: nowrap;
         }
+        .forecast-card__unit {
+            font-size: 18px;
+            color: var(--card-accent);
+        }
+        .forecast-card__icon {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 42px;
+            height: 42px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--card-accent);
+            background: var(--card-icon-bg);
+            box-shadow: 0 0 22px var(--card-glow);
+            font-size: 21px;
+        }
         .forecast-card__note {
             color: rgba(255,255,255,0.56);
             font-size: 12px;
-            margin-top: 12px;
+            margin-top: 14px;
+        }
+        .forecast-card__badge {
+            display: inline-block;
+            margin-right: 8px;
+            padding: 3px 8px;
+            border-radius: 999px;
+            color: var(--card-accent);
+            background: var(--card-badge-bg);
+            font-weight: 700;
+        }
+        .forecast-card__track {
+            position: absolute;
+            left: 22px;
+            right: 22px;
+            bottom: 18px;
+            height: 5px;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.08);
+            overflow: hidden;
+        }
+        .forecast-card__track-fill {
+            height: 100%;
+            width: var(--card-progress);
+            border-radius: inherit;
+            background: var(--card-accent);
+            box-shadow: 0 0 18px var(--card-glow);
         }
         .weather-day {
-            background: rgba(255,255,255,0.04);
-            border: 1px solid rgba(255,255,255,0.08);
+            background: linear-gradient(135deg, rgba(16,22,34,0.96), rgba(10,15,24,0.98));
+            border: 1px solid rgba(255,255,255,0.09);
             border-radius: 8px;
-            padding: 12px 14px;
-            min-height: 112px;
+            padding: 18px 20px;
+            min-height: 190px;
+            box-shadow: 0 16px 32px rgba(0,0,0,0.24);
         }
-        .weather-day__date {
-            color: rgba(255,255,255,0.70);
-            font-size: 12px;
-            font-weight: 650;
-        }
-        .weather-day__icon {
-            font-size: 30px;
-            line-height: 1.25;
-            margin: 4px 0;
-        }
-        .weather-day__top {
+        .weather-day__header {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            gap: 10px;
-            margin-bottom: 8px;
+            gap: 12px;
+            padding-bottom: 12px;
+            margin-bottom: 16px;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
         }
-        .weather-day__forecast {
-            color: #ffffff;
-            font-size: 20px;
+        .weather-day__date {
+            color: rgba(255,255,255,0.70);
+            font-size: 14px;
+            font-weight: 650;
+        }
+        .weather-day__status {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 999px;
+            background: var(--weather-status-bg);
+            color: var(--weather-status-color);
+            border: 1px solid var(--weather-status-border);
+            font-size: 11px;
             font-weight: 750;
+            text-transform: uppercase;
             white-space: nowrap;
+        }
+        .weather-day__icon {
+            font-size: 34px;
+            line-height: 1.25;
+            filter: drop-shadow(0 0 12px rgba(255,184,0,0.28));
+        }
+        .weather-day__body {
+            display: flex;
+            align-items: stretch;
+            justify-content: space-between;
+            gap: 18px;
+        }
+        .weather-day__weather {
+            flex: 1;
+            min-width: 0;
         }
         .weather-day__meta {
             color: rgba(255,255,255,0.78);
             font-size: 12px;
-            line-height: 1.55;
-        }
-        .weather-day__risk {
-            display: inline-block;
+            line-height: 1.75;
             margin-top: 10px;
-            padding: 3px 8px;
-            border-radius: 999px;
-            background: rgba(55,215,255,0.12);
-            color: #8fe9ff;
+        }
+        .weather-day__temp {
+            color: #ffffff;
+            font-size: 27px;
+            font-weight: 750;
+            margin-left: 8px;
+            vertical-align: middle;
+        }
+        .weather-day__solar {
+            flex: 0 0 46%;
+            border: 1px dashed var(--weather-solar-border);
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 102px;
+            background: rgba(255,255,255,0.025);
+        }
+        .weather-day__solar-label {
+            color: rgba(255,255,255,0.48);
             font-size: 11px;
-            font-weight: 650;
+            font-weight: 750;
+            text-transform: uppercase;
+            margin-bottom: 8px;
+        }
+        .weather-day__solar-value {
+            color: var(--weather-accent);
+            font-size: 26px;
+            line-height: 1;
+            font-weight: 800;
+        }
+        .weather-day__solar-unit {
+            color: rgba(255,255,255,0.52);
+            font-size: 12px;
+            font-weight: 700;
+            margin-top: 5px;
         }
         </style>
         """,
@@ -128,6 +225,31 @@ def _month_fact_mwh(df_h, now_ua):
     return float(month_df['Fact_MW'].sum()), month_df['Time'].max()
 
 
+def _clamp_pct(value):
+    return max(0.0, min(100.0, float(value or 0)))
+
+
+def _day_label(day, now_ua):
+    day_ts = pd.to_datetime(day)
+    today = pd.Timestamp(now_ua.date())
+    if day_ts.date() == today.date():
+        prefix = "Сьогодні"
+    elif day_ts.date() == (today + pd.Timedelta(days=1)).date():
+        prefix = "Завтра"
+    else:
+        weekdays = {
+            0: "Понеділок",
+            1: "Вівторок",
+            2: "Середа",
+            3: "Четвер",
+            4: "П'ятниця",
+            5: "Субота",
+            6: "Неділя",
+        }
+        prefix = weekdays.get(day_ts.weekday(), "")
+    return f"{prefix}, {day_ts.strftime('%d.%m')}"
+
+
 def draw_metrics(df_f, df_h, now_ua, timedelta):
     _style_forecast_dashboard()
     df = _clean_numeric(df_f, ['AI_MW', 'Forecast_MW', 'Capacity_MW'])
@@ -150,21 +272,72 @@ def draw_metrics(df_f, df_h, now_ua, timedelta):
     month_note = "фактична генерація за поточний місяць"
     if month_last_time is not None:
         month_note = f"останній факт: {pd.to_datetime(month_last_time).strftime('%d.%m %H:%M')}"
+    peak_pct = (peak_mw / capacity_mw * 100) if capacity_mw > 0 else 0.0
+    month_capacity_factor = 0.0
+    if capacity_mw > 0 and now_ua.day > 0:
+        month_capacity_factor = month_fact_mwh / (capacity_mw * 24 * now_ua.day) * 100
+    month_freshness = 100.0 if month_last_time is not None and pd.to_datetime(month_last_time).date() >= now_ua.date() else 72.0
 
     cards = [
-        ("Прогноз на завтра", f"{tomorrow_mwh:.1f} МВт·год", f"{capacity_pct:.1f}% від номінальної потужності СЕС"),
-        ("Пік генерації завтра", f"{peak_mw:.1f} МВт", f"очікуваний максимум о {peak_time}"),
-        ("Факт з початку місяця", f"{month_fact_mwh:.1f} МВт·год", month_note),
+        {
+            "label": "Прогноз на завтра",
+            "value": f"{tomorrow_mwh:.1f}",
+            "unit": "МВт·год",
+            "badge": f"{capacity_pct:.1f}%",
+            "note": "від номінальної потужності СЕС",
+            "icon": "↗",
+            "accent": "#ffbf1f",
+            "glow": "rgba(255,191,31,0.22)",
+            "progress": _clamp_pct(capacity_pct),
+        },
+        {
+            "label": "Пік генерації завтра",
+            "value": f"{peak_mw:.1f}",
+            "unit": "МВт",
+            "badge": peak_time,
+            "note": "очікуваний пік інсоляції",
+            "icon": "⚡",
+            "accent": "#20e8f2",
+            "glow": "rgba(32,232,242,0.20)",
+            "progress": _clamp_pct(peak_pct),
+        },
+        {
+            "label": "Факт з початку місяця",
+            "value": f"{month_fact_mwh:.1f}",
+            "unit": "МВт·год",
+            "badge": f"КВВП {month_capacity_factor:.1f}%" if month_capacity_factor > 0 else "Оновлено",
+            "note": month_note,
+            "icon": "▣",
+            "accent": "#27d29b",
+            "glow": "rgba(39,210,155,0.18)",
+            "progress": _clamp_pct(month_freshness),
+        },
     ]
 
-    for col, (label, value, note) in zip(st.columns(3), cards):
+    for col, card in zip(st.columns(3), cards):
+        style = (
+            f"--card-accent:{card['accent']};"
+            f"--card-glow:{card['glow']};"
+            f"--card-border:{card['accent']}33;"
+            f"--card-icon-bg:{card['accent']}18;"
+            f"--card-badge-bg:{card['accent']}1f;"
+            f"--card-progress:{card['progress']:.0f}%;"
+        )
         with col:
             st.markdown(
                 f"""
-                <div class="forecast-card">
-                    <div class="forecast-card__label">{label}</div>
-                    <div class="forecast-card__value">{value}</div>
-                    <div class="forecast-card__note">{note}</div>
+                <div class="forecast-card" style="{style}">
+                    <div class="forecast-card__label">{card['label']}</div>
+                    <div class="forecast-card__icon">{card['icon']}</div>
+                    <div class="forecast-card__value">
+                        {card['value']} <span class="forecast-card__unit">{card['unit']}</span>
+                    </div>
+                    <div class="forecast-card__note">
+                        <span class="forecast-card__badge">{card['badge']}</span>{card['note']}
+                    </div>
+                    <div class="forecast-card__track">
+                        <div class="forecast-card__track-fill"></div>
+                    </div>
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -202,7 +375,7 @@ def draw_weather_strip(df_f, now_ua, timedelta):
     daily = daily.reset_index().head(3)
 
     for col, row in zip(st.columns(3), daily.to_dict('records')):
-        date_label = pd.to_datetime(row['Time']).strftime('%d.%m')
+        date_label = _day_label(row['Time'], now_ua)
         temp_min = float(row.get('Temp_min', 0))
         temp_max = float(row.get('Temp_max', 0))
         cloud_avg = float(row.get('CloudCover_mean', 0))
@@ -212,30 +385,58 @@ def draw_weather_strip(df_f, now_ua, timedelta):
         wind_avg = float(row.get('WindSpeed_mean', 0))
         icon = _weather_icon(cloud_avg, precip_max)
         risk = "сприятливо"
+        accent = "#27d29b"
+        status_bg = "rgba(39,210,155,0.14)"
+        status_border = "rgba(39,210,155,0.30)"
         if precip_max >= 45:
             risk = "ризик опадів"
+            accent = "#ffbf1f"
+            status_bg = "rgba(255,191,31,0.14)"
+            status_border = "rgba(255,191,31,0.34)"
         elif cloud_max >= 75:
             risk = "пікова хмарність"
+            accent = "#ffbf1f"
+            status_bg = "rgba(255,191,31,0.14)"
+            status_border = "rgba(255,191,31,0.34)"
         elif cloud_avg >= 55:
             risk = "нестабільна генерація"
+            accent = "#20e8f2"
+            status_bg = "rgba(32,232,242,0.12)"
+            status_border = "rgba(32,232,242,0.28)"
+        weather_style = (
+            f"--weather-accent:{accent};"
+            f"--weather-status-color:{accent};"
+            f"--weather-status-bg:{status_bg};"
+            f"--weather-status-border:{status_border};"
+            f"--weather-solar-border:{accent}55;"
+        )
         with col:
             st.markdown(
                 f"""
-                <div class="weather-day">
-                    <div class="weather-day__top">
-                        <div>
-                            <div class="weather-day__date">{date_label}</div>
-                            <div class="weather-day__icon">{icon}</div>
+                <div class="weather-day" style="{weather_style}">
+                    <div class="weather-day__header">
+                        <div class="weather-day__date">{date_label}</div>
+                        <div class="weather-day__status">{risk}</div>
+                    </div>
+                    <div class="weather-day__body">
+                        <div class="weather-day__weather">
+                            <div>
+                                <span class="weather-day__icon">{icon}</span>
+                                <span class="weather-day__temp">{temp_max:.0f}°C</span>
+                            </div>
+                            <div class="weather-day__meta">
+                                ☁ Хмарність: {cloud_avg:.0f}% / пік {cloud_max:.0f}%<br>
+                                ☔ Опади: до {precip_max:.0f}%<br>
+                                ≋ Вітер: {wind_avg:.1f} м/с<br>
+                                Мін. температура: {temp_min:.0f}°C
+                            </div>
                         </div>
-                        <div class="weather-day__forecast">{day_mwh:.1f} МВт·год</div>
+                        <div class="weather-day__solar">
+                            <div class="weather-day__solar-label">Прогноз СЕС</div>
+                            <div class="weather-day__solar-value">{day_mwh:.1f}</div>
+                            <div class="weather-day__solar-unit">МВт·год</div>
+                        </div>
                     </div>
-                    <div class="weather-day__meta">
-                        Температура: {temp_min:.0f}–{temp_max:.0f} °C<br>
-                        Хмарність: {cloud_avg:.0f}% середня / {cloud_max:.0f}% пік<br>
-                        Опади: до {precip_max:.0f}%<br>
-                        Вітер: {wind_avg:.1f} м/с
-                    </div>
-                    <div class="weather-day__risk">{risk}</div>
                 </div>
                 """,
                 unsafe_allow_html=True,
