@@ -396,6 +396,10 @@ def _day_label(day, now_ua):
     return f"{prefix}, {day_ts.strftime('%d.%m')}"
 
 
+def _tomorrow_start(now_ua):
+    return pd.Timestamp((now_ua + pd.Timedelta(days=1)).date())
+
+
 def draw_metrics(df_f, df_h, now_ua, timedelta):
     _style_forecast_dashboard()
     df = _clean_numeric(df_f, ['AI_MW', 'Forecast_MW', 'Capacity_MW'])
@@ -413,7 +417,7 @@ def draw_metrics(df_f, df_h, now_ua, timedelta):
         peak_time = pd.to_datetime(peak_row['Time']).strftime('%H:%M')
 
     capacity_mw = float(df['Capacity_MW'].max()) if 'Capacity_MW' in df.columns and not df.empty else 0.0
-    capacity_pct = (tomorrow_mwh / (capacity_mw * 24) * 100) if capacity_mw > 0 else 0.0
+    full_load_hours = (tomorrow_mwh / capacity_mw) if capacity_mw > 0 else 0.0
     month_fact_mwh, month_last_time = _month_fact_mwh(df_h, now_ua)
     month_note = "фактична генерація за поточний місяць"
     if month_last_time is not None:
@@ -429,12 +433,12 @@ def draw_metrics(df_f, df_h, now_ua, timedelta):
             "label": "Прогноз на завтра",
             "value": f"{tomorrow_mwh:.1f}",
             "unit": "МВт·год",
-            "badge": f"{capacity_pct:.1f}%",
-            "note": "від номінальної потужності СЕС",
+            "badge": f"{full_load_hours:.1f} год",
+            "note": "еквівалент роботи на повній потужності",
             "icon": "↗",
             "accent": "#ffb800",
             "glow": "rgba(255,184,0,0.22)",
-            "progress": _clamp_pct(capacity_pct),
+            "progress": _clamp_pct(full_load_hours / 12 * 100),
         },
         {
             "label": "Пік генерації завтра",
@@ -496,7 +500,9 @@ def draw_weather_strip(df_f, now_ua, timedelta):
     df = _clean_numeric(df_f, ['CloudCover', 'Temp', 'PrecipProb', 'AI_MW', 'Forecast_MW', 'WindSpeed'])
     df['Time'] = pd.to_datetime(df['Time'], errors='coerce')
     df = df.dropna(subset=['Time']).sort_values('Time')
-    df = df[(df['Time'] >= now_ua) & (df['Time'] < now_ua + timedelta(days=3))]
+    forecast_start = _tomorrow_start(now_ua)
+    forecast_end = forecast_start + pd.Timedelta(days=3)
+    df = df[(df['Time'] >= forecast_start) & (df['Time'] < forecast_end)]
 
     st.markdown("##### Погода, що впливає на прогноз")
     if df.empty:
@@ -597,7 +603,9 @@ def draw_main_chart(df_f, now_ua=None):
     df = df.dropna(subset=['Time']).sort_values('Time')
 
     if now_ua is not None:
-        df_plot = df[(df['Time'] >= now_ua) & (df['Time'] < now_ua + pd.Timedelta(hours=72))]
+        forecast_start = _tomorrow_start(now_ua)
+        forecast_end = forecast_start + pd.Timedelta(days=3)
+        df_plot = df[(df['Time'] >= forecast_start) & (df['Time'] < forecast_end)]
     else:
         cutoff = df['Time'].min() + pd.Timedelta(days=3)
         df_plot = df[df['Time'] < cutoff]
@@ -619,7 +627,7 @@ def draw_main_chart(df_f, now_ua=None):
 
     if now_ua is not None and not df_plot.empty:
         today_end = pd.Timestamp(now_ua.date()) + pd.Timedelta(days=1)
-        if df_plot['Time'].min() <= today_end <= df_plot['Time'].max():
+        if df_plot['Time'].min() < today_end <= df_plot['Time'].max():
             fig.add_vline(
                 x=today_end,
                 line_width=1,

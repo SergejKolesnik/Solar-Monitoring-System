@@ -385,8 +385,8 @@ if not df_f.empty:
                 st.markdown("##### Погодинний прогноз генерації на 3 дні")
             with download_col:
                 output = io.BytesIO()
-                export_from = pd.Timestamp(now_ua)
-                export_to = export_from + pd.Timedelta(hours=72)
+                export_from = pd.Timestamp((now_ua + timedelta(days=1)).date())
+                export_to = export_from + pd.Timedelta(days=3)
                 df_export = df_f[(df_f['Time'] >= export_from) & (df_f['Time'] < export_to)].copy()
                 export_cols = [
                     'Time', 'AI_MW', 'Forecast_MW',
@@ -407,7 +407,7 @@ if not df_f.empty:
                 st.download_button(
                     label="📥 Завантажити погодинний прогноз (.xlsx)",
                     data=output.getvalue(),
-                    file_name=f"SkyGrid_Hourly_Forecast_{now_ua.strftime('%d_%m_%Y')}.xlsx",
+                    file_name=f"SkyGrid_Hourly_Forecast_{export_from.strftime('%d_%m_%Y')}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
 
