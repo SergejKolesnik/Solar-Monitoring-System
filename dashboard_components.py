@@ -30,7 +30,13 @@ def _style_forecast_dashboard():
             border-radius: 8px;
             padding: 22px 22px 20px;
             min-height: 164px;
-            box-shadow: 0 18px 36px rgba(0,0,0,0.28);
+            box-shadow: 0 18px 36px rgba(0,0,0,0.30);
+            transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+        }
+        .forecast-card:hover {
+            border-color: var(--card-hover-border);
+            transform: translateY(-2px);
+            box-shadow: 0 22px 44px rgba(0,0,0,0.34);
         }
         .forecast-card__label {
             color: rgba(255,255,255,0.72);
@@ -103,7 +109,13 @@ def _style_forecast_dashboard():
             border-radius: 8px;
             padding: 18px 20px;
             min-height: 190px;
-            box-shadow: 0 16px 32px rgba(0,0,0,0.24);
+            box-shadow: 0 16px 32px rgba(0,0,0,0.26);
+            transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+        }
+        .weather-day:hover {
+            border-color: var(--weather-hover-border);
+            transform: translateY(-2px);
+            box-shadow: 0 20px 40px rgba(0,0,0,0.32);
         }
         .weather-day__header {
             display: flex;
@@ -169,6 +181,7 @@ def _style_forecast_dashboard():
             justify-content: center;
             min-height: 102px;
             background: rgba(255,255,255,0.025);
+            box-shadow: inset 0 0 18px rgba(255,255,255,0.018);
         }
         .weather-day__solar-label {
             color: rgba(255,255,255,0.48);
@@ -286,8 +299,8 @@ def draw_metrics(df_f, df_h, now_ua, timedelta):
             "badge": f"{capacity_pct:.1f}%",
             "note": "від номінальної потужності СЕС",
             "icon": "↗",
-            "accent": "#ffbf1f",
-            "glow": "rgba(255,191,31,0.22)",
+            "accent": "#ffb800",
+            "glow": "rgba(255,184,0,0.22)",
             "progress": _clamp_pct(capacity_pct),
         },
         {
@@ -297,8 +310,8 @@ def draw_metrics(df_f, df_h, now_ua, timedelta):
             "badge": peak_time,
             "note": "очікуваний пік інсоляції",
             "icon": "⚡",
-            "accent": "#20e8f2",
-            "glow": "rgba(32,232,242,0.20)",
+            "accent": "#00f0ff",
+            "glow": "rgba(0,240,255,0.20)",
             "progress": _clamp_pct(peak_pct),
         },
         {
@@ -308,8 +321,8 @@ def draw_metrics(df_f, df_h, now_ua, timedelta):
             "badge": f"КВВП {month_capacity_factor:.1f}%" if month_capacity_factor > 0 else "Оновлено",
             "note": month_note,
             "icon": "▣",
-            "accent": "#27d29b",
-            "glow": "rgba(39,210,155,0.18)",
+            "accent": "#10b981",
+            "glow": "rgba(16,185,129,0.18)",
             "progress": _clamp_pct(month_freshness),
         },
     ]
@@ -319,6 +332,7 @@ def draw_metrics(df_f, df_h, now_ua, timedelta):
             f"--card-accent:{card['accent']};"
             f"--card-glow:{card['glow']};"
             f"--card-border:{card['accent']}33;"
+            f"--card-hover-border:{card['accent']}66;"
             f"--card-icon-bg:{card['accent']}18;"
             f"--card-badge-bg:{card['accent']}1f;"
             f"--card-progress:{card['progress']:.0f}%;"
@@ -385,30 +399,31 @@ def draw_weather_strip(df_f, now_ua, timedelta):
         wind_avg = float(row.get('WindSpeed_mean', 0))
         icon = _weather_icon(cloud_avg, precip_max)
         risk = "сприятливо"
-        accent = "#27d29b"
-        status_bg = "rgba(39,210,155,0.14)"
-        status_border = "rgba(39,210,155,0.30)"
+        accent = "#10b981"
+        status_bg = "rgba(16,185,129,0.14)"
+        status_border = "rgba(16,185,129,0.30)"
         if precip_max >= 45:
             risk = "ризик опадів"
-            accent = "#ffbf1f"
-            status_bg = "rgba(255,191,31,0.14)"
-            status_border = "rgba(255,191,31,0.34)"
+            accent = "#ffb800"
+            status_bg = "rgba(255,184,0,0.14)"
+            status_border = "rgba(255,184,0,0.34)"
         elif cloud_max >= 75:
             risk = "пікова хмарність"
-            accent = "#ffbf1f"
-            status_bg = "rgba(255,191,31,0.14)"
-            status_border = "rgba(255,191,31,0.34)"
+            accent = "#ffb800"
+            status_bg = "rgba(255,184,0,0.14)"
+            status_border = "rgba(255,184,0,0.34)"
         elif cloud_avg >= 55:
             risk = "нестабільна генерація"
-            accent = "#20e8f2"
-            status_bg = "rgba(32,232,242,0.12)"
-            status_border = "rgba(32,232,242,0.28)"
+            accent = "#00f0ff"
+            status_bg = "rgba(0,240,255,0.12)"
+            status_border = "rgba(0,240,255,0.28)"
         weather_style = (
             f"--weather-accent:{accent};"
             f"--weather-status-color:{accent};"
             f"--weather-status-bg:{status_bg};"
             f"--weather-status-border:{status_border};"
             f"--weather-solar-border:{accent}55;"
+            f"--weather-hover-border:{accent}66;"
         )
         with col:
             st.markdown(
