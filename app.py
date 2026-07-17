@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
 
 from weather_service import fetch_weather_data, calc_forecast_mw
-from dashboard_components import draw_main_chart, draw_metrics, draw_weather_strip
+from dashboard_components import draw_app_header, draw_main_chart, draw_metrics, draw_weather_strip
 from ui_components import draw_training_tab, draw_base_tab, draw_meteo_tab, draw_plan_tab
 
 # Налаштування сторiнки
@@ -161,11 +161,12 @@ def load_plan_from_sheets(month: int, year: int, nominal_kw: float):
 # --- Заголовок ---
 st.sidebar.markdown("🚀 **Status: SkyGrid_Active**")
 
+draw_app_header(LOGO_URL)
 col_title, col_spacer, col_logo = st.columns([5, 1, 2])
-with col_title:
+if False:
     st.markdown("# ☀️ SkyGrid Solar AI")
     st.markdown("<span style='color:gray; font-size:13px;'>Система моніторингу та прогнозування сонячної генерації</span>", unsafe_allow_html=True)
-with col_logo:
+if False:
     st.markdown(f"""<div style='display:flex; align-items:center; justify-content:flex-end; gap:12px; padding-top:8px;'>
 <img src='{LOGO_URL}' width='48' style='vertical-align:middle;'/>
 <div style='text-align:left; line-height:1.3;'>
@@ -174,7 +175,7 @@ with col_logo:
 <div style='font-size:11px; color:gray;'><a href='https://www.nzf.com.ua' target='_blank' style='color:gray; text-decoration:none;'>nzf.com.ua</a></div>
 </div></div>""", unsafe_allow_html=True)
 
-st.markdown("---")
+st.write("")
 
 # 1. Завантаження погоди
 df_f = fetch_weather_data()
