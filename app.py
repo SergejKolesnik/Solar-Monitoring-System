@@ -102,8 +102,12 @@ def draw_app_header(logo_url):
             background: rgba(255,184,0,0.14);
             color: #ffb800;
             box-shadow: 0 0 24px rgba(255,184,0,0.24);
-            font-size: 22px;
-            font-weight: 800;
+            overflow: hidden;
+        }}
+        .app-brand__mark svg {{
+            width: 33px;
+            height: 33px;
+            display: block;
         }}
         .app-brand__title {{
             font-size: 27px;
@@ -165,7 +169,28 @@ def draw_app_header(logo_url):
         </style>
         <div class="app-shell-header">
             <div class="app-brand">
-                <div class="app-brand__mark">☼</div>
+                <div class="app-brand__mark" aria-hidden="true">
+                    <svg viewBox="0 0 48 48">
+                        <defs>
+                            <radialGradient id="sgSun" cx="36%" cy="32%" r="62%">
+                                <stop offset="0%" stop-color="#fff4b0"/>
+                                <stop offset="48%" stop-color="#ffb800"/>
+                                <stop offset="100%" stop-color="#f59e0b"/>
+                            </radialGradient>
+                            <linearGradient id="sgPulse" x1="7" y1="34" x2="42" y2="15">
+                                <stop offset="0%" stop-color="#ffb800"/>
+                                <stop offset="100%" stop-color="#00e5ff"/>
+                            </linearGradient>
+                        </defs>
+                        <circle cx="18" cy="18" r="10.5" fill="url(#sgSun)"/>
+                        <path d="M18 3.8v4.2M18 28v4.2M3.8 18h4.2M28 18h4.2M8 8l3 3M25 25l3 3M28 8l-3 3M11 25l-3 3"
+                              fill="none" stroke="#ffb800" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+                        <path d="M6 35c6.8-8.8 11.2-10.2 16.4-6.2 4.2 3.2 7.6 3.6 12.1-2.1 2.1-2.7 4.2-5.4 7.5-6.8"
+                              fill="none" stroke="url(#sgPulse)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+                        <circle cx="35" cy="26.5" r="2.4" fill="#00e5ff"/>
+                        <circle cx="42" cy="19.8" r="2.1" fill="#00e5ff" opacity="0.82"/>
+                    </svg>
+                </div>
                 <div>
                     <div class="app-brand__title">SkyGrid Solar AI</div>
                     <div class="app-brand__subtitle">Система моніторингу та прогнозування сонячної генерації</div>
