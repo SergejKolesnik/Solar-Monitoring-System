@@ -6,7 +6,8 @@ from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
 
 from weather_service import fetch_weather_data, calc_forecast_mw
-from ui_components import draw_main_chart, draw_metrics, draw_training_tab, draw_base_tab, draw_meteo_tab, draw_plan_tab
+from dashboard_components import draw_main_chart, draw_metrics, draw_weather_strip
+from ui_components import draw_training_tab, draw_base_tab, draw_meteo_tab, draw_plan_tab
 
 # Налаштування сторiнки
 st.set_page_config(page_title="SkyGrid Solar AI", layout="wide", page_icon="☀️")
@@ -187,7 +188,7 @@ if not df_f.empty:
             st.stop()
 
         # 3. Вкладки
-        tabs = st.tabs(["📊 МОНІТОРИНГ", "🧠 НАВЧАННЯ", "📅 БАЗА", "🌤 МЕТЕО", "📋 ПЛАН"])
+        tabs = st.tabs(["Моніторинг", "Навчання", "База", "Метео", "План"])
 
         with tabs[0]:
             saved_capacity_mw = load_capacity_from_sheets()
@@ -241,20 +242,42 @@ if not df_f.empty:
             # Дані для вкладки "Навчання" тепер формуються з уже збережених помилок,
             # а не через повторне навчання моделі в app.py.
             draw_metrics(df_f, now_ua, timedelta)
-            draw_main_chart(df_f)
+            st.write("")
+            draw_weather_strip(df_f, now_ua, timedelta)
 
-            st.write("---")
-            output = io.BytesIO()
-            df_export = df_f.head(72)[['Time', 'Forecast_MW', 'AI_MW']].copy()
-            df_export.columns = ['Час', 'Прогноз сайту (МВт)', 'План ШІ (МВт)']
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df_export.to_excel(writer, index=False, sheet_name='Solar_Plan')
-            st.download_button(
-                label="📥 Завантажити План в Excel",
-                data=output.getvalue(),
-                file_name=f"Solar_Plan_{now_ua.strftime('%d_%m')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+            st.write("")
+            title_col, download_col = st.columns([3, 1])
+            with title_col:
+                st.markdown("##### Погодинний прогноз генерації на 3 дні")
+            with download_col:
+                output = io.BytesIO()
+                export_from = pd.Timestamp(now_ua)
+                export_to = export_from + pd.Timedelta(hours=72)
+                df_export = df_f[(df_f['Time'] >= export_from) & (df_f['Time'] < export_to)].copy()
+                export_cols = [
+                    'Time', 'AI_MW', 'Forecast_MW',
+                    'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb'
+                ]
+                df_export = df_export[[col for col in export_cols if col in df_export.columns]]
+                df_export = df_export.rename(columns={
+                    'Time': 'Дата/Час',
+                    'AI_MW': 'Прогнозована потужність ШІ, МВт',
+                    'Forecast_MW': 'Базовий прогноз сайту, МВт',
+                    'CloudCover': 'Очікувана хмарність, %',
+                    'Temp': 'Температура, °C',
+                    'WindSpeed': 'Швидкість вітру',
+                    'PrecipProb': 'Ймовірність опадів, %',
+                })
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    df_export.to_excel(writer, index=False, sheet_name='Hourly_Forecast')
+                st.download_button(
+                    label="📥 Завантажити погодинний прогноз (.xlsx)",
+                    data=output.getvalue(),
+                    file_name=f"SkyGrid_Hourly_Forecast_{now_ua.strftime('%d_%m_%Y')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+
+            draw_main_chart(df_f, now_ua)
 
         with tabs[1]:
             draw_training_tab(df_h)
