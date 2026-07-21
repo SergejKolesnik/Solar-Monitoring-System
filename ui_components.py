@@ -431,14 +431,14 @@ def draw_base_tab(df_h):
             use_container_width=True,
             hide_index=True
         )
-def draw_meteo_tab(df_f):
+def draw_meteo_tab(df_f, df_open_meteo=None):
     col_title, col_src = st.columns([6, 2])
     with col_title:
-        st.markdown("##### 🌤 Метео-дашборд — прогноз на 5 днів")
+        st.markdown("##### 🌤 Метеоаналіз — прогноз на 5 днів")
     with col_src:
         st.markdown(
             "<div style='text-align:right; padding-top:6px; font-size:12px; color:gray;'>"
-            "Дані: <a href='https://www.visualcrossing.com' target='_blank' style='color:gray;'>Visual Crossing Weather</a>"
+            "Дані: Visual Crossing + Open-Meteo"
             "</div>",
             unsafe_allow_html=True
         )
@@ -452,6 +452,12 @@ def draw_meteo_tab(df_f):
     cutoff = df['Time'].min() + pd.Timedelta(days=5)
     df = df[df['Time'] <= cutoff]
 
+    df_alt = pd.DataFrame()
+    if df_open_meteo is not None and not df_open_meteo.empty:
+        df_alt = df_open_meteo.copy()
+        df_alt['Time'] = pd.to_datetime(df_alt['Time'])
+        df_alt = df_alt[(df_alt['Time'] >= df['Time'].min()) & (df_alt['Time'] <= cutoff)]
+
     row = df.iloc[0] if not df.empty else None
     if row is not None:
         c1, c2, c3, c4 = st.columns(4)
@@ -462,19 +468,120 @@ def draw_meteo_tab(df_f):
 
     st.write("---")
 
+    if not df_alt.empty:
+        st.markdown("##### Порівняння метеоджерел (режим спостереження)")
+
+        vc_daily = df.groupby(df['Time'].dt.date).agg(
+            VC_MWh=('Forecast_MW', 'sum'),
+            VC_Rad=('Rad', 'sum'),
+            VC_Cloud=('CloudCover', 'mean')
+        ).reset_index().rename(columns={'Time': 'Дата'})
+        om_daily = df_alt.groupby(df_alt['Time'].dt.date).agg(
+            OM_MWh=('Forecast_MW', 'sum'),
+            OM_Rad=('Rad', 'sum'),
+            OM_Cloud=('CloudCover', 'mean')
+        ).reset_index().rename(columns={'Time': 'Дата'})
+        compare = vc_daily.merge(om_daily, on='Дата', how='inner').head(5)
+
+        if not compare.empty:
+            compare['Різниця МВт·год'] = compare['OM_MWh'] - compare['VC_MWh']
+            compare['Розбіжність %'] = (
+                compare['Різниця МВт·год'].abs() /
+                compare[['VC_MWh', 'OM_MWh']].max(axis=1).replace(0, pd.NA) * 100
+            ).fillna(0)
+            compare['Різниця хмарності, п.п.'] = compare['OM_Cloud'] - compare['VC_Cloud']
+
+            next3 = compare.head(3)
+            vc_sum = float(next3['VC_MWh'].sum())
+            om_sum = float(next3['OM_MWh'].sum())
+            max_divergence = float(next3['Розбіжність %'].max())
+            cloud_gap = float(next3['Різниця хмарності, п.п.'].abs().max())
+
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Visual Crossing, 3 дні", f"{vc_sum:.1f} МВт·год")
+            c2.metric("Open-Meteo, 3 дні", f"{om_sum:.1f} МВт·год")
+            c3.metric("Макс. розбіжність", f"{max_divergence:.0f}%")
+            c4.metric("Різниця хмарності", f"{cloud_gap:.0f} п.п.")
+
+            if max_divergence >= 35 or cloud_gap >= 35:
+                st.warning(
+                    "Метеоджерела суттєво розходяться. Фінальний прогноз поки не змінено, "
+                    "але для оператора цей період варто вважати метеоризиком."
+                )
+            else:
+                st.success("Метеоджерела загалом узгоджуються для найближчих днів.")
+
+            fig_cmp = go.Figure()
+            fig_cmp.add_trace(go.Bar(
+                x=compare['Дата'], y=compare['VC_MWh'],
+                name='Visual Crossing', marker_color='rgba(255,184,0,0.72)'
+            ))
+            fig_cmp.add_trace(go.Bar(
+                x=compare['Дата'], y=compare['OM_MWh'],
+                name='Open-Meteo', marker_color='rgba(0,229,255,0.62)'
+            ))
+            fig_cmp.update_layout(
+                height=250, margin=dict(l=0, r=0, t=10, b=0),
+                yaxis=dict(title='МВт·год'),
+                legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0),
+                barmode='group',
+                hovermode='x unified'
+            )
+            st.plotly_chart(fig_cmp, width='stretch')
+
+            table = compare.copy()
+            table['Дата'] = pd.to_datetime(table['Дата']).dt.strftime('%d.%m')
+            table = table.rename(columns={
+                'VC_MWh': 'Visual Crossing, МВт·год',
+                'OM_MWh': 'Open-Meteo, МВт·год',
+                'VC_Cloud': 'Хмарність VC, %',
+                'OM_Cloud': 'Хмарність OM, %'
+            })
+            display_cols = [
+                'Дата', 'Visual Crossing, МВт·год', 'Open-Meteo, МВт·год',
+                'Різниця МВт·год', 'Розбіжність %',
+                'Хмарність VC, %', 'Хмарність OM, %', 'Різниця хмарності, п.п.'
+            ]
+            st.dataframe(
+                table[display_cols].round(1),
+                use_container_width=True,
+                hide_index=True
+            )
+
+            st.caption(
+                "Open-Meteo зараз використовується тільки для контролю метеоризику. "
+                "Основний прогноз і навчання моделі не змінені."
+            )
+    else:
+        st.info("Open-Meteo поки недоступний. Основний метеопрогноз Visual Crossing працює без змін.")
+
+    st.write("---")
+
     st.markdown("##### Сонячна радіація та хмарність")
     fig1 = make_subplots(specs=[[{"secondary_y": True}]])
     fig1.add_trace(go.Scatter(
         x=df['Time'], y=df['Rad'],
-        name='Радіація (Вт/м²)', mode='lines',
+        name='Радіація VC (Вт/м²)', mode='lines',
         line=dict(color='#BA7517', width=2),
         fill='tozeroy', fillcolor='rgba(186,117,23,0.1)'
     ), secondary_y=False)
+    if not df_alt.empty and 'Rad' in df_alt.columns:
+        fig1.add_trace(go.Scatter(
+            x=df_alt['Time'], y=df_alt['Rad'],
+            name='Радіація OM (Вт/м²)', mode='lines',
+            line=dict(color='#00e5ff', width=1.8)
+        ), secondary_y=False)
     if 'CloudCover' in df.columns:
         fig1.add_trace(go.Scatter(
             x=df['Time'], y=df['CloudCover'],
-            name='Хмарність (%)', mode='lines',
+            name='Хмарність VC (%)', mode='lines',
             line=dict(color='#888780', width=1.5, dash='dot')
+        ), secondary_y=True)
+    if not df_alt.empty and 'CloudCover' in df_alt.columns:
+        fig1.add_trace(go.Scatter(
+            x=df_alt['Time'], y=df_alt['CloudCover'],
+            name='Хмарність OM (%)', mode='lines',
+            line=dict(color='#7dd3fc', width=1.4, dash='dash')
         ), secondary_y=True)
     fig1.update_layout(
         height=220, margin=dict(l=0, r=0, t=10, b=0),

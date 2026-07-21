@@ -5,7 +5,7 @@ import gspread
 from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
 
-from weather_service import fetch_weather_data, calc_forecast_mw
+from weather_service import fetch_weather_data, fetch_open_meteo_data, calc_forecast_mw
 from dashboard_components import draw_main_chart, draw_metrics, draw_weather_strip
 from ui_components import draw_training_tab, draw_base_tab, draw_meteo_tab, draw_plan_tab
 
@@ -370,7 +370,7 @@ if not df_f.empty:
             st.stop()
 
         # 3. Вкладки
-        tabs = st.tabs(["Моніторинг", "Навчання", "База", "Метео", "План"])
+        tabs = st.tabs(["Моніторинг", "Навчання", "База", "Метеоаналіз", "План"])
 
         with tabs[0]:
             saved_capacity_mw = load_capacity_from_sheets()
@@ -468,7 +468,10 @@ if not df_f.empty:
             draw_base_tab(df_h)
 
         with tabs[3]:
-            draw_meteo_tab(df_f)
+            df_open_meteo = fetch_open_meteo_data()
+            if not df_open_meteo.empty:
+                df_open_meteo = calc_forecast_mw(df_open_meteo, capacity_mw, kef=1.0)
+            draw_meteo_tab(df_f, df_open_meteo)
 
         with tabs[4]:
             df_plan = load_plan_from_sheets(now_ua.month, now_ua.year, capacity_mw)
