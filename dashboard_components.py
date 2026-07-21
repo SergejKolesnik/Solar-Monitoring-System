@@ -384,7 +384,77 @@ def _style_forecast_dashboard():
             font-weight: 700;
             margin-top: 5px;
         }
+        .source-attribution {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin: -2px 0 12px;
+            color: rgba(255,255,255,0.46);
+            font-size: 12px;
+        }
+        .source-attribution__label {
+            color: rgba(255,255,255,0.48);
+            white-space: nowrap;
+        }
+        .source-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            padding: 6px 10px;
+            border-radius: 999px;
+            border: 1px solid rgba(255,255,255,0.10);
+            background: rgba(255,255,255,0.035);
+            color: rgba(255,255,255,0.86) !important;
+            text-decoration: none !important;
+            font-weight: 700;
+            line-height: 1;
+        }
+        .source-chip:hover {
+            border-color: rgba(255,184,0,0.36);
+            background: rgba(255,184,0,0.08);
+            color: #ffffff !important;
+        }
+        .source-chip__mark {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            font-weight: 900;
+        }
+        .source-chip__mark--vc {
+            background: rgba(255,184,0,0.16);
+            color: #ffb800;
+        }
+        .source-chip__mark--om {
+            background: rgba(0,229,255,0.14);
+            color: #00e5ff;
+        }
         </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _draw_weather_sources(compact=False):
+    label = "Метеодані:" if compact else "Джерела метеоданих:"
+    st.markdown(
+        f"""
+        <div class="source-attribution">
+            <span class="source-attribution__label">{label}</span>
+            <a class="source-chip" href="https://www.visualcrossing.com/" target="_blank" rel="noopener noreferrer">
+                <span class="source-chip__mark source-chip__mark--vc">VC</span>
+                Visual Crossing
+            </a>
+            <a class="source-chip" href="https://open-meteo.com/" target="_blank" rel="noopener noreferrer">
+                <span class="source-chip__mark source-chip__mark--om">OM</span>
+                Open-Meteo
+            </a>
+        </div>
         """,
         unsafe_allow_html=True,
     )
@@ -553,7 +623,11 @@ def draw_weather_strip(df_f, now_ua, timedelta):
     forecast_end = forecast_start + pd.Timedelta(days=3)
     df = df[(df['Time'] >= forecast_start) & (df['Time'] < forecast_end)]
 
-    st.markdown("##### Погода, що впливає на прогноз")
+    title_col, source_col = st.columns([3, 2])
+    with title_col:
+        st.markdown("##### Погода, що впливає на прогноз")
+    with source_col:
+        _draw_weather_sources(compact=True)
     if df.empty:
         st.info("Немає погодних даних для найближчих 3 днів.")
         return

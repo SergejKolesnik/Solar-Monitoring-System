@@ -437,9 +437,71 @@ def draw_meteo_tab(df_f, df_open_meteo=None):
         st.markdown("##### 🌤 Метеоаналіз — прогноз на 5 днів")
     with col_src:
         st.markdown(
-            "<div style='text-align:right; padding-top:6px; font-size:12px; color:gray;'>"
-            "Дані: Visual Crossing + Open-Meteo"
-            "</div>",
+            """
+            <style>
+            .meteo-source-attribution {
+                display: flex;
+                align-items: center;
+                justify-content: flex-end;
+                flex-wrap: wrap;
+                gap: 8px;
+                padding-top: 2px;
+                color: rgba(255,255,255,0.48);
+                font-size: 12px;
+            }
+            .meteo-source-attribution__label {
+                color: rgba(255,255,255,0.48);
+                white-space: nowrap;
+            }
+            .meteo-source-chip {
+                display: inline-flex;
+                align-items: center;
+                gap: 7px;
+                padding: 6px 10px;
+                border-radius: 999px;
+                border: 1px solid rgba(255,255,255,0.10);
+                background: rgba(255,255,255,0.035);
+                color: rgba(255,255,255,0.86) !important;
+                text-decoration: none !important;
+                font-weight: 700;
+                line-height: 1;
+            }
+            .meteo-source-chip:hover {
+                border-color: rgba(255,184,0,0.36);
+                background: rgba(255,184,0,0.08);
+                color: #ffffff !important;
+            }
+            .meteo-source-chip__mark {
+                width: 18px;
+                height: 18px;
+                border-radius: 50%;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 10px;
+                font-weight: 900;
+            }
+            .meteo-source-chip__mark--vc {
+                background: rgba(255,184,0,0.16);
+                color: #ffb800;
+            }
+            .meteo-source-chip__mark--om {
+                background: rgba(0,229,255,0.14);
+                color: #00e5ff;
+            }
+            </style>
+            <div class="meteo-source-attribution">
+                <span class="meteo-source-attribution__label">Джерела:</span>
+                <a class="meteo-source-chip" href="https://www.visualcrossing.com/" target="_blank" rel="noopener noreferrer">
+                    <span class="meteo-source-chip__mark meteo-source-chip__mark--vc">VC</span>
+                    Visual Crossing
+                </a>
+                <a class="meteo-source-chip" href="https://open-meteo.com/" target="_blank" rel="noopener noreferrer">
+                    <span class="meteo-source-chip__mark meteo-source-chip__mark--om">OM</span>
+                    Open-Meteo
+                </a>
+            </div>
+            """,
             unsafe_allow_html=True
         )
 
