@@ -162,12 +162,23 @@ def draw_training_tab(df_h):
         if col != 'Дата':
             daily[col] = pd.to_numeric(daily[col], errors='coerce').round(2)
 
-    last_fact_time = df_fact['Time'].max()
-    days_since_fact = (pd.Timestamp.now().normalize() - pd.Timestamp(last_fact_time).normalize()).days
-    if days_since_fact > 1:
+    last_fact_time = pd.to_datetime(df_fact['Time'].max())
+    now_kyiv = pd.Timestamp.now(tz='Europe/Kyiv').tz_localize(None)
+    expected_lag_days = 2 if now_kyiv.hour < 9 else 1
+    expected_latest_date = (now_kyiv.normalize() - pd.Timedelta(days=expected_lag_days)).date()
+    latest_fact_date = last_fact_time.date()
+    fact_age_hours = (now_kyiv - last_fact_time).total_seconds() / 3600
+
+    if latest_fact_date < expected_latest_date:
         st.warning(
             f"Останній факт АСКОЕ у базі: {last_fact_time.strftime('%d.%m.%Y %H:%M')}. "
-            f"Дані не оновлювались {days_since_fact} дн."
+            f"Очікуваний останній звіт: {expected_latest_date.strftime('%d.%m.%Y')}. "
+            "Перевірте ранковий автосинхронізатор або запустіть SkyGrid Auto Sync вручну."
+        )
+    elif fact_age_hours > 30:
+        st.info(
+            f"Останній факт АСКОЕ у базі: {last_fact_time.strftime('%d.%m.%Y %H:%M')}. "
+            "Це нормально для ранкового вікна до обробки нового добового звіту."
         )
 
     def _quality_window(window_days):
