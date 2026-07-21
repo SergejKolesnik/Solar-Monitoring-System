@@ -489,6 +489,52 @@ def draw_meteo_tab(df_f, df_open_meteo=None):
                 background: rgba(0,229,255,0.14);
                 color: #00e5ff;
             }
+            .meteo-provider-row {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 12px;
+                margin: 8px 0 18px;
+            }
+            .meteo-provider-card {
+                display: block;
+                min-height: 72px;
+                padding: 14px 16px;
+                border-radius: 8px;
+                border: 1px solid rgba(255,255,255,0.10);
+                background: linear-gradient(135deg, rgba(17,22,34,0.96), rgba(10,15,24,0.98));
+                color: rgba(255,255,255,0.88) !important;
+                text-decoration: none !important;
+                box-shadow: 0 12px 26px rgba(0,0,0,0.24);
+            }
+            .meteo-provider-card:hover {
+                border-color: var(--provider-accent);
+                background: linear-gradient(135deg, rgba(22,28,40,0.98), rgba(10,15,24,0.98));
+            }
+            .meteo-provider-card__top {
+                display: flex;
+                align-items: center;
+                gap: 9px;
+                color: #ffffff;
+                font-size: 14px;
+                font-weight: 800;
+            }
+            .meteo-provider-card__mark {
+                width: 24px;
+                height: 24px;
+                border-radius: 999px;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                background: var(--provider-bg);
+                color: var(--provider-accent);
+                font-size: 11px;
+                font-weight: 900;
+            }
+            .meteo-provider-card__hint {
+                margin-top: 7px;
+                color: rgba(255,255,255,0.52);
+                font-size: 12px;
+            }
             </style>
             <div class="meteo-source-attribution">
                 <span class="meteo-source-attribution__label">Джерела:</span>
@@ -532,6 +578,27 @@ def draw_meteo_tab(df_f, df_open_meteo=None):
 
     if not df_alt.empty:
         st.markdown("##### Порівняння метеоджерел (режим спостереження)")
+        st.markdown(
+            """
+            <div class="meteo-provider-row">
+                <a class="meteo-provider-card" style="--provider-accent:#ffb800;--provider-bg:rgba(255,184,0,0.16);" href="https://www.visualcrossing.com/" target="_blank" rel="noopener noreferrer">
+                    <div class="meteo-provider-card__top">
+                        <span class="meteo-provider-card__mark">VC</span>
+                        Visual Crossing
+                    </div>
+                    <div class="meteo-provider-card__hint">Основне джерело погодного прогнозу для розрахунку генерації.</div>
+                </a>
+                <a class="meteo-provider-card" style="--provider-accent:#00e5ff;--provider-bg:rgba(0,229,255,0.14);" href="https://open-meteo.com/" target="_blank" rel="noopener noreferrer">
+                    <div class="meteo-provider-card__top">
+                        <span class="meteo-provider-card__mark">OM</span>
+                        Open-Meteo
+                    </div>
+                    <div class="meteo-provider-card__hint">Альтернативне відкрите джерело для контролю метеоризику.</div>
+                </a>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 
         vc_daily = df.groupby(df['Time'].dt.date).agg(
             VC_MWh=('Forecast_MW', 'sum'),
@@ -560,8 +627,26 @@ def draw_meteo_tab(df_f, df_open_meteo=None):
             cloud_gap = float(next3['Різниця хмарності, п.п.'].abs().max())
 
             c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Visual Crossing, 3 дні", f"{vc_sum:.1f} МВт·год")
-            c2.metric("Open-Meteo, 3 дні", f"{om_sum:.1f} МВт·год")
+            with c1:
+                st.markdown(
+                    f"""
+                    <a class="meteo-provider-card" style="--provider-accent:#ffb800;--provider-bg:rgba(255,184,0,0.16);min-height:96px;" href="https://www.visualcrossing.com/" target="_blank" rel="noopener noreferrer">
+                        <div class="meteo-provider-card__top"><span class="meteo-provider-card__mark">VC</span>Visual Crossing, 3 дні</div>
+                        <div style="margin-top:10px;color:#ffffff;font-size:31px;line-height:1.1;font-weight:500;">{vc_sum:.1f} МВт·год</div>
+                    </a>
+                    """,
+                    unsafe_allow_html=True
+                )
+            with c2:
+                st.markdown(
+                    f"""
+                    <a class="meteo-provider-card" style="--provider-accent:#00e5ff;--provider-bg:rgba(0,229,255,0.14);min-height:96px;" href="https://open-meteo.com/" target="_blank" rel="noopener noreferrer">
+                        <div class="meteo-provider-card__top"><span class="meteo-provider-card__mark">OM</span>Open-Meteo, 3 дні</div>
+                        <div style="margin-top:10px;color:#ffffff;font-size:31px;line-height:1.1;font-weight:500;">{om_sum:.1f} МВт·год</div>
+                    </a>
+                    """,
+                    unsafe_allow_html=True
+                )
             c3.metric("Макс. розбіжність", f"{max_divergence:.0f}%")
             c4.metric("Різниця хмарності", f"{cloud_gap:.0f} п.п.")
 
