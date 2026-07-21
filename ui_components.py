@@ -70,8 +70,8 @@ def draw_main_chart(df_f):
 
 def draw_training_tab(df_h):
     """
-    Вкладка "Навчання" більше НЕ навчає модель у Streamlit.
-    Вона тільки аналізує вже збережені результати з Google Sheet:
+    Вкладка "Якість ШІ" НЕ навчає модель у Streamlit.
+    Вона показує прогрес і аналізує вже збережені результати з Google Sheet:
       - Forecast_MW        = базовий прогноз сайту/погоди
       - AI_Forecast_MW     = прогноз, який записав collector.py
       - Fact_MW            = факт АСКОЕ
@@ -86,7 +86,7 @@ def draw_training_tab(df_h):
     required = ['Time', 'Fact_MW', 'Forecast_MW', 'AI_Forecast_MW']
     missing = [c for c in required if c not in df_h.columns]
     if missing:
-        st.warning(f"Для аналізу навчання бракує колонок: {', '.join(missing)}")
+        st.warning(f"Для аналізу якості ШІ бракує колонок: {', '.join(missing)}")
         st.info("Спочатку запусти оновлений collector.py, щоб він створив AI_Forecast_MW та колонки помилок.")
         return
 
@@ -129,13 +129,13 @@ def draw_training_tab(df_h):
     improvement_pct = 100 * (base_mape - ai_mape) / base_mape if base_mape > 0 else 0
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("Середній |Forecast_Error_Pct|", f"{base_mape:.1f}%")
-    c2.metric("Середній |AI_Error_Pct|", f"{ai_mape:.1f}%")
-    c3.metric("Покращення AI", f"{improvement_pct:.1f}%")
+    c1.metric("MAPE базового прогнозу", f"{base_mape:.1f}%")
+    c2.metric("MAPE прогнозу ШІ", f"{ai_mape:.1f}%")
+    c3.metric("Покращення ШІ", f"{improvement_pct:.1f}%")
 
     st.caption(
-        "Тут більше немає повторного навчання моделі. Вкладка показує тільки реальні помилки "
-        "між збереженим прогнозом, AI_Forecast_MW і фактом АСКОЕ."
+        "Це центр контролю якості ШІ: тут видно реальні помилки між базовим прогнозом, "
+        "AI_Forecast_MW і фактом АСКОЕ. Повторне навчання виконує collector.py, не Streamlit."
     )
 
     st.write("---")

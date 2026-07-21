@@ -422,7 +422,7 @@ if not df_f.empty:
             st.stop()
 
         # 3. Вкладки
-        tabs = st.tabs(["Моніторинг", "Навчання", "База", "Метеоаналіз", "План"])
+        tabs = st.tabs(["Прогноз", "Якість ШІ", "Дані", "Метеоаналіз", "План"])
 
         with tabs[0]:
             saved_capacity_mw = load_capacity_from_sheets()
@@ -473,7 +473,7 @@ if not df_f.empty:
                 df_f.loc[df_f['Rad'] < 5, 'AI_MW'] = 0.0
                 df_f.loc[df_f['Rad'] < 5, 'Forecast_MW'] = 0.0
 
-            # Дані для вкладки "Навчання" тепер формуються з уже збережених помилок,
+            # Дані для вкладки "Якість ШІ" формуються з уже збережених помилок,
             # а не через повторне навчання моделі в app.py.
             draw_metrics(df_f, df_h, now_ua, timedelta)
             st.write("")
