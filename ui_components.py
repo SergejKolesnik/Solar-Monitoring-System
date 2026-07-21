@@ -64,6 +64,107 @@ def draw_main_chart(df_f):
     st.plotly_chart(fig, width='stretch')
 
 
+def _latest_positive_time(df, value_col):
+    if value_col not in df.columns or 'Time' not in df.columns:
+        return None
+    values = pd.to_numeric(df[value_col], errors='coerce').fillna(0)
+    times = pd.to_datetime(df['Time'], errors='coerce')
+    valid = df[(values > 0.05) & times.notna()].copy()
+    if valid.empty:
+        return None
+    return pd.to_datetime(valid['Time']).max()
+
+
+def _format_time(value):
+    if value is None or pd.isna(value):
+        return "немає даних"
+    return pd.to_datetime(value).strftime('%d.%m.%Y %H:%M')
+
+
+def _age_badge(value, now_kyiv, stale_hours):
+    if value is None or pd.isna(value):
+        return "немає"
+    hours = max((now_kyiv - pd.to_datetime(value)).total_seconds() / 3600, 0)
+    label = f"{hours:.0f} год. тому"
+    return label if hours <= stale_hours else f"{label} / перевірити"
+
+
+def _day_energy(df, day, value_col):
+    if value_col not in df.columns or 'Time' not in df.columns:
+        return 0.0
+    start = pd.Timestamp(day)
+    end = start + pd.Timedelta(days=1)
+    mask = (df['Time'] >= start) & (df['Time'] < end)
+    return float(pd.to_numeric(df.loc[mask, value_col], errors='coerce').fillna(0).sum())
+
+
+def _draw_ai_data_diagnostics(df):
+    now_kyiv = pd.Timestamp.now(tz='Europe/Kyiv').tz_localize(None)
+    tomorrow = (now_kyiv.normalize() + pd.Timedelta(days=1)).date()
+
+    last_fact_time = _latest_positive_time(df, 'Fact_MW')
+    last_base_time = _latest_positive_time(df, 'Forecast_MW')
+    last_ai_time = _latest_positive_time(df, 'AI_Forecast_MW')
+
+    st.markdown("##### Діагностика даних для прогнозу")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Останній факт АСКОЕ", _format_time(last_fact_time), _age_badge(last_fact_time, now_kyiv, 36))
+    c2.metric("Останній базовий прогноз", _format_time(last_base_time), _age_badge(last_base_time, now_kyiv, 72))
+    c3.metric("Останній прогноз ШІ", _format_time(last_ai_time), _age_badge(last_ai_time, now_kyiv, 72))
+
+    expected_lag_days = 2 if now_kyiv.hour < 9 else 1
+    expected_latest_date = (now_kyiv.normalize() - pd.Timedelta(days=expected_lag_days)).date()
+    issues = []
+    if last_fact_time is None:
+        issues.append("У базі немає фактичної генерації АСКОЕ.")
+    elif last_fact_time.date() < expected_latest_date:
+        issues.append(
+            f"Факт АСКОЕ відстає: останній запис {last_fact_time.strftime('%d.%m.%Y %H:%M')}, "
+            f"очікувався звіт за {expected_latest_date.strftime('%d.%m.%Y')}."
+        )
+
+    base_tomorrow = _day_energy(df, tomorrow, 'Forecast_MW')
+    ai_tomorrow = _day_energy(df, tomorrow, 'AI_Forecast_MW')
+
+    fact_rows = pd.DataFrame()
+    recent_fact_median = 0.0
+    if 'Fact_MW' in df.columns:
+        fact_values = pd.to_numeric(df['Fact_MW'], errors='coerce').fillna(0)
+        fact_rows = df[fact_values > 0.05].copy()
+    if not fact_rows.empty:
+        fact_rows['Дата'] = fact_rows['Time'].dt.date
+        fact_daily = fact_rows.groupby('Дата')['Fact_MW'].sum().reset_index()
+        recent_fact_median = float(pd.to_numeric(fact_daily.tail(14)['Fact_MW'], errors='coerce').median())
+
+    if ai_tomorrow <= 0 and base_tomorrow > 0:
+        issues.append("На завтра є базовий прогноз, але немає збереженого прогнозу ШІ.")
+    elif ai_tomorrow > 0 and base_tomorrow > 0:
+        diff_pct = abs(ai_tomorrow - base_tomorrow) / max(base_tomorrow, ai_tomorrow) * 100
+        if diff_pct >= 45:
+            issues.append(
+                f"Прогноз ШІ на завтра суттєво відрізняється від базового прогнозу: "
+                f"ШІ {ai_tomorrow:.1f} МВт·год vs база {base_tomorrow:.1f} МВт·год."
+            )
+
+    if ai_tomorrow > 0 and recent_fact_median > 0 and ai_tomorrow < recent_fact_median * 0.35:
+        issues.append(
+            f"Прогноз ШІ на завтра нетипово низький: {ai_tomorrow:.1f} МВт·год "
+            f"проти медіани останніх днів {recent_fact_median:.1f} МВт·год."
+        )
+
+    c4, c5, c6 = st.columns(3)
+    c4.metric("ШІ на завтра", f"{ai_tomorrow:.1f} МВт·год")
+    c5.metric("Базовий прогноз на завтра", f"{base_tomorrow:.1f} МВт·год")
+    c6.metric("Медіана факту 14 днів", f"{recent_fact_median:.1f} МВт·год")
+
+    if issues:
+        st.warning(" ".join(issues))
+    else:
+        st.success("Дані для контролю прогнозу виглядають узгоджено: критичних затримок або нетипових відхилень не видно.")
+
+    st.write("---")
+
+
 # ─────────────────────────────────────────────
 #  ВКЛАДКА 1: НАВЧАННЯ
 # ─────────────────────────────────────────────
@@ -90,13 +191,6 @@ def draw_training_tab(df_h):
         st.info("Спочатку запусти оновлений collector.py, щоб він створив AI_Forecast_MW та колонки помилок.")
         return
 
-    error_cols = ['Forecast_Error_MW', 'Forecast_Error_Pct', 'AI_Error_MW', 'AI_Error_Pct']
-    required_error_pct_cols = ['Forecast_Error_Pct', 'AI_Error_Pct']
-    missing_error_cols = [c for c in required_error_pct_cols if c not in df_h.columns]
-    if missing_error_cols:
-        st.info("Недостатньо історичних даних для аналізу.")
-        return
-
     num_cols = [
         'Fact_MW', 'Forecast_MW', 'AI_Forecast_MW',
         'Forecast_Error_MW', 'Forecast_Error_Pct',
@@ -106,6 +200,14 @@ def draw_training_tab(df_h):
     df = _clean_numeric(df_h.copy(), [c for c in num_cols if c in df_h.columns])
     df['Time'] = pd.to_datetime(df['Time'], errors='coerce')
     df = df.dropna(subset=['Time']).sort_values('Time')
+
+    _draw_ai_data_diagnostics(df)
+
+    required_error_pct_cols = ['Forecast_Error_Pct', 'AI_Error_Pct']
+    missing_error_cols = [c for c in required_error_pct_cols if c not in df.columns]
+    if missing_error_cols:
+        st.info("Недостатньо історичних даних для аналізу помилок прогнозу.")
+        return
 
     # Беремо тільки години, де є факт генерації. Нічні нулі не повинні прикрашати точність.
     df_fact = df[(df['Fact_MW'] > 0.05) & (df['Forecast_MW'] > 0.05)].copy()
