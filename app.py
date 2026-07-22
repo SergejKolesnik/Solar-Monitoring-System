@@ -473,9 +473,13 @@ if not df_f.empty:
                 df_f.loc[df_f['Rad'] < 5, 'AI_MW'] = 0.0
                 df_f.loc[df_f['Rad'] < 5, 'Forecast_MW'] = 0.0
 
+            df_open_meteo = fetch_open_meteo_data()
+            if not df_open_meteo.empty:
+                df_open_meteo = calc_forecast_mw(df_open_meteo, capacity_mw, kef=1.0)
+
             # Дані для вкладки "Якість ШІ" формуються з уже збережених помилок,
             # а не через повторне навчання моделі в app.py.
-            draw_metrics(df_f, df_h, now_ua, timedelta)
+            draw_metrics(df_f, df_h, now_ua, timedelta, df_open_meteo)
             st.write("")
             draw_weather_strip(df_f, now_ua, timedelta)
 
@@ -520,9 +524,6 @@ if not df_f.empty:
             draw_base_tab(df_h)
 
         with tabs[3]:
-            df_open_meteo = fetch_open_meteo_data()
-            if not df_open_meteo.empty:
-                df_open_meteo = calc_forecast_mw(df_open_meteo, capacity_mw, kef=1.0)
             draw_meteo_tab(df_f, df_open_meteo)
 
         with tabs[4]:

@@ -434,6 +434,66 @@ def _style_forecast_dashboard():
             background: rgba(0,229,255,0.14);
             color: #00e5ff;
         }
+        .trust-panel {
+            margin: 16px 0 22px;
+            padding: 18px 20px;
+            border-radius: 8px;
+            border: 1px solid var(--trust-border);
+            background: linear-gradient(135deg, rgba(17,22,34,0.98), rgba(10,15,24,0.98));
+            box-shadow: 0 16px 34px rgba(0,0,0,0.28);
+        }
+        .trust-panel__top {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 18px;
+        }
+        .trust-panel__label {
+            color: rgba(255,255,255,0.56);
+            font-size: 12px;
+            font-weight: 750;
+            text-transform: uppercase;
+            margin-bottom: 6px;
+        }
+        .trust-panel__status {
+            color: var(--trust-accent);
+            font-size: 25px;
+            line-height: 1.15;
+            font-weight: 800;
+        }
+        .trust-panel__score {
+            color: #ffffff;
+            font-size: 34px;
+            line-height: 1;
+            font-weight: 800;
+            white-space: nowrap;
+        }
+        .trust-panel__score span {
+            color: rgba(255,255,255,0.48);
+            font-size: 15px;
+            font-weight: 700;
+        }
+        .trust-panel__reasons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 14px;
+        }
+        .trust-panel__reason {
+            padding: 6px 10px;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.045);
+            color: rgba(255,255,255,0.76);
+            border: 1px solid rgba(255,255,255,0.08);
+            font-size: 12px;
+            font-weight: 650;
+        }
+        .trust-panel__note {
+            margin-top: 12px;
+            color: rgba(255,255,255,0.52);
+            font-size: 12px;
+            line-height: 1.5;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -519,7 +579,159 @@ def _tomorrow_start(now_ua):
     return pd.Timestamp((now_ua + pd.Timedelta(days=1)).date())
 
 
-def draw_metrics(df_f, df_h, now_ua, timedelta):
+def _daily_energy(df, day, value_col):
+    if df is None or df.empty or value_col not in df.columns or 'Time' not in df.columns:
+        return 0.0
+    start = pd.Timestamp(day)
+    end = start + pd.Timedelta(days=1)
+    mask = (df['Time'] >= start) & (df['Time'] < end)
+    return float(pd.to_numeric(df.loc[mask, value_col], errors='coerce').fillna(0).sum())
+
+
+def _latest_positive_time(df, value_col):
+    if df is None or df.empty or value_col not in df.columns or 'Time' not in df.columns:
+        return None
+    values = pd.to_numeric(df[value_col], errors='coerce').fillna(0)
+    valid = df[(values > 0.05) & df['Time'].notna()]
+    if valid.empty:
+        return None
+    return pd.to_datetime(valid['Time']).max()
+
+
+def _recent_fact_median(df_h):
+    if df_h is None or df_h.empty or 'Time' not in df_h.columns or 'Fact_MW' not in df_h.columns:
+        return 0.0
+    df = _clean_numeric(df_h, ['Fact_MW'])
+    df['Time'] = pd.to_datetime(df['Time'], errors='coerce')
+    df = df[(df['Fact_MW'] > 0.05) & df['Time'].notna()].copy()
+    if df.empty:
+        return 0.0
+    df['Date'] = df['Time'].dt.date
+    daily = df.groupby('Date')['Fact_MW'].sum().tail(14)
+    if daily.empty:
+        return 0.0
+    return float(daily.median())
+
+
+def _forecast_trust(df, df_h, df_open_meteo, now_ua, tomorrow):
+    score = 100
+    issues = []
+    positives = []
+
+    expected_lag_days = 2 if now_ua.hour < 9 else 1
+    expected_latest_date = (pd.Timestamp(now_ua.date()) - pd.Timedelta(days=expected_lag_days)).date()
+
+    hist = df_h.copy() if df_h is not None else pd.DataFrame()
+    if not hist.empty and 'Time' in hist.columns:
+        hist['Time'] = pd.to_datetime(hist['Time'], errors='coerce')
+    last_fact_time = _latest_positive_time(hist, 'Fact_MW')
+    if last_fact_time is None:
+        score -= 25
+        issues.append("немає факту АСКОЕ")
+    elif last_fact_time.date() < expected_latest_date:
+        score -= 20
+        issues.append("факт АСКОЕ відстає")
+    else:
+        positives.append("факт АСКОЕ свіжий")
+
+    ai_tomorrow = _daily_energy(df, tomorrow, 'AI_MW')
+    base_tomorrow = _daily_energy(df, tomorrow, 'Forecast_MW')
+    if ai_tomorrow <= 0:
+        score -= 30
+        issues.append("немає прогнозу ШІ на завтра")
+    else:
+        positives.append("прогноз ШІ на завтра є")
+
+    if ai_tomorrow > 0 and base_tomorrow > 0:
+        ai_base_gap = abs(ai_tomorrow - base_tomorrow) / max(ai_tomorrow, base_tomorrow) * 100
+        if ai_base_gap >= 45:
+            score -= 20
+            issues.append(f"ШІ і базовий прогноз розходяться на {ai_base_gap:.0f}%")
+        else:
+            positives.append("ШІ близький до базового прогнозу")
+    elif base_tomorrow <= 0:
+        score -= 15
+        issues.append("немає базового прогнозу на завтра")
+
+    recent_median = _recent_fact_median(df_h)
+    if ai_tomorrow > 0 and recent_median > 0:
+        if ai_tomorrow < recent_median * 0.35:
+            score -= 20
+            issues.append("прогноз ШІ нетипово низький")
+        elif ai_tomorrow > recent_median * 1.8:
+            score -= 12
+            issues.append("прогноз ШІ нетипово високий")
+        else:
+            positives.append("прогноз у межах останньої генерації")
+
+    meteo_gap = None
+    if df_open_meteo is not None and not df_open_meteo.empty:
+        om = _clean_numeric(df_open_meteo.copy(), ['Forecast_MW'])
+        om['Time'] = pd.to_datetime(om['Time'], errors='coerce')
+        om_tomorrow = _daily_energy(om, tomorrow, 'Forecast_MW')
+        if om_tomorrow > 0 and base_tomorrow > 0:
+            meteo_gap = abs(om_tomorrow - base_tomorrow) / max(om_tomorrow, base_tomorrow) * 100
+            if meteo_gap >= 35:
+                score -= 15
+                issues.append(f"метеоджерела розходяться на {meteo_gap:.0f}%")
+            else:
+                positives.append("метеоджерела узгоджуються")
+    else:
+        score -= 5
+        issues.append("Open-Meteo недоступний для контролю")
+
+    score = int(_clamp_pct(score))
+    if score >= 80:
+        status = "Висока довіра"
+        accent = "#10b981"
+        summary = "Прогноз можна використовувати як робочий орієнтир."
+    elif score >= 55:
+        status = "Середня довіра"
+        accent = "#ffb800"
+        summary = "Прогноз корисний, але бажана ручна перевірка умов."
+    else:
+        status = "Низька довіра"
+        accent = "#ef4444"
+        summary = "Прогноз варто використовувати обережно та перевірити вхідні дані."
+
+    reasons = issues if issues else positives[:3]
+    return {
+        "score": score,
+        "status": status,
+        "accent": accent,
+        "summary": summary,
+        "reasons": reasons or ["критичних факторів не виявлено"],
+    }
+
+
+def _draw_trust_panel(trust):
+    style = (
+        f"--trust-accent:{trust['accent']};"
+        f"--trust-border:{trust['accent']}55;"
+    )
+    reasons_html = "".join(
+        f"<span class='trust-panel__reason'>{reason}</span>"
+        for reason in trust['reasons']
+    )
+    st.markdown(
+        f"""
+        <div class="trust-panel" style="{style}">
+            <div class="trust-panel__top">
+                <div>
+                    <div class="trust-panel__label">Оцінка довіри до прогнозу на завтра</div>
+                    <div class="trust-panel__status">{trust['status']}</div>
+                </div>
+                <div class="trust-panel__score">{trust['score']}<span>/100</span></div>
+            </div>
+            <div class="trust-panel__reasons">{reasons_html}</div>
+            <div class="trust-panel__note">{trust['summary']} Це контрольний індикатор, він не змінює розрахунок прогнозу.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def draw_metrics(df_f, df_h, now_ua, timedelta, df_open_meteo=None):
     _style_forecast_dashboard()
     df = _clean_numeric(df_f, ['AI_MW', 'Forecast_MW', 'Capacity_MW'])
     df['Time'] = pd.to_datetime(df['Time'], errors='coerce')
@@ -612,6 +824,9 @@ def draw_metrics(df_f, df_h, now_ua, timedelta):
                 """,
                 unsafe_allow_html=True,
             )
+
+    trust = _forecast_trust(df, df_h, df_open_meteo, now_ua, tomorrow)
+    _draw_trust_panel(trust)
 
 
 def draw_weather_strip(df_f, now_ua, timedelta):
