@@ -165,6 +165,117 @@ def _draw_ai_data_diagnostics(df):
     st.write("---")
 
 
+def _infer_error_factor(row):
+    factors = []
+    cloud_avg = float(row.get('Хмарність середня %', 0) or 0)
+    cloud_peak = float(row.get('Хмарність пік %', 0) or 0)
+    precip = float(row.get('Опади макс. %', 0) or 0)
+    wind = float(row.get('Вітер середній м/с', 0) or 0)
+    ai_mape = float(row.get('MAPE ШІ %', 0) or 0)
+    base_mape = float(row.get('MAPE бази %', 0) or 0)
+    fact = float(row.get('Факт МВт·год', 0) or 0)
+    ai = float(row.get('ШІ МВт·год', 0) or 0)
+
+    if cloud_peak >= 75 or cloud_avg >= 55:
+        factors.append("ймовірна причина: хмарність")
+    if precip >= 40:
+        factors.append("ймовірна причина: опади")
+    if wind >= 14:
+        factors.append("можливий фактор: сильний вітер")
+    if ai_mape > base_mape + 15:
+        factors.append("ШІ гірший за базовий прогноз")
+    if fact > 0 and ai > fact * 1.6 and cloud_avg < 35:
+        factors.append("можливе переоцінювання інсоляції")
+    if fact > 0 and ai < fact * 0.45 and cloud_avg < 45 and precip < 25:
+        factors.append("можливе обмеження/нетипова робота СЕС")
+
+    if not factors:
+        factors.append("потрібен ручний розбір")
+    return "; ".join(factors[:3])
+
+
+def _build_error_factor_table(df_fact):
+    agg = {
+        'Факт МВт·год': ('Fact_MW', 'sum'),
+        'База МВт·год': ('Forecast_MW', 'sum'),
+        'ШІ МВт·год': ('AI_Forecast_MW', 'sum'),
+        'MAPE бази %': ('Base_Abs_Error_Pct', 'mean'),
+        'MAPE ШІ %': ('AI_Abs_Error_Pct', 'mean'),
+    }
+    if 'CloudCover' in df_fact.columns:
+        agg['Хмарність середня %'] = ('CloudCover', 'mean')
+        agg['Хмарність пік %'] = ('CloudCover', 'max')
+    if 'PrecipProb' in df_fact.columns:
+        agg['Опади макс. %'] = ('PrecipProb', 'max')
+    if 'WindSpeed' in df_fact.columns:
+        agg['Вітер середній м/с'] = ('WindSpeed', 'mean')
+    if 'Temp' in df_fact.columns:
+        agg['Температура середня °C'] = ('Temp', 'mean')
+
+    factors = df_fact.groupby('Дата').agg(**agg).reset_index()
+    factors['Абс. помилка ШІ МВт·год'] = (factors['ШІ МВт·год'] - factors['Факт МВт·год']).abs()
+    factors['ШІ гірший за базу'] = factors['MAPE ШІ %'] > factors['MAPE бази %']
+
+    defaults = {
+        'Хмарність середня %': 0.0,
+        'Хмарність пік %': 0.0,
+        'Опади макс. %': 0.0,
+        'Вітер середній м/с': 0.0,
+        'Температура середня °C': 0.0,
+    }
+    for col, default in defaults.items():
+        if col not in factors.columns:
+            factors[col] = default
+
+    factors['Ймовірна причина'] = factors.apply(_infer_error_factor, axis=1)
+    numeric_cols = [
+        'Факт МВт·год', 'База МВт·год', 'ШІ МВт·год',
+        'MAPE бази %', 'MAPE ШІ %', 'Абс. помилка ШІ МВт·год',
+        'Хмарність середня %', 'Хмарність пік %', 'Опади макс. %',
+        'Вітер середній м/с', 'Температура середня °C'
+    ]
+    for col in numeric_cols:
+        factors[col] = pd.to_numeric(factors[col], errors='coerce').fillna(0).round(1)
+    return factors.sort_values('MAPE ШІ %', ascending=False)
+
+
+def _draw_error_factor_analysis(df_fact):
+    factor_table = _build_error_factor_table(df_fact)
+    if factor_table.empty:
+        return
+
+    top = factor_table.head(10).copy()
+    st.markdown("##### Аналіз факторів похибки ШІ")
+    st.caption(
+        "Тут зібрані дні з найбільшою добовою помилкою ШІ. Це не змінює модель, "
+        "а допомагає зрозуміти, на яких умовах вона помиляється."
+    )
+
+    high_cloud_days = int((factor_table['Хмарність пік %'] >= 75).sum())
+    ai_worse_days = int(factor_table['ШІ гірший за базу'].sum())
+    median_ai_mape = float(factor_table['MAPE ШІ %'].median()) if not factor_table.empty else 0.0
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Днів із піковою хмарністю", high_cloud_days)
+    c2.metric("Днів, де ШІ гірший за базу", ai_worse_days)
+    c3.metric("Медіанна MAPE ШІ", f"{median_ai_mape:.1f}%")
+
+    display_cols = [
+        'Дата', 'Факт МВт·год', 'ШІ МВт·год', 'База МВт·год',
+        'MAPE ШІ %', 'MAPE бази %', 'Хмарність середня %',
+        'Хмарність пік %', 'Опади макс. %', 'Вітер середній м/с',
+        'Ймовірна причина'
+    ]
+    st.dataframe(
+        top[display_cols].style.background_gradient(
+            subset=['MAPE ШІ %'], cmap='Reds', vmin=0, vmax=max(100, float(top['MAPE ШІ %'].max()))
+        ),
+        use_container_width=True,
+        hide_index=True
+    )
+
+    st.write("---")
+
+
 # ─────────────────────────────────────────────
 #  ВКЛАДКА 1: НАВЧАННЯ
 # ─────────────────────────────────────────────
@@ -321,6 +432,8 @@ def draw_training_tab(df_h):
             st.info("За останні 7 днів ШІ близький до базового прогнозу. Використовуйте його як допоміжний орієнтир.")
 
         st.write("---")
+
+    _draw_error_factor_analysis(df_fact)
 
     st.markdown("##### Денний графік: факт vs прогноз сайту vs ШІ")
     recent_daily_energy = daily.tail(30)
