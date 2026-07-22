@@ -340,7 +340,7 @@ def _build_shadow_experiment(df_fact, lookback_days=30, min_samples=6):
 def _draw_shadow_experiment(df_fact):
     shadow = _build_shadow_experiment(df_fact)
     if shadow.empty:
-        st.markdown("##### Shadow-mode: експериментальна корекція ШІ")
+        st.markdown("##### Експериментальна модель ШІ (shadow-mode)")
         st.info(
             "Поки недостатньо історії для чесного shadow-тесту. Потрібні попередні дні з фактом, "
             "AI_Forecast_MW і погодними параметрами."
@@ -348,7 +348,7 @@ def _draw_shadow_experiment(df_fact):
         st.write("---")
         return
 
-    st.markdown("##### Shadow-mode: експериментальна корекція ШІ")
+    st.markdown("##### Експериментальна модель ШІ (shadow-mode)")
     st.caption(
         "Це безпечний паралельний тест. Робочий прогноз не змінюється: ми лише перевіряємо, "
         "чи корекція ШІ за попередніми помилками в схожій хмарності дає кращий результат."
@@ -641,8 +641,8 @@ def draw_training_tab(df_h):
 
         st.write("---")
 
-    _draw_error_factor_analysis(df_fact)
     _draw_shadow_experiment(df_fact)
+    _draw_error_factor_analysis(df_fact)
 
     st.markdown("##### Денний графік: факт vs прогноз сайту vs ШІ")
     recent_daily_energy = daily.tail(30)
