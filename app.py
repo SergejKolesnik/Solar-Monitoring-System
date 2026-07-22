@@ -11,7 +11,7 @@ try:
 except Exception:
     _weather_service_open_meteo = None
 from dashboard_components import draw_main_chart, draw_metrics, draw_weather_strip
-from ui_components import draw_training_tab, draw_base_tab, draw_meteo_tab, draw_plan_tab
+from ui_components import draw_training_tab, draw_control_log_tab, draw_base_tab, draw_meteo_tab, draw_plan_tab
 
 # Налаштування сторiнки
 st.set_page_config(page_title="SkyGrid Solar AI", layout="wide", page_icon="☀️")
@@ -422,7 +422,7 @@ if not df_f.empty:
             st.stop()
 
         # 3. Вкладки
-        tabs = st.tabs(["Прогноз", "Якість ШІ", "Дані", "Метеоаналіз", "План"])
+        tabs = st.tabs(["Прогноз", "Якість ШІ", "Журнал", "Дані", "Метеоаналіз", "План"])
 
         with tabs[0]:
             saved_capacity_mw = load_capacity_from_sheets()
@@ -521,12 +521,15 @@ if not df_f.empty:
             draw_training_tab(df_h)
 
         with tabs[2]:
-            draw_base_tab(df_h)
+            draw_control_log_tab(df_h, df_f, df_open_meteo, now_ua)
 
         with tabs[3]:
-            draw_meteo_tab(df_f, df_open_meteo)
+            draw_base_tab(df_h)
 
         with tabs[4]:
+            draw_meteo_tab(df_f, df_open_meteo)
+
+        with tabs[5]:
             df_plan = load_plan_from_sheets(now_ua.month, now_ua.year, capacity_mw)
             draw_plan_tab(df_h, df_f, df_plan, now_ua)
 

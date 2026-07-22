@@ -533,6 +533,214 @@ def draw_base_tab(df_h):
             use_container_width=True,
             hide_index=True
         )
+
+
+# ─────────────────────────────────────────────
+#  ВКЛАДКА: ЖУРНАЛ КОНТРОЛЮ
+# ─────────────────────────────────────────────
+
+def _add_log_event(events, when, level, event_type, description, source, recommendation):
+    events.append({
+        'Дата/час': pd.to_datetime(when).strftime('%d.%m.%Y %H:%M') if pd.notna(when) else '',
+        'Рівень': level,
+        'Тип': event_type,
+        'Опис': description,
+        'Джерело': source,
+        'Рекомендація': recommendation,
+    })
+
+
+def _daily_sum(df, day, value_col):
+    if df is None or df.empty or value_col not in df.columns or 'Time' not in df.columns:
+        return 0.0
+    start = pd.Timestamp(day)
+    end = start + pd.Timedelta(days=1)
+    mask = (df['Time'] >= start) & (df['Time'] < end)
+    return float(pd.to_numeric(df.loc[mask, value_col], errors='coerce').fillna(0).sum())
+
+
+def _latest_time_with_value(df, value_col):
+    if df is None or df.empty or value_col not in df.columns or 'Time' not in df.columns:
+        return None
+    values = pd.to_numeric(df[value_col], errors='coerce').fillna(0)
+    valid = df[(values > 0.05) & df['Time'].notna()]
+    if valid.empty:
+        return None
+    return pd.to_datetime(valid['Time']).max()
+
+
+def _recent_daily_fact_median(df_h):
+    if df_h is None or df_h.empty or 'Time' not in df_h.columns or 'Fact_MW' not in df_h.columns:
+        return 0.0
+    df = _clean_numeric(df_h.copy(), ['Fact_MW'])
+    df['Time'] = pd.to_datetime(df['Time'], errors='coerce')
+    df = df[(df['Fact_MW'] > 0.05) & df['Time'].notna()].copy()
+    if df.empty:
+        return 0.0
+    df['Дата'] = df['Time'].dt.date
+    daily = df.groupby('Дата')['Fact_MW'].sum().tail(14)
+    return float(daily.median()) if not daily.empty else 0.0
+
+
+def _build_control_log(df_h, df_f, df_open_meteo, now_ua):
+    events = []
+    now_ts = pd.Timestamp(now_ua).tz_localize(None) if getattr(now_ua, 'tzinfo', None) else pd.Timestamp(now_ua)
+    tomorrow = (now_ts.normalize() + pd.Timedelta(days=1)).date()
+
+    hist = df_h.copy() if df_h is not None else pd.DataFrame()
+    if not hist.empty:
+        hist['Time'] = pd.to_datetime(hist['Time'], errors='coerce')
+        numeric_cols = [
+            'Fact_MW', 'Forecast_MW', 'AI_Forecast_MW',
+            'Forecast_Error_Pct', 'AI_Error_Pct'
+        ]
+        hist = _clean_numeric(hist, [c for c in numeric_cols if c in hist.columns])
+
+    forecast = df_f.copy() if df_f is not None else pd.DataFrame()
+    if not forecast.empty:
+        forecast['Time'] = pd.to_datetime(forecast['Time'], errors='coerce')
+        forecast = _clean_numeric(forecast, [c for c in ['AI_MW', 'Forecast_MW'] if c in forecast.columns])
+
+    open_meteo = df_open_meteo.copy() if df_open_meteo is not None else pd.DataFrame()
+    if not open_meteo.empty:
+        open_meteo['Time'] = pd.to_datetime(open_meteo['Time'], errors='coerce')
+        open_meteo = _clean_numeric(open_meteo, [c for c in ['Forecast_MW'] if c in open_meteo.columns])
+
+    expected_lag_days = 2 if now_ts.hour < 9 else 1
+    expected_latest_date = (now_ts.normalize() - pd.Timedelta(days=expected_lag_days)).date()
+    last_fact_time = _latest_time_with_value(hist, 'Fact_MW')
+    if last_fact_time is None:
+        _add_log_event(
+            events, now_ts, 'Критично', 'Немає факту',
+            'У базі не знайдено фактичної генерації АСКОЕ.',
+            'АСКОЕ / Google Sheets',
+            'Перевірити імпорт листів FusionSolar та запуск SkyGrid Auto Sync.'
+        )
+    elif last_fact_time.date() < expected_latest_date:
+        _add_log_event(
+            events, now_ts, 'Попередження', 'Факт відстає',
+            f"Останній факт АСКОЕ: {last_fact_time.strftime('%d.%m.%Y %H:%M')}; очікувався звіт за {expected_latest_date.strftime('%d.%m.%Y')}.",
+            'АСКОЕ / Gmail',
+            'Перевірити ранковий автосинхронізатор або запустити SkyGrid Auto Sync вручну.'
+        )
+
+    ai_tomorrow = _daily_sum(forecast, tomorrow, 'AI_MW')
+    base_tomorrow = _daily_sum(forecast, tomorrow, 'Forecast_MW')
+    recent_median = _recent_daily_fact_median(hist)
+    if ai_tomorrow <= 0 and base_tomorrow > 0:
+        _add_log_event(
+            events, now_ts, 'Критично', 'Немає прогнозу ШІ',
+            'На завтра є базовий прогноз, але немає збереженого прогнозу ШІ.',
+            'AI_Forecast_MW',
+            'Перевірити collector.py та останній успішний запуск GitHub Actions.'
+        )
+    elif ai_tomorrow > 0 and base_tomorrow > 0:
+        gap = abs(ai_tomorrow - base_tomorrow) / max(ai_tomorrow, base_tomorrow) * 100
+        if gap >= 45:
+            _add_log_event(
+                events, now_ts, 'Попередження', 'ШІ vs база',
+                f"Прогноз ШІ на завтра ({ai_tomorrow:.1f} МВт·год) розходиться з базовим прогнозом ({base_tomorrow:.1f} МВт·год) на {gap:.0f}%.",
+                'AI_Forecast_MW / Visual Crossing',
+                'Перевірити метеоумови та не використовувати ШІ як єдине джерело рішення.'
+            )
+
+    if ai_tomorrow > 0 and recent_median > 0:
+        if ai_tomorrow < recent_median * 0.35:
+            _add_log_event(
+                events, now_ts, 'Попередження', 'Нетипово низький прогноз',
+                f"Прогноз ШІ на завтра {ai_tomorrow:.1f} МВт·год проти медіани останніх днів {recent_median:.1f} МВт·год.",
+                'AI_Forecast_MW',
+                'Перевірити хмарність, опади та коректність прогнозу інсоляції.'
+            )
+        elif ai_tomorrow > recent_median * 1.8:
+            _add_log_event(
+                events, now_ts, 'Інфо', 'Нетипово високий прогноз',
+                f"Прогноз ШІ на завтра {ai_tomorrow:.1f} МВт·год суттєво вище медіани останніх днів {recent_median:.1f} МВт·год.",
+                'AI_Forecast_MW',
+                'Звірити з погодою та поточною встановленою потужністю СЕС.'
+            )
+
+    om_tomorrow = _daily_sum(open_meteo, tomorrow, 'Forecast_MW')
+    if om_tomorrow > 0 and base_tomorrow > 0:
+        meteo_gap = abs(om_tomorrow - base_tomorrow) / max(om_tomorrow, base_tomorrow) * 100
+        if meteo_gap >= 35:
+            _add_log_event(
+                events, now_ts, 'Попередження', 'Розбіжність метеоджерел',
+                f"Visual Crossing і Open-Meteo для завтра розходяться на {meteo_gap:.0f}%.",
+                'Visual Crossing / Open-Meteo',
+                'Вважати прогноз метеоризиковим і перевірити добовий графік вручну.'
+            )
+    elif open_meteo.empty:
+        _add_log_event(
+            events, now_ts, 'Інфо', 'Open-Meteo недоступний',
+            'Альтернативне метеоджерело зараз недоступне для контролю.',
+            'Open-Meteo',
+            'Основний прогноз працює, але контроль метеоризику обмежений.'
+        )
+
+    if not hist.empty and {'Time', 'Fact_MW', 'Forecast_MW', 'AI_Forecast_MW'}.issubset(hist.columns):
+        daylight = hist[(hist['Fact_MW'] > 0.05) & (hist['Forecast_MW'] > 0.05)].copy()
+        if not daylight.empty:
+            daylight['Дата'] = daylight['Time'].dt.date
+            daily = daylight.groupby('Дата').agg(
+                fact_mwh=('Fact_MW', 'sum'),
+                base_mwh=('Forecast_MW', 'sum'),
+                ai_mwh=('AI_Forecast_MW', 'sum'),
+            ).reset_index().tail(30)
+            for _, row in daily.iterrows():
+                fact = float(row['fact_mwh'])
+                if fact <= 0:
+                    continue
+                base_err = abs(float(row['base_mwh']) - fact) / fact * 100
+                ai_err = abs(float(row['ai_mwh']) - fact) / fact * 100
+                event_time = pd.Timestamp(row['Дата'])
+                if ai_err >= 60:
+                    _add_log_event(
+                        events, event_time, 'Попередження', 'Висока помилка ШІ',
+                        f"Добова помилка ШІ {ai_err:.0f}% при факті {fact:.1f} МВт·год.",
+                        'Історія прогнозів',
+                        'Проаналізувати погодні умови цього дня та параметри моделі.'
+                    )
+                if ai_err > base_err + 15:
+                    _add_log_event(
+                        events, event_time, 'Інфо', 'ШІ гірший за базу',
+                        f"ШІ був гірший за базовий прогноз: {ai_err:.0f}% проти {base_err:.0f}%.",
+                        'Історія прогнозів',
+                        'Використати день як кандидат для розбору похибки моделі.'
+                    )
+
+    if not events:
+        _add_log_event(
+            events, now_ts, 'Інфо', 'Без критичних подій',
+            'За поточними правилами журналу суттєвих проблем не знайдено.',
+            'SkyGrid Control',
+            'Продовжувати накопичення історії та моніторинг якості прогнозу.'
+        )
+
+    return pd.DataFrame(events)
+
+
+def draw_control_log_tab(df_h, df_f, df_open_meteo, now_ua):
+    st.markdown("##### Журнал контролю прогнозу")
+    st.caption(
+        "Read-only журнал: події формуються з поточного стану даних та останньої історії. "
+        "Поки що він нічого не записує в Google Sheets."
+    )
+
+    log_df = _build_control_log(df_h, df_f, df_open_meteo, now_ua)
+    severity_order = {'Критично': 0, 'Попередження': 1, 'Інфо': 2}
+    log_df['_order'] = log_df['Рівень'].map(severity_order).fillna(3)
+    log_df['_time'] = pd.to_datetime(log_df['Дата/час'], format='%d.%m.%Y %H:%M', errors='coerce')
+    log_df = log_df.sort_values(['_order', '_time'], ascending=[True, False]).drop(columns=['_order', '_time'])
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Критичні", int((log_df['Рівень'] == 'Критично').sum()))
+    c2.metric("Попередження", int((log_df['Рівень'] == 'Попередження').sum()))
+    c3.metric("Інформаційні", int((log_df['Рівень'] == 'Інфо').sum()))
+
+    st.dataframe(log_df, use_container_width=True, hide_index=True)
+
+
 def draw_meteo_tab(df_f, df_open_meteo=None):
     col_title, col_src = st.columns([6, 2])
     with col_title:
