@@ -239,6 +239,214 @@ def _build_error_factor_table(df_fact):
     return factors.sort_values('MAPE ШІ %', ascending=False)
 
 
+def _cloud_bucket(cloud_value):
+    cloud = float(cloud_value or 0)
+    if cloud < 25:
+        return "0-25%"
+    if cloud < 50:
+        return "25-50%"
+    if cloud < 75:
+        return "50-75%"
+    return "75-100%"
+
+
+def _build_shadow_experiment(df_fact, lookback_days=30, min_samples=6):
+    """
+    Builds a past-only shadow forecast from historical rows.
+
+    The production AI forecast is not changed. For every historical day we look only
+    at previous days with similar cloudiness and estimate a conservative correction
+    factor from Fact_MW / AI_Forecast_MW.
+    """
+    required = {'Time', 'Fact_MW', 'Forecast_MW', 'AI_Forecast_MW'}
+    if df_fact.empty or not required.issubset(df_fact.columns):
+        return pd.DataFrame()
+
+    df = df_fact.copy()
+    df['Time'] = pd.to_datetime(df['Time'], errors='coerce')
+    df = df.dropna(subset=['Time']).sort_values('Time')
+    df['Date'] = df['Time'].dt.date
+    cloud_source = df['CloudCover'] if 'CloudCover' in df.columns else pd.Series([0] * len(df), index=df.index)
+    df['Cloud_Bucket'] = cloud_source.apply(_cloud_bucket)
+    df['AI_Experimental_MW'] = pd.NA
+    df['Shadow_Factor'] = pd.NA
+    df['Shadow_Samples'] = 0
+
+    valid_ratio_mask = (
+        (df['Fact_MW'] > 0.05) &
+        (df['AI_Forecast_MW'] > 0.05)
+    )
+    df_dates = pd.to_datetime(df['Date'])
+
+    for day in sorted(df['Date'].dropna().unique()):
+        day_ts = pd.Timestamp(day)
+        history_start = day_ts - pd.Timedelta(days=lookback_days)
+        history = df[
+            valid_ratio_mask &
+            (df_dates < day_ts) &
+            (df_dates >= history_start)
+        ].copy()
+        if history.empty:
+            continue
+
+        day_rows = df[df['Date'] == day].copy()
+        for bucket in day_rows['Cloud_Bucket'].dropna().unique():
+            bucket_history = history[history['Cloud_Bucket'] == bucket].copy()
+            correction_source = bucket_history if len(bucket_history) >= min_samples else history
+            if len(correction_source) < min_samples:
+                continue
+
+            ratios = (
+                correction_source['Fact_MW'] / correction_source['AI_Forecast_MW'].replace(0, pd.NA)
+            ).replace([pd.NA, float('inf'), -float('inf')], pd.NA).dropna()
+            if ratios.empty:
+                continue
+
+            # Conservative clipping avoids one abnormal day turning into a wild forecast.
+            factor = float(ratios.median())
+            factor = max(0.70, min(1.30, factor))
+
+            idx = df[(df['Date'] == day) & (df['Cloud_Bucket'] == bucket)].index
+            corrected = pd.to_numeric(df.loc[idx, 'AI_Forecast_MW'], errors='coerce').fillna(0) * factor
+            if 'Capacity_MW' in df.columns:
+                cap = pd.to_numeric(df.loc[idx, 'Capacity_MW'], errors='coerce').fillna(0)
+                corrected = corrected.clip(lower=0, upper=cap.where(cap > 0, corrected).mul(1.05))
+            else:
+                corrected = corrected.clip(lower=0)
+
+            df.loc[idx, 'AI_Experimental_MW'] = corrected
+            df.loc[idx, 'Shadow_Factor'] = factor
+            df.loc[idx, 'Shadow_Samples'] = len(correction_source)
+
+    shadow = df[df['AI_Experimental_MW'].notna()].copy()
+    if shadow.empty:
+        return shadow
+
+    shadow['AI_Experimental_MW'] = pd.to_numeric(shadow['AI_Experimental_MW'], errors='coerce').fillna(0)
+    shadow = shadow[shadow['AI_Experimental_MW'] > 0.05].copy()
+    if shadow.empty:
+        return shadow
+
+    shadow['Experimental_Error_Pct'] = (
+        (shadow['Fact_MW'] - shadow['AI_Experimental_MW']) /
+        shadow['Fact_MW'].replace(0, pd.NA) * 100
+    )
+    shadow['Experimental_Abs_Error_Pct'] = pd.to_numeric(
+        shadow['Experimental_Error_Pct'], errors='coerce'
+    ).abs().fillna(0)
+    return shadow
+
+
+def _draw_shadow_experiment(df_fact):
+    shadow = _build_shadow_experiment(df_fact)
+    if shadow.empty:
+        st.markdown("##### Shadow-mode: експериментальна корекція ШІ")
+        st.info(
+            "Поки недостатньо історії для чесного shadow-тесту. Потрібні попередні дні з фактом, "
+            "AI_Forecast_MW і погодними параметрами."
+        )
+        st.write("---")
+        return
+
+    st.markdown("##### Shadow-mode: експериментальна корекція ШІ")
+    st.caption(
+        "Це безпечний паралельний тест. Робочий прогноз не змінюється: ми лише перевіряємо, "
+        "чи корекція ШІ за попередніми помилками в схожій хмарності дає кращий результат."
+    )
+
+    daily = shadow.groupby('Date').agg(
+        **{
+            'Факт МВт·год': ('Fact_MW', 'sum'),
+            'База МВт·год': ('Forecast_MW', 'sum'),
+            'ШІ поточний МВт·год': ('AI_Forecast_MW', 'sum'),
+            'ШІ експеримент МВт·год': ('AI_Experimental_MW', 'sum'),
+            'MAPE бази %': ('Base_Abs_Error_Pct', 'mean'),
+            'MAPE ШІ поточний %': ('AI_Abs_Error_Pct', 'mean'),
+            'MAPE ШІ експеримент %': ('Experimental_Abs_Error_Pct', 'mean'),
+            'Корекція середня': ('Shadow_Factor', 'mean'),
+            'Семплів середньо': ('Shadow_Samples', 'mean'),
+        }
+    ).reset_index().sort_values('Date')
+
+    daily['Покращення експерименту до ШІ %'] = (
+        100 * (
+            daily['MAPE ШІ поточний %'] - daily['MAPE ШІ експеримент %']
+        ) / daily['MAPE ШІ поточний %'].replace(0, pd.NA)
+    ).fillna(0)
+
+    for col in daily.columns:
+        if col != 'Date':
+            daily[col] = pd.to_numeric(daily[col], errors='coerce').round(2)
+
+    recent = daily.tail(30).copy()
+    current_mape = float(recent['MAPE ШІ поточний %'].mean())
+    exp_mape = float(recent['MAPE ШІ експеримент %'].mean())
+    base_mape = float(recent['MAPE бази %'].mean())
+    exp_improvement = 100 * (current_mape - exp_mape) / current_mape if current_mape > 0 else 0
+    better_days = float((recent['MAPE ШІ експеримент %'] < recent['MAPE ШІ поточний %']).mean() * 100)
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("MAPE поточного ШІ", f"{current_mape:.1f}%")
+    c2.metric("MAPE експерименту", f"{exp_mape:.1f}%", f"{exp_improvement:+.1f}% до ШІ")
+    c3.metric("Днів, де експеримент кращий", f"{better_days:.0f}%")
+    c4.metric("MAPE бази", f"{base_mape:.1f}%")
+
+    if exp_improvement >= 5 and better_days >= 60:
+        st.success(
+            "Експеримент виглядає перспективно: корекція покращує ШІ на більшості днів. "
+            "Наступний крок - винести її у прогноз на майбутні дні також у shadow-mode."
+        )
+    elif exp_improvement <= -5:
+        st.warning(
+            "Експеримент поки погіршує результат. Це теж корисний висновок: таку корекцію "
+            "не можна переводити в робочий прогноз без доопрацювання."
+        )
+    else:
+        st.info(
+            "Ефект експерименту поки нейтральний. Потрібно накопичити більше днів або уточнити "
+            "ознаки: окремо ранкові/полуденні години, опади, пікова хмарність."
+        )
+
+    st.markdown("###### Добове порівняння за останні 30 днів")
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=recent['Date'], y=recent['MAPE ШІ поточний %'],
+        name='Поточний ШІ', mode='lines+markers',
+        line=dict(color='#1D9E75', width=2, dash='dash')
+    ))
+    fig.add_trace(go.Scatter(
+        x=recent['Date'], y=recent['MAPE ШІ експеримент %'],
+        name='ШІ експеримент', mode='lines+markers',
+        line=dict(color='#ffb800', width=2.5)
+    ))
+    fig.add_trace(go.Scatter(
+        x=recent['Date'], y=recent['MAPE бази %'],
+        name='База', mode='lines+markers',
+        line=dict(color='#D85A30', width=1.8, dash='dot')
+    ))
+    fig.update_layout(
+        height=280, margin=dict(l=0, r=0, t=10, b=0),
+        yaxis=dict(title='MAPE, %'),
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0),
+        hovermode='x unified'
+    )
+    st.plotly_chart(fig, width='stretch')
+
+    display_cols = [
+        'Date', 'Факт МВт·год', 'ШІ поточний МВт·год', 'ШІ експеримент МВт·год',
+        'MAPE ШІ поточний %', 'MAPE ШІ експеримент %',
+        'Покращення експерименту до ШІ %', 'Корекція середня', 'Семплів середньо'
+    ]
+    st.dataframe(
+        recent.sort_values('Date', ascending=False)[display_cols].style.background_gradient(
+            subset=['Покращення експерименту до ШІ %'], cmap='RdYlGn', vmin=-20, vmax=20
+        ),
+        use_container_width=True,
+        hide_index=True
+    )
+    st.write("---")
+
+
 def _draw_error_factor_analysis(df_fact):
     factor_table = _build_error_factor_table(df_fact)
     if factor_table.empty:
@@ -434,6 +642,7 @@ def draw_training_tab(df_h):
         st.write("---")
 
     _draw_error_factor_analysis(df_fact)
+    _draw_shadow_experiment(df_fact)
 
     st.markdown("##### Денний графік: факт vs прогноз сайту vs ШІ")
     recent_daily_energy = daily.tail(30)
