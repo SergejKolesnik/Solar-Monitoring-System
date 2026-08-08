@@ -296,9 +296,14 @@ def _build_shadow_experiment(df_fact, lookback_days=30, min_samples=6):
             if len(correction_source) < min_samples:
                 continue
 
-            ratios = (
-                correction_source['Fact_MW'] / correction_source['AI_Forecast_MW'].replace(0, pd.NA)
-            ).replace([pd.NA, float('inf'), -float('inf')], pd.NA).dropna()
+            denominator = correction_source['AI_Forecast_MW'].where(
+                correction_source['AI_Forecast_MW'] > 0.05
+            )
+            ratios = pd.to_numeric(
+                correction_source['Fact_MW'] / denominator,
+                errors='coerce'
+            ).dropna()
+            ratios = ratios[(ratios != float('inf')) & (ratios != -float('inf'))]
             if ratios.empty:
                 continue
 
@@ -310,7 +315,9 @@ def _build_shadow_experiment(df_fact, lookback_days=30, min_samples=6):
             corrected = pd.to_numeric(df.loc[idx, 'AI_Forecast_MW'], errors='coerce').fillna(0) * factor
             if 'Capacity_MW' in df.columns:
                 cap = pd.to_numeric(df.loc[idx, 'Capacity_MW'], errors='coerce').fillna(0)
-                corrected = corrected.clip(lower=0, upper=cap.where(cap > 0, corrected).mul(1.05))
+                upper = cap.where(cap > 0, corrected).mul(1.05)
+                corrected = corrected.clip(lower=0)
+                corrected = corrected.where(corrected <= upper, upper)
             else:
                 corrected = corrected.clip(lower=0)
 
@@ -641,7 +648,14 @@ def draw_training_tab(df_h):
 
         st.write("---")
 
-    _draw_shadow_experiment(df_fact)
+    try:
+        _draw_shadow_experiment(df_fact)
+    except Exception as exc:
+        st.warning(
+            "Експериментальна модель ШІ тимчасово недоступна, але основний прогноз працює. "
+            f"Технічна причина: {exc}"
+        )
+        st.write("---")
     _draw_error_factor_analysis(df_fact)
 
     st.markdown("##### Денний графік: факт vs прогноз сайту vs ШІ")
