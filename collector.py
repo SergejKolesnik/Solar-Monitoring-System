@@ -22,6 +22,8 @@ KYIV_TZ = ZoneInfo("Europe/Kyiv")
 SUPABASE_BATCH_SIZE = 500
 WEATHER_LAST_UPDATE_KEY = "Weather_Last_Update"
 WEATHER_LAST_FAILED_UPDATE_KEY = "Weather_Last_Failed_Update"
+STAGING_SHEET_NAME = "_collector_staging"
+SHEET_WRITE_BATCH_SIZE = 500
 
 # Основні числові колонки, які зберігаються у Google Sheet
 NUMERIC_COLS = [
@@ -161,8 +163,200 @@ def load_df_from_sheet(sheet):
     return df
 
 
-def save_df_to_sheet(sheet, df):
-    """Зберігає дані у Google Sheet у фіксованому порядку колонок."""
+def _canonical_timestamp(value):
+    timestamp = pd.to_datetime(value, errors='coerce')
+    if pd.isna(timestamp):
+        raise ValueError(f"Invalid Time value in worksheet: {value!r}")
+    return timestamp.strftime('%Y-%m-%d %H:%M:%S')
+
+
+def _validate_sheet_values(
+    values,
+    expected_header,
+    expected_row_count,
+    expected_first_time,
+    expected_last_time,
+):
+    """Validate a worksheet snapshot without calling the Google Sheets API."""
+    if not values:
+        raise ValueError("Worksheet is empty")
+
+    actual_header = [str(value) for value in values[0]]
+    if actual_header != expected_header:
+        raise ValueError(
+            f"Header mismatch: expected {expected_header}, got {actual_header}"
+        )
+
+    expected_col_count = len(expected_header)
+    if len(actual_header) != expected_col_count:
+        raise ValueError(
+            f"Column count mismatch: expected {expected_col_count}, "
+            f"got {len(actual_header)}"
+        )
+
+    required_columns = {'Time', *NUMERIC_COLS}
+    missing_columns = sorted(required_columns.difference(actual_header))
+    if missing_columns:
+        raise ValueError(f"Required columns missing: {missing_columns}")
+
+    data_rows = values[1:]
+    if len(data_rows) != expected_row_count:
+        raise ValueError(
+            f"Row count mismatch: expected {expected_row_count}, "
+            f"got {len(data_rows)}"
+        )
+
+    time_index = actual_header.index('Time')
+    canonical_times = []
+    for row_number, row in enumerate(data_rows, start=2):
+        if len(row) != expected_col_count:
+            raise ValueError(
+                f"Column count mismatch in row {row_number}: "
+                f"expected {expected_col_count}, got {len(row)}"
+            )
+        if not any(str(value).strip() for value in row):
+            raise ValueError(f"Batch gap detected at row {row_number}")
+        if not str(row[time_index]).strip():
+            raise ValueError(f"Empty Time value at row {row_number}")
+        canonical_times.append(_canonical_timestamp(row[time_index]))
+
+    if len(canonical_times) != len(set(canonical_times)):
+        raise ValueError("Duplicate Time values detected")
+
+    if expected_row_count:
+        if canonical_times[0] != expected_first_time:
+            raise ValueError(
+                f"First timestamp mismatch: expected {expected_first_time}, "
+                f"got {canonical_times[0]}"
+            )
+        if canonical_times[-1] != expected_last_time:
+            raise ValueError(
+                f"Last timestamp mismatch: expected {expected_last_time}, "
+                f"got {canonical_times[-1]}"
+            )
+
+
+def _get_or_create_staging_sheet(spreadsheet, required_rows, required_cols):
+    try:
+        staging_sheet = spreadsheet.worksheet(STAGING_SHEET_NAME)
+    except gspread.exceptions.WorksheetNotFound:
+        staging_sheet = spreadsheet.add_worksheet(
+            title=STAGING_SHEET_NAME,
+            rows=max(required_rows + 100, 101),
+            cols=max(required_cols, 1),
+        )
+
+    if staging_sheet.id == spreadsheet.sheet1.id:
+        raise RuntimeError(
+            f"Staging worksheet {STAGING_SHEET_NAME!r} must not be sheet1"
+        )
+
+    return staging_sheet
+
+
+def _write_staging_sheet(staging_sheet, header, rows):
+    required_rows = len(rows) + 1
+    required_cols = len(header)
+    target_rows = max(required_rows + 100, staging_sheet.row_count)
+    target_cols = max(required_cols, staging_sheet.col_count)
+
+    if (
+        staging_sheet.row_count < required_rows
+        or staging_sheet.col_count < required_cols
+    ):
+        staging_sheet.resize(rows=target_rows, cols=target_cols)
+
+    staging_sheet.clear()
+    staging_sheet.update(values=[header], range_name='A1')
+
+    import time as _t
+    for start in range(0, len(rows), SHEET_WRITE_BATCH_SIZE):
+        batch = rows[start:start + SHEET_WRITE_BATCH_SIZE]
+        row_num = start + 2
+        staging_sheet.update(values=batch, range_name=f'A{row_num}')
+
+        if start + SHEET_WRITE_BATCH_SIZE < len(rows):
+            _t.sleep(1)
+
+
+def _promote_staging_to_production(
+    spreadsheet,
+    production_sheet,
+    staging_sheet,
+    required_rows,
+    required_cols,
+):
+    """Atomically replace production values while preserving its sheet ID."""
+    production_sheet_id = production_sheet.id
+    staging_sheet_id = staging_sheet.id
+    target_rows = max(required_rows, production_sheet.row_count)
+    target_cols = max(required_cols, production_sheet.col_count)
+
+    requests_payload = []
+    if (
+        production_sheet.row_count < required_rows
+        or production_sheet.col_count < required_cols
+    ):
+        requests_payload.append({
+            'updateSheetProperties': {
+                'properties': {
+                    'sheetId': production_sheet_id,
+                    'gridProperties': {
+                        'rowCount': target_rows,
+                        'columnCount': target_cols,
+                    },
+                },
+                'fields': 'gridProperties(rowCount,columnCount)',
+            }
+        })
+
+    # Clearing userEnteredValue leaves formatting, protected ranges and charts intact.
+    # This request and the following copy are applied atomically by
+    # spreadsheets.batchUpdate.
+    requests_payload.extend([
+        {
+            'updateCells': {
+                'range': {
+                    'sheetId': production_sheet_id,
+                    'startRowIndex': 0,
+                    'endRowIndex': target_rows,
+                    'startColumnIndex': 0,
+                    'endColumnIndex': target_cols,
+                },
+                'rows': [],
+                'fields': 'userEnteredValue',
+            }
+        },
+        {
+            'copyPaste': {
+                'source': {
+                    'sheetId': staging_sheet_id,
+                    'startRowIndex': 0,
+                    'endRowIndex': required_rows,
+                    'startColumnIndex': 0,
+                    'endColumnIndex': required_cols,
+                },
+                'destination': {
+                    'sheetId': production_sheet_id,
+                    'startRowIndex': 0,
+                    'endRowIndex': required_rows,
+                    'startColumnIndex': 0,
+                    'endColumnIndex': required_cols,
+                },
+                'pasteType': 'PASTE_VALUES',
+                'pasteOrientation': 'NORMAL',
+            }
+        },
+    ])
+
+    spreadsheet.batch_update({'requests': requests_payload})
+
+
+def save_df_to_sheet(spreadsheet, sheet, df):
+    """Persist data through validated staging while preserving production sheet ID."""
+    if sheet.id != spreadsheet.sheet1.id:
+        raise RuntimeError("Production worksheet must remain sheet1 (index 0)")
+
     df = ensure_columns(df)
     df = df.drop(columns=['AI_MW'], errors='ignore')
     df = df.sort_values('Time').drop_duplicates('Time').copy()
@@ -190,45 +384,49 @@ def save_df_to_sheet(sheet, df):
                 r.append(row[col] if row[col] != '' else 0)
         rows.append(r)
 
-    header = [df.columns.tolist()]
-    BATCH_SIZE = 500
-    import time as _t
-
+    header = df.columns.tolist()
     required_rows = len(rows) + 1
     required_cols = len(df.columns)
-    target_rows = max(required_rows + 100, getattr(sheet, "row_count", 1))
-    target_cols = max(required_cols, getattr(sheet, "col_count", 1))
+    expected_first_time = rows[0][0] if rows else None
+    expected_last_time = rows[-1][0] if rows else None
 
-    max_attempts = 3
-    for attempt in range(1, max_attempts + 1):
-        try:
-            if sheet.row_count < required_rows or sheet.col_count < required_cols:
-                sheet.resize(rows=target_rows, cols=target_cols)
-                print(
-                    f"Google Sheet resized to "
-                    f"{target_rows} rows, {target_cols} columns"
-                )
+    staging_sheet = _get_or_create_staging_sheet(
+        spreadsheet,
+        required_rows,
+        required_cols,
+    )
 
-            sheet.clear()
-            sheet.update(values=header, range_name='A1')
+    print("staging write started")
+    _write_staging_sheet(staging_sheet, header, rows)
+    staging_values = staging_sheet.get_all_values()
+    _validate_sheet_values(
+        staging_values,
+        expected_header=header,
+        expected_row_count=len(rows),
+        expected_first_time=expected_first_time,
+        expected_last_time=expected_last_time,
+    )
+    print("staging validation OK")
 
-            for start in range(0, len(rows), BATCH_SIZE):
-                batch = rows[start:start + BATCH_SIZE]
-                row_num = start + 2
-                sheet.update(values=batch, range_name=f'A{row_num}')
+    print("production promotion started")
+    _promote_staging_to_production(
+        spreadsheet,
+        production_sheet=sheet,
+        staging_sheet=staging_sheet,
+        required_rows=required_rows,
+        required_cols=required_cols,
+    )
 
-                if start + BATCH_SIZE < len(rows):
-                    _t.sleep(1)
-
-            print(f"Google Sheet оновлено. Рядків: {len(df)}")
-            return
-
-        except Exception as e:
-            print(f"Спроба {attempt}/{max_attempts} не вдалась: {e}")
-            if attempt < max_attempts:
-                _t.sleep(5)
-
-    print("Не вдалось зберегти після 3 спроб")
+    production_values = sheet.get_all_values()
+    _validate_sheet_values(
+        production_values,
+        expected_header=header,
+        expected_row_count=len(rows),
+        expected_first_time=expected_first_time,
+        expected_last_time=expected_last_time,
+    )
+    print("production validation OK")
+    print("Google Sheets persistence completed")
 
 
 def _to_float(value, default=0.0):
@@ -995,7 +1193,7 @@ def main():
     # Не зберігаємо службові часові ознаки у Google Sheet
     df = df.drop(columns=TIME_FEATURE_COLS, errors='ignore')
 
-    save_df_to_sheet(sheet, df)
+    save_df_to_sheet(spreadsheet, sheet, df)
     sync_to_supabase_shadow(df, capacity_mw, now)
     print(f"Готово. Остання дата: {df['Time'].max()}")
 
