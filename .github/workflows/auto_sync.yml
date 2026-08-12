@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '0 */3 * * *'
     - cron: '20,50 3-6 * * *'
+
+concurrency:
+  group: skygrid-production-collector
+  cancel-in-progress: false
+
 jobs:
   update:
     runs-on: ubuntu-latest

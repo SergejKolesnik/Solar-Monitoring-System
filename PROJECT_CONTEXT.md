@@ -175,3 +175,4 @@ README посилається на `solar_ai_base.csv`, але такого trac
 - 2026-08-11: Google Sheets задокументовано як чинне operational-сховище; Supabase — як shadow-копію до окремого рішення про міграцію.
 - 2026-08-11: production-моделлю вважається шлях `collector.py` з `HistGradientBoostingRegressor`; `model_engine.py` не вважається production без додаткового підтвердження.
 - 2026-08-11: Google Sheets persistence зберігає identity чинного production worksheet. `_collector_staging` використовується для повного запису й перевірки, а atomic batch promotion змінює лише values; будь-яка staging, promotion або production-validation помилка зупиняє pipeline до Supabase sync.
+- 2026-08-12: `auto_sync.yml` серіалізує production collector runs через GitHub Actions `concurrency`, щоб паралельні запуски не використовували спільний `_collector_staging` одночасно.
