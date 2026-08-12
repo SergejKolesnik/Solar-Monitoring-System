@@ -558,8 +558,14 @@ if not df_f.empty:
             draw_meteo_tab(df_f, df_open_meteo)
 
         with tabs[5]:
-            df_plan = load_plan_from_sheets(now_ua.month, now_ua.year, capacity_mw)
-            draw_plan_tab(df_h, df_f, df_plan, now_ua)
+            st.info(
+                "План генерації завантажується окремо, щоб не затримувати запуск основної сторінки."
+            )
+            if st.button("Завантажити / оновити план", key="load_plan_tab_data"):
+                st.session_state["plan_tab_loaded"] = True
+            if st.session_state.get("plan_tab_loaded"):
+                df_plan = load_plan_from_sheets(now_ua.month, now_ua.year, capacity_mw)
+                draw_plan_tab(df_h, df_f, df_plan, now_ua)
 
     except Exception as e:
         st.error(f"Критична помилка додатка: {e}")
