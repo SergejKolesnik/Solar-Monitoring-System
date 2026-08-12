@@ -89,6 +89,7 @@ README посилається на `solar_ai_base.csv`, але такого trac
 - **Supabase** — опціональна server-side shadow-копія. `collector.py` синхронізує capacity, measurements, weather, forecasts і daily quality, якщо задані `SUPABASE_URL` та `SUPABASE_SERVICE_ROLE_KEY`.
 - SQL у `supabase/schema.sql` вмикає RLS і не створює публічних policies для Solar-таблиць.
 - Локальна CSV-база, заявлена README, у поточному checkout відсутня.
+- Collector записує основну Google Sheet через повторно використовуваний `_collector_staging`: staging повністю записується і валідується, після чого values атомарно переносяться в чинний production worksheet одним `spreadsheets.batchUpdate`. Production `sheetId`, title, index, formatting, protected ranges і charts не замінюються. Supabase sync виконується лише після успішної production readback validation.
 
 ## Deployment
 
@@ -173,3 +174,5 @@ README посилається на `solar_ai_base.csv`, але такого trac
 - 2026-08-11: зафіксовано, що Solar Python/Streamlit application є основним продуктом, а `docs/camino/` — окремим co-located компонентом без runtime-зв’язку.
 - 2026-08-11: Google Sheets задокументовано як чинне operational-сховище; Supabase — як shadow-копію до окремого рішення про міграцію.
 - 2026-08-11: production-моделлю вважається шлях `collector.py` з `HistGradientBoostingRegressor`; `model_engine.py` не вважається production без додаткового підтвердження.
+- 2026-08-11: Google Sheets persistence зберігає identity чинного production worksheet. `_collector_staging` використовується для повного запису й перевірки, а atomic batch promotion змінює лише values; будь-яка staging, promotion або production-validation помилка зупиняє pipeline до Supabase sync.
+- 2026-08-12: `auto_sync.yml` серіалізує production collector runs через GitHub Actions `concurrency`, щоб паралельні запуски не використовували спільний `_collector_staging` одночасно.
