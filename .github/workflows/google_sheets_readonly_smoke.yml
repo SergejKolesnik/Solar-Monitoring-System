@@ -1,0 +1,30 @@
+name: Google Sheets Read-Only Smoke Test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout reviewed smoke test
+        uses: actions/checkout@v4
+        with:
+          ref: 93302fb680b2259f33aab039cc26eedd0fbd6eac
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+
+      - name: Install read-only dependencies
+        run: python -m pip install --disable-pip-version-check gspread==6.2.1 google-auth==2.40.3
+
+      - name: Read test spreadsheet metadata
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+        run: python scripts/google_sheets_readonly_smoke.py
