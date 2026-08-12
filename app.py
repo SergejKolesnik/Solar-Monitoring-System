@@ -340,7 +340,29 @@ def load_base_from_sheets():
 
 @st.cache_data(ttl=3600)
 def load_plan_from_sheets(month: int, year: int, nominal_kw: float):
-    sheet_name = f"{MONTHS_UK[month]} {str(year)[2:]}"
+    month_name = MONTHS_UK[month]
+    year_short = str(year)[2:]
+    preferred_sheet_name = f"{month_name} {year_short}"
+
+    def normalize_title(value):
+        return str(value or '').replace('\xa0', ' ').strip().casefold()
+
+    def find_plan_sheet_title(sheet_titles):
+        normalized = {normalize_title(title): title for title in sheet_titles}
+        candidates = [
+            f"{month_name} {year_short}",
+            f"{month_name} {year}",
+            f"{month_name.upper()} {year_short}",
+            f"{month_name.upper()} {year}",
+            month_name,
+            month_name.upper(),
+        ]
+        for candidate in candidates:
+            found = normalized.get(normalize_title(candidate))
+            if found:
+                return found
+        return None
+
     try:
         creds_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
         creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
@@ -355,9 +377,15 @@ def load_plan_from_sheets(month: int, year: int, nominal_kw: float):
         except Exception as e:
             st.error(f"Не вдалось отримати список аркушів: {e}")
             return pd.DataFrame()
-        if sheet_name not in sheet_titles:
-            st.error(f"Аркуш '{sheet_name}' не знайдено. Доступні: {sheet_titles}")
+        sheet_name = find_plan_sheet_title(sheet_titles)
+        if not sheet_name:
+            st.warning(
+                f"Аркуш плану для '{preferred_sheet_name}' не знайдено. "
+                f"Доступні: {sheet_titles}"
+            )
             return pd.DataFrame()
+        if sheet_name != preferred_sheet_name:
+            st.info(f"План завантажено з аркуша '{sheet_name}' замість '{preferred_sheet_name}'.")
         ws = sh.worksheet(sheet_name)
         raw = ws.get_all_values()
         df_raw = pd.DataFrame(raw)
