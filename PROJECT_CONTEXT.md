@@ -1,6 +1,6 @@
 # SkyGrid Solar AI — Project Context
 
-Last audited: 2026-08-11
+Last audited: 2026-08-14
 
 Repository: `C:\Users\User\Documents\Projects\Solar-Monitoring-System`
 
@@ -73,6 +73,7 @@ README посилається на `solar_ai_base.csv`, але такого trac
 - Collector навчає модель у часовому вікні або коли прогноз на поточний день відсутній, після чого зберігає прогноз у Google Sheets.
 - Поточний training MAE обчислюється на навчальних даних. Chronological holdout/backtest для production-моделі не реалізовано.
 - `ui_components.py` містить read-only shadow-експеримент корекції за bucket хмарності. Він лише відображає порівняння і не змінює operational `AI_Forecast_MW`.
+- `scripts/forecast_quality_report.py` дає read-only CLI-звіт якості по Google Sheets CSV: погодинні MAE/RMSE/bias у МВт, розбивку по ранку/піку/вечору, найгірші години, добову MAPE як контрольний health-check і окрему оцінку shadow-корекції.
 
 ## Streamlit UI
 
@@ -127,7 +128,7 @@ README посилається на `solar_ai_base.csv`, але такого trac
 1. README починається з Camino і змішує два незалежні продукти; Solar-проєкт має бути описаний першим.
 2. README містить посилання на відсутній `solar_ai_base.csv` і згадку про «нейронні мережі», тоді як підтверджені моделі — gradient boosting.
 3. `fix_base.yml` запускає відсутній у репозиторії `fix_base.py`, тому workflow виглядає непрацездатним.
-4. URL у `keep_alive.yml` (`pd2b4edrjntm8tyeulappbo.streamlit.app`) не збігається з URL у README (`solar-monitoring-system.streamlit.app`); правильний production URL не підтверджено.
+4. README URL (`solar-monitoring-system.streamlit.app`) і фактичний Streamlit Cloud URL (`pd2h4edrjntm8ityeulappbo.streamlit.app`) потребують остаточного узгодження; `keep_alive.yml` оновлено на фактичний URL з робочих сесій.
 5. `requirements.txt` не містить явної залежності `streamlit`, хоча основний застосунок її імпортує.
 6. Немає автоматичних тестів і CI-перевірки синтаксису/тестів.
 7. `model_engine.py` дублює окремий модельний шлях і може створювати плутанину щодо production-моделі.
@@ -139,7 +140,7 @@ README посилається на `solar_ai_base.csv`, але такого trac
 2. Перевірити production Streamlit URL та узгодити `keep_alive.yml`.
 3. Вирішити долю `fix_base.yml`: повернути підтверджений script або видалити/архівувати workflow окремим погодженим завданням.
 4. Додати мінімальні автоматичні тести для чистих функцій даних і прогнозування та CI syntax/test check.
-5. Додати chronological holdout/backtest для порівняння baseline та AI до будь-якого просування нової моделі.
+5. Додати chronological holdout/backtest для порівняння baseline та AI по погодинних метриках MAE/RMSE/bias, особливо для ранку, пікових годин і вечора.
 6. Після достатнього періоду спостереження окремо оцінити shadow-експеримент; не змінювати operational прогноз без доказів.
 7. Розглянути перенесення Camino до окремого репозиторію лише як окреме, явно погоджене рішення.
 
@@ -155,19 +156,30 @@ README посилається на `solar_ai_base.csv`, але такого trac
 
 ## Current state
 
-Стан на 2026-08-11 перед додаванням контекстних файлів:
+Стан на 2026-08-14 після аудиту якості прогнозу:
 
 - Branch: `main`.
 - Tracking: `origin/main`.
 - Remote: `https://github.com/SergejKolesnik/Solar-Monitoring-System.git` (fetch/push).
-- Working tree: clean.
-- HEAD: `b037767 Guard shadow experiment against data errors`.
+- Working tree: локально має зміни, які треба закомітити/запушити після погодження.
+- HEAD: `f567d6f Defer plan sheet loading` локально, `origin/main` відстає на 1 коміт до пушу.
 - Основний Streamlit entry point: `app.py`.
 - Production collector: `collector.py`.
 - Google Sheets залишається operational source of truth.
 - Supabase використовується як опціональний shadow sync.
 - conventional automated tests: не знайдено.
 - Camino Planner: присутній у `docs/camino/` як окремий GitHub Pages PWA.
+- Read-only quality report за даними Google Sheets на 2026-08-14:
+  - факти доступні до `2026-08-13 19:00`;
+  - головним operational критерієм є погодинна якість прогнозу в МВт, бо підприємство планує наступну добу погодинно;
+  - погодинна MAE за 7 днів: база 1.83 МВт, AI 1.09 МВт, покращення +40.7%, AI кращий у 80% продуктивних годин;
+  - погодинна MAE за 14 днів: база 1.77 МВт, AI 0.95 МВт, покращення +46.1%, AI кращий у 83% продуктивних годин;
+  - погодинна MAE за 30 днів: база 1.77 МВт, AI 1.27 МВт, покращення +28.0%, AI кращий у 73% продуктивних годин;
+  - за 14 днів найбільше погодинне покращення видно зранку 06-09 (+60.4%) і ввечері 16-20 (+51.8%); у пікові години 10-15 покращення нижче (+38.0%) і саме там треба уважніше ловити хмарність;
+  - добова MAPE за 7 днів: база 11.4%, AI 11.3%, покращення +0.8%;
+  - добова MAPE за 14 днів: база 9.4%, AI 8.4%, покращення +10.4%;
+  - добова MAPE за 30 днів: база 16.0%, AI 15.5%, покращення +3.5%;
+  - shadow-корекція за 7/14 днів гірша за поточний AI, тому не готова до production promotion.
 
 ## Architectural decisions
 
