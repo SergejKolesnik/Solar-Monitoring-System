@@ -3,16 +3,18 @@ import pandas as pd
 import requests
 import time
 
+from runtime_config import get_secret
+
 # Visual Crossing повертає LOCAL time для заданих координат.
 # Для Нiкополя (UTC+3) час вже є київським -- конвертацiя НЕ потрiбна.
 
 @st.cache_data(ttl=600)
 def fetch_weather_data():
     try:
-        if "WEATHER_API_KEY" not in st.secrets:
-            st.error("Ключ WEATHER_API_KEY не знайдено в Secrets!")
+        api_key = get_secret("WEATHER_API_KEY")
+        if not api_key:
+            st.error("Ключ WEATHER_API_KEY не знайдено в Secrets або environment variables!")
             return pd.DataFrame()
-        api_key = st.secrets["WEATHER_API_KEY"]
         url = (
             f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/"
             f"47.631494,34.348690/next10days"

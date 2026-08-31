@@ -1,10 +1,11 @@
 import streamlit as st
 import pandas as pd
-import time, io, pytz, json
+import time, io, pytz
 import gspread
 from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
 
+from runtime_config import get_json_secret
 from weather_service import fetch_weather_data, calc_forecast_mw
 try:
     from weather_service import fetch_open_meteo_data as _weather_service_open_meteo
@@ -261,7 +262,7 @@ def draw_app_header(logo_url):
     )
 
 def open_main_spreadsheet():
-    creds_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
+    creds_dict = get_json_secret("GOOGLE_CREDENTIALS")
     creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
     gc = gspread.authorize(creds)
     return gc.open_by_key(SHEET_ID)
@@ -364,7 +365,7 @@ def load_plan_from_sheets(month: int, year: int, nominal_kw: float):
         return None
 
     try:
-        creds_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
+        creds_dict = get_json_secret("GOOGLE_CREDENTIALS")
         creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
         gc = gspread.authorize(creds)
         try:

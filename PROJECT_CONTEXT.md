@@ -99,6 +99,8 @@ README посилається на `solar_ai_base.csv`, але такого trac
 - `.github/workflows/keep_alive.yml` періодично пінгує Streamlit URL.
 - `.github/workflows/fix_base.yml` є ручним one-time workflow.
 - Camino Planner публікується окремо через GitHub Pages із `docs/camino/`.
+- `Dockerfile` і `docs/deployment.md` додають другий, production-style шлях для запуску Streamlit UI як контейнера на Cloud Run/Render/Railway/VPS із власним доменом. Перший етап не переносить `collector.py` з GitHub Actions і не змінює модель або Google Sheets data flow.
+- `runtime_config.py` дозволяє UI читати `GOOGLE_CREDENTIALS` і `WEATHER_API_KEY` як зі Streamlit Secrets, так і з environment variables для контейнерного хостингу.
 
 Фактичні налаштування Streamlit Cloud поза репозиторієм, активність deployment і поточний стан GitHub Secrets локально **не підтверджені**.
 
@@ -134,15 +136,24 @@ README посилається на `solar_ai_base.csv`, але такого trac
 7. `model_engine.py` дублює окремий модельний шлях і може створювати плутанину щодо production-моделі.
 8. `app.py`, `dashboard_components.py` та особливо `ui_components.py` великі й поєднують багато UI-відповідальностей; рефакторинг не входив у цей аудит.
 
+## Operational audit 2026-08-31
+
+- GitHub Actions `SkyGrid Auto Sync` продовжував завершуватися зеленим статусом, але в логах були `AUTHENTICATIONFAILED` для Gmail IMAP.
+- Через це нові Excel-звіти з FusionSolar не імпортувалися, а Google Sheets містила факти лише до `2026-08-25 19:00`.
+- Картка `Факт з початку місяця` рахувала суму коректно по наявних у Google Sheets фактах: `2069.523` МВт·год за серпень, але ця сума неповна через зупинку імпорту фактів.
+- `collector.py` змінено так, щоб відсутні або невалідні `EMAIL_USER` / `EMAIL_PASS` зупиняли pipeline помилкою, а не маскувалися під `Нових фактів не знайдено`.
+- `Keep Site Awake` пінгує Streamlit URL, але приватний/авторизований Streamlit endpoint повертає `303` на auth; такий ping не є надійним доказом, що застосунок прокинувся.
+
 ## Наступні пріоритети
 
 1. Виправити README: поставити SkyGrid першим, відокремити Camino, прибрати або актуалізувати CSV-посилання й опис моделі.
 2. Перевірити production Streamlit URL та узгодити `keep_alive.yml`.
-3. Вирішити долю `fix_base.yml`: повернути підтверджений script або видалити/архівувати workflow окремим погодженим завданням.
-4. Додати мінімальні автоматичні тести для чистих функцій даних і прогнозування та CI syntax/test check.
-5. Додати chronological holdout/backtest для порівняння baseline та AI по погодинних метриках MAE/RMSE/bias, особливо для ранку, пікових годин і вечора.
-6. Після достатнього періоду спостереження окремо оцінити shadow-експеримент; не змінювати operational прогноз без доказів.
-7. Розглянути перенесення Camino до окремого репозиторію лише як окреме, явно погоджене рішення.
+3. Підняти staging-контейнер Streamlit UI на обраному хостингу з env/secrets і власним тестовим URL; поточний Streamlit Cloud залишити fallback.
+4. Вирішити долю `fix_base.yml`: повернути підтверджений script або видалити/архівувати workflow окремим погодженим завданням.
+5. Додати мінімальні автоматичні тести для чистих функцій даних і прогнозування та CI syntax/test check.
+6. Додати chronological holdout/backtest для порівняння baseline та AI по погодинних метриках MAE/RMSE/bias, особливо для ранку, пікових годин і вечора.
+7. Після достатнього періоду спостереження окремо оцінити shadow-експеримент; не змінювати operational прогноз без доказів.
+8. Розглянути перенесення Camino до окремого репозиторію лише як окреме, явно погоджене рішення.
 
 ## Правила продовження роботи з іншого ПК
 
@@ -188,3 +199,4 @@ README посилається на `solar_ai_base.csv`, але такого trac
 - 2026-08-11: production-моделлю вважається шлях `collector.py` з `HistGradientBoostingRegressor`; `model_engine.py` не вважається production без додаткового підтвердження.
 - 2026-08-11: Google Sheets persistence зберігає identity чинного production worksheet. `_collector_staging` використовується для повного запису й перевірки, а atomic batch promotion змінює лише values; будь-яка staging, promotion або production-validation помилка зупиняє pipeline до Supabase sync.
 - 2026-08-12: `auto_sync.yml` серіалізує production collector runs через GitHub Actions `concurrency`, щоб паралельні запуски не використовували спільний `_collector_staging` одночасно.
+- 2026-08-27: додано контейнерний шлях деплою Streamlit UI. Перший production-hosting етап має переносити тільки web UI, залишаючи scheduled collector на GitHub Actions до окремого рішення.
