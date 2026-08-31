@@ -751,13 +751,22 @@ def draw_metrics(df_f, df_h, now_ua, timedelta, df_open_meteo=None):
     full_load_hours = (tomorrow_mwh / capacity_mw) if capacity_mw > 0 else 0.0
     month_fact_mwh, month_last_time = _month_fact_mwh(df_h, now_ua)
     month_note = "фактична генерація за поточний місяць"
+    expected_lag_days = 2 if now_ua.hour < 9 else 1
+    expected_latest_date = (pd.Timestamp(now_ua.date()) - pd.Timedelta(days=expected_lag_days)).date()
+    month_fact_stale = True
     if month_last_time is not None:
-        month_note = f"останній факт: {pd.to_datetime(month_last_time).strftime('%d.%m %H:%M')}"
+        month_last_ts = pd.to_datetime(month_last_time)
+        month_fact_stale = month_last_ts.date() < expected_latest_date
+        if month_fact_stale:
+            month_note = f"неповні дані до {month_last_ts.strftime('%d.%m %H:%M')}"
+        else:
+            month_note = f"останній факт: {month_last_ts.strftime('%d.%m %H:%M')}"
     peak_pct = (peak_mw / capacity_mw * 100) if capacity_mw > 0 else 0.0
     month_capacity_factor = 0.0
     if capacity_mw > 0 and now_ua.day > 0:
         month_capacity_factor = month_fact_mwh / (capacity_mw * 24 * now_ua.day) * 100
-    month_freshness = 100.0 if month_last_time is not None and pd.to_datetime(month_last_time).date() >= now_ua.date() else 72.0
+    month_freshness = 42.0 if month_fact_stale else 100.0
+    month_badge = "ДАНІ ВІДСТАЮТЬ" if month_fact_stale else f"КВВП {month_capacity_factor:.1f}%"
 
     cards = [
         {
@@ -786,11 +795,11 @@ def draw_metrics(df_f, df_h, now_ua, timedelta, df_open_meteo=None):
             "label": "Факт з початку місяця",
             "value": f"{month_fact_mwh:.1f}",
             "unit": "МВт·год",
-            "badge": f"КВВП {month_capacity_factor:.1f}%" if month_capacity_factor > 0 else "Оновлено",
+            "badge": month_badge if month_fact_mwh > 0 else "Немає факту",
             "note": month_note,
             "icon": "▣",
-            "accent": "#10b981",
-            "glow": "rgba(16,185,129,0.18)",
+            "accent": "#ffb800" if month_fact_stale else "#10b981",
+            "glow": "rgba(255,184,0,0.18)" if month_fact_stale else "rgba(16,185,129,0.18)",
             "progress": _clamp_pct(month_freshness),
         },
     ]

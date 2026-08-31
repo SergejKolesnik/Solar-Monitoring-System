@@ -25,6 +25,11 @@ WEATHER_LAST_FAILED_UPDATE_KEY = "Weather_Last_Failed_Update"
 STAGING_SHEET_NAME = "_collector_staging"
 SHEET_WRITE_BATCH_SIZE = 500
 
+
+class EmailFactSourceError(RuntimeError):
+    """Raised when the production fact source cannot be read safely."""
+
+
 # Основні числові колонки, які зберігаються у Google Sheet
 NUMERIC_COLS = [
     'Forecast_MW',
@@ -909,10 +914,15 @@ def get_email_folders():
 
 def read_facts_from_email(days=30):
     facts = []
+    email_user = os.getenv('EMAIL_USER')
+    email_pass = os.getenv('EMAIL_PASS')
+
+    if not email_user or not email_pass:
+        raise EmailFactSourceError("EMAIL_USER або EMAIL_PASS не задано в GitHub Secrets")
 
     try:
         mail = imaplib.IMAP4_SSL("imap.gmail.com")
-        mail.login(os.getenv('EMAIL_USER'), os.getenv('EMAIL_PASS'))
+        mail.login(email_user, email_pass)
 
         ids = []
 
@@ -1002,8 +1012,15 @@ def read_facts_from_email(days=30):
 
         mail.logout()
 
+    except imaplib.IMAP4.error as e:
+        raise EmailFactSourceError(
+            "IMAP авторизація Gmail не вдалася. "
+            "Перевірте EMAIL_USER та EMAIL_PASS у GitHub Actions Secrets."
+        ) from e
+    except EmailFactSourceError:
+        raise
     except Exception as e:
-        print(f"Пошта: {e}")
+        raise EmailFactSourceError(f"Не вдалося прочитати факти з пошти: {e}") from e
 
     return facts
 
