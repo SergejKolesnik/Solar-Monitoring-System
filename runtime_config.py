@@ -48,7 +48,7 @@ def _normalize_json_secret_text(name: str, value: str) -> str:
     if assignment_match:
         text = assignment_match.group(1).strip()
 
-    for quote in ("'''", '"""'):
+    for quote in ("'''", '"""', "'", '"'):
         if text.startswith(quote) and text.endswith(quote):
             return text[len(quote) : -len(quote)].strip()
 

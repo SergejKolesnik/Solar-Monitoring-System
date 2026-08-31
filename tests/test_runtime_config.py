@@ -24,6 +24,14 @@ class RuntimeConfigTests(unittest.TestCase):
                 {"type": "service_account", "project_id": "nzf-energy-reporter"},
             )
 
+    def test_get_json_secret_accepts_single_quoted_json_env_value(self):
+        value = '\'{"type":"service_account","project_id":"nzf-energy-reporter"}\''
+        with patch.dict(os.environ, {"GOOGLE_CREDENTIALS": value}, clear=False):
+            self.assertEqual(
+                get_json_secret("GOOGLE_CREDENTIALS"),
+                {"type": "service_account", "project_id": "nzf-energy-reporter"},
+            )
+
     def test_get_json_secret_accepts_streamlit_toml_table(self):
         value = """
 [google_service_account]
