@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -36,7 +37,10 @@ def get_json_secret(name: str) -> dict[str, Any]:
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        return _load_toml_json_secret(name, text)
+        try:
+            return _load_python_literal_json_secret(name, text)
+        except (ValueError, SyntaxError):
+            return _load_toml_json_secret(name, text)
 
 
 def _normalize_json_secret_text(name: str, value: str) -> str:
@@ -71,3 +75,12 @@ def _load_toml_json_secret(name: str, value: str) -> dict[str, Any]:
             return dict(candidate)
 
     raise ValueError(f"{name} does not contain a service_account JSON/TOML object")
+
+
+def _load_python_literal_json_secret(name: str, value: str) -> dict[str, Any]:
+    """Read credentials pasted as a Python dict representation."""
+
+    data = ast.literal_eval(value)
+    if isinstance(data, dict) and data.get("type") == "service_account":
+        return dict(data)
+    raise ValueError(f"{name} does not contain a service_account Python dict")
