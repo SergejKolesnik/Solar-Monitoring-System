@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import tomllib
 from typing import Any
 
 import streamlit as st
@@ -31,7 +32,11 @@ def get_json_secret(name: str) -> dict[str, Any]:
         raise KeyError(f"{name} is not configured")
     if isinstance(value, dict):
         return dict(value)
-    return json.loads(_normalize_json_secret_text(name, str(value)))
+    text = _normalize_json_secret_text(name, str(value))
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return _load_toml_json_secret(name, text)
 
 
 def _normalize_json_secret_text(name: str, value: str) -> str:
@@ -48,3 +53,21 @@ def _normalize_json_secret_text(name: str, value: str) -> str:
             return text[len(quote) : -len(quote)].strip()
 
     return text
+
+
+def _load_toml_json_secret(name: str, value: str) -> dict[str, Any]:
+    """Read service-account credentials copied as Streamlit TOML."""
+
+    data = tomllib.loads(value)
+
+    candidates = [
+        data.get(name),
+        data.get(name.lower()),
+        data.get("google_service_account"),
+        data,
+    ]
+    for candidate in candidates:
+        if isinstance(candidate, dict) and candidate.get("type") == "service_account":
+            return dict(candidate)
+
+    raise ValueError(f"{name} does not contain a service_account JSON/TOML object")
