@@ -454,6 +454,206 @@ def _draw_shadow_experiment(df_fact):
     st.write("---")
 
 
+def _build_hourly_quality_frame(df_fact):
+    """Build per-hour operational quality rows for daylight forecast review."""
+    required = {'Time', 'Fact_MW', 'Forecast_MW', 'AI_Forecast_MW'}
+    if df_fact.empty or not required.issubset(df_fact.columns):
+        return pd.DataFrame()
+
+    hourly = df_fact[
+        (df_fact['Fact_MW'] > 0.05) &
+        (df_fact['Forecast_MW'] > 0.05) &
+        (df_fact['AI_Forecast_MW'] > 0.05)
+    ].copy()
+    if hourly.empty:
+        return hourly
+
+    hourly['Time'] = pd.to_datetime(hourly['Time'], errors='coerce')
+    hourly = hourly.dropna(subset=['Time'])
+    hourly['Дата'] = hourly['Time'].dt.date
+    hourly['Година'] = hourly['Time'].dt.hour
+    hourly['Помилка сайту МВт'] = hourly['Forecast_MW'] - hourly['Fact_MW']
+    hourly['Помилка ШІ МВт'] = hourly['AI_Forecast_MW'] - hourly['Fact_MW']
+    hourly['Абс. помилка сайту МВт'] = hourly['Помилка сайту МВт'].abs()
+    hourly['Абс. помилка ШІ МВт'] = hourly['Помилка ШІ МВт'].abs()
+    hourly['ШІ краще'] = hourly['Абс. помилка ШІ МВт'] < hourly['Абс. помилка сайту МВт']
+    return hourly
+
+
+def _summarize_hourly_quality(hourly, days, label=None):
+    """Summarize a trailing hourly quality window."""
+    if hourly.empty:
+        return None
+
+    end_date = pd.Timestamp(hourly['Дата'].max())
+    start_cutoff = end_date - pd.Timedelta(days=days - 1)
+    window = hourly[pd.to_datetime(hourly['Дата']) >= start_cutoff].copy()
+    if window.empty:
+        return None
+
+    base_mae = float(window['Абс. помилка сайту МВт'].mean())
+    ai_mae = float(window['Абс. помилка ШІ МВт'].mean())
+    improvement = 100 * (base_mae - ai_mae) / base_mae if base_mae > 0 else 0.0
+
+    return {
+        'Період': label or f'{days} днів',
+        'Годин': int(len(window)),
+        'З': window['Time'].min(),
+        'До': window['Time'].max(),
+        'MAE сайту МВт': base_mae,
+        'MAE ШІ МВт': ai_mae,
+        'Покращення ШІ %': improvement,
+        'RMSE сайту МВт': float((window['Помилка сайту МВт'].pow(2).mean()) ** 0.5),
+        'RMSE ШІ МВт': float((window['Помилка ШІ МВт'].pow(2).mean()) ** 0.5),
+        'P90 помилка сайту МВт': float(window['Абс. помилка сайту МВт'].quantile(0.90)),
+        'P90 помилка ШІ МВт': float(window['Абс. помилка ШІ МВт'].quantile(0.90)),
+        'Bias сайту МВт': float(window['Помилка сайту МВт'].mean()),
+        'Bias ШІ МВт': float(window['Помилка ШІ МВт'].mean()),
+        'Годин, де ШІ краще %': float(window['ШІ краще'].mean() * 100),
+    }
+
+
+def _draw_hourly_model_audit(df_fact):
+    """Draw read-only model audit focused on hourly planning quality."""
+    hourly = _build_hourly_quality_frame(df_fact)
+    if hourly.empty:
+        st.info("Погодинний аудит недоступний: бракує годин, де одночасно є факт, базовий прогноз і прогноз ШІ.")
+        return
+
+    summaries = [
+        _summarize_hourly_quality(hourly, 7, 'Останні 7 днів'),
+        _summarize_hourly_quality(hourly, 14, 'Останні 14 днів'),
+        _summarize_hourly_quality(hourly, 30, 'Останні 30 днів'),
+    ]
+    summaries = [item for item in summaries if item]
+    if not summaries:
+        return
+
+    latest = summaries[0]
+    st.markdown("##### Погодинний аудит моделі")
+    st.caption(
+        "Головна операційна метрика для добового планування: наскільки точно модель попадає в кожну годину генерації, "
+        "без нічних нулів і без прикрашання добовою сумою."
+    )
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("MAE ШІ за 7 днів", f"{latest['MAE ШІ МВт']:.2f} МВт", f"{latest['Покращення ШІ %']:+.1f}% до сайту")
+    c2.metric("Годин, де ШІ краще", f"{latest['Годин, де ШІ краще %']:.0f}%", f"{latest['Годин']} год.")
+    c3.metric("P90 помилка ШІ", f"{latest['P90 помилка ШІ МВт']:.2f} МВт")
+    c4.metric("Bias ШІ", f"{latest['Bias ШІ МВт']:+.2f} МВт")
+
+    if latest['Покращення ШІ %'] >= 10 and latest['Годин, де ШІ краще %'] >= 60:
+        st.success("Погодинно ШІ зараз корисний для оператора: він помітно зменшує середню помилку відносно базового прогнозу.")
+    elif latest['Покращення ШІ %'] < 0:
+        st.warning("Погодинно ШІ за останні 7 днів гірший за базовий прогноз. Потрібна перевірка факту, погоди або корекції.")
+    else:
+        st.info("Погодинно ШІ близький до базового прогнозу. Використовуйте як додатковий орієнтир, не як єдине джерело.")
+
+    quality_table = pd.DataFrame(summaries)
+    display_cols = [
+        'Період', 'Годин', 'MAE сайту МВт', 'MAE ШІ МВт', 'Покращення ШІ %',
+        'RMSE сайту МВт', 'RMSE ШІ МВт', 'P90 помилка ШІ МВт',
+        'Bias ШІ МВт', 'Годин, де ШІ краще %'
+    ]
+    rounded = quality_table[display_cols].copy()
+    for col in rounded.columns:
+        if col not in ['Період', 'Годин']:
+            rounded[col] = pd.to_numeric(rounded[col], errors='coerce').round(2)
+
+    st.dataframe(
+        rounded.style.background_gradient(
+            subset=['Покращення ШІ %', 'Годин, де ШІ краще %'],
+            cmap='RdYlGn',
+            vmin=-20,
+            vmax=80
+        ),
+        use_container_width=True,
+        hide_index=True
+    )
+
+    block_specs = [
+        ('Ранок 06-09', 6, 9),
+        ('Пік 10-15', 10, 15),
+        ('Вечір 16-20', 16, 20),
+    ]
+    block_rows = []
+    for label, start_hour, end_hour in block_specs:
+        block = hourly[(hourly['Година'] >= start_hour) & (hourly['Година'] <= end_hour)].copy()
+        summary = _summarize_hourly_quality(block, 14, label)
+        if summary:
+            block_rows.append(summary)
+
+    if block_rows:
+        st.markdown("##### Де саме модель допомагає або помиляється")
+        block_table = pd.DataFrame(block_rows)
+        block_display = block_table[
+            ['Період', 'Годин', 'MAE сайту МВт', 'MAE ШІ МВт', 'Покращення ШІ %', 'Bias ШІ МВт', 'Годин, де ШІ краще %']
+        ].copy()
+        for col in block_display.columns:
+            if col not in ['Період', 'Годин']:
+                block_display[col] = pd.to_numeric(block_display[col], errors='coerce').round(2)
+        st.dataframe(
+            block_display.style.background_gradient(
+                subset=['Покращення ШІ %'],
+                cmap='RdYlGn',
+                vmin=-20,
+                vmax=60
+            ),
+            use_container_width=True,
+            hide_index=True
+        )
+
+    recent_start = pd.Timestamp(hourly['Дата'].max()) - pd.Timedelta(days=13)
+    recent = hourly[pd.to_datetime(hourly['Дата']) >= recent_start].copy()
+    if not recent.empty:
+        st.markdown("##### Погодинна помилка за останні 14 днів")
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=recent['Time'], y=recent['Абс. помилка сайту МВт'],
+            name='Абс. помилка сайту', mode='lines',
+            line=dict(color='#D85A30', width=1.5, dash='dot')
+        ))
+        fig.add_trace(go.Scatter(
+            x=recent['Time'], y=recent['Абс. помилка ШІ МВт'],
+            name='Абс. помилка ШІ', mode='lines',
+            line=dict(color='#00e5ff', width=2),
+            fill='tozeroy', fillcolor='rgba(0,229,255,0.08)'
+        ))
+        fig.update_layout(
+            height=280,
+            margin=dict(l=0, r=0, t=10, b=0),
+            yaxis=dict(title='МВт'),
+            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0),
+            hovermode='x unified'
+        )
+        st.plotly_chart(fig, width='stretch')
+
+    worst = hourly.sort_values('Абс. помилка ШІ МВт', ascending=False).head(10).copy()
+    if not worst.empty:
+        st.markdown("##### Найгірші години ШІ")
+        cols = ['Time', 'Fact_MW', 'Forecast_MW', 'AI_Forecast_MW', 'Абс. помилка сайту МВт', 'Абс. помилка ШІ МВт']
+        optional = [c for c in ['CloudCover', 'PrecipProb', 'WindSpeed', 'Temp'] if c in worst.columns]
+        worst_display = worst[cols + optional].copy()
+        worst_display['Time'] = worst_display['Time'].dt.strftime('%d.%m.%Y %H:%M')
+        rename = {
+            'Time': 'Дата/час',
+            'Fact_MW': 'Факт МВт',
+            'Forecast_MW': 'Сайт МВт',
+            'AI_Forecast_MW': 'ШІ МВт',
+            'CloudCover': 'Хмарність %',
+            'PrecipProb': 'Опади %',
+            'WindSpeed': 'Вітер м/с',
+            'Temp': 'Темп. °C',
+        }
+        worst_display = worst_display.rename(columns=rename)
+        for col in worst_display.columns:
+            if col != 'Дата/час':
+                worst_display[col] = pd.to_numeric(worst_display[col], errors='coerce').round(2)
+        st.dataframe(worst_display, use_container_width=True, hide_index=True)
+
+    st.write("---")
+
+
 def _draw_error_factor_analysis(df_fact):
     factor_table = _build_error_factor_table(df_fact)
     if factor_table.empty:
@@ -551,6 +751,8 @@ def draw_training_tab(df_h):
     if df_errors.empty:
         st.info("Недостатньо історичних даних для аналізу.")
         return
+
+    _draw_hourly_model_audit(df_fact)
 
     base_mape = float(df_fact['Base_Abs_Error_Pct'].mean())
     ai_mape = float(df_fact['AI_Abs_Error_Pct'].mean())
