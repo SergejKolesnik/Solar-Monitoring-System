@@ -1,0 +1,41 @@
+name: Deploy Cloud Run UI
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GOOGLE_CREDENTIALS }}
+          project_id: skygrid-solar-ai-nzf
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy Streamlit UI to Cloud Run
+        run: |
+          gcloud run deploy skygrid-solar-ai \
+            --project skygrid-solar-ai-nzf \
+            --region europe-west1 \
+            --source . \
+            --allow-unauthenticated \
+            --set-secrets GOOGLE_CREDENTIALS=GOOGLE_CREDENTIALS:latest,WEATHER_API_KEY=WEATHER_API_KEY:latest \
+            --quiet
+
+      - name: Show service URL
+        run: |
+          gcloud run services describe skygrid-solar-ai \
+            --project skygrid-solar-ai-nzf \
+            --region europe-west1 \
+            --format='value(status.url)'
