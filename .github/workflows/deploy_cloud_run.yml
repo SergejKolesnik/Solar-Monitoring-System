@@ -25,8 +25,10 @@ jobs:
 
       - name: Deploy Streamlit UI to Cloud Run
         run: |
+          gcloud config set billing/quota_project skygrid-solar-ai-nzf
           gcloud run deploy skygrid-solar-ai \
             --project skygrid-solar-ai-nzf \
+            --billing-project skygrid-solar-ai-nzf \
             --region europe-west1 \
             --source . \
             --allow-unauthenticated \
@@ -37,5 +39,6 @@ jobs:
         run: |
           gcloud run services describe skygrid-solar-ai \
             --project skygrid-solar-ai-nzf \
+            --billing-project skygrid-solar-ai-nzf \
             --region europe-west1 \
             --format='value(status.url)'
