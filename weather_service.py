@@ -8,6 +8,16 @@ from runtime_config import get_secret
 # Visual Crossing повертає LOCAL time для заданих координат.
 # Для Нiкополя (UTC+3) час вже є київським -- конвертацiя НЕ потрiбна.
 
+
+def _safe_float(value, default=0.0):
+    try:
+        if pd.isna(value):
+            return default
+        return float(value)
+    except Exception:
+        return default
+
+
 @st.cache_data(ttl=600)
 def fetch_weather_data():
     try:
@@ -32,11 +42,11 @@ def fetch_weather_data():
                 for hr in d['hours']:
                     h_list.append({
                         'Time': pd.to_datetime(f"{d['datetime']} {hr['datetime']}"),
-                        'Rad': float(hr.get('solarradiation', 0)),
-                        'Temp': float(hr.get('temp', 0)),
-                        'CloudCover': float(hr.get('cloudcover', 0)),
-                        'WindSpeed': float(hr.get('windspeed', 0)),
-                        'PrecipProb': float(hr.get('precipprob', 0)),
+                        'Rad': _safe_float(hr.get('solarradiation')),
+                        'Temp': _safe_float(hr.get('temp')),
+                        'CloudCover': _safe_float(hr.get('cloudcover')),
+                        'WindSpeed': _safe_float(hr.get('windspeed')),
+                        'PrecipProb': _safe_float(hr.get('precipprob')),
                     })
             df = pd.DataFrame(h_list)
             return df

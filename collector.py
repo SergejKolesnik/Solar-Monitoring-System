@@ -1124,16 +1124,16 @@ def update_weather(df, now, capacity_mw, spreadsheet):
                 mask = df['Time'] == dt
 
                 df.loc[mask, 'Forecast_MW'] = round(
-                    float(hr.get('solarradiation', 0)) *
+                    _to_float(hr.get('solarradiation')) *
                     BASE_FORECAST_CONST *
                     (float(capacity_mw) / BASE_CAPACITY_MW),
                     3
                 )
                 df.loc[mask, 'Capacity_MW'] = float(capacity_mw)
-                df.loc[mask, 'CloudCover'] = float(hr.get('cloudcover', 0))
-                df.loc[mask, 'Temp'] = float(hr.get('temp', 0))
-                df.loc[mask, 'WindSpeed'] = float(hr.get('windspeed', 0))
-                df.loc[mask, 'PrecipProb'] = float(hr.get('precipprob', 0))
+                df.loc[mask, 'CloudCover'] = _to_float(hr.get('cloudcover'))
+                df.loc[mask, 'Temp'] = _to_float(hr.get('temp'))
+                df.loc[mask, 'WindSpeed'] = _to_float(hr.get('windspeed'))
+                df.loc[mask, 'PrecipProb'] = _to_float(hr.get('precipprob'))
 
         save_setting_value(spreadsheet, WEATHER_LAST_UPDATE_KEY, now.isoformat(timespec='seconds'))
         save_setting_value(spreadsheet, WEATHER_LAST_FAILED_UPDATE_KEY, "")
