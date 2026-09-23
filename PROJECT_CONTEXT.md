@@ -167,6 +167,17 @@ README посилається на `solar_ai_base.csv`, але такого trac
 
 ## Current state
 
+### Detailed weather tab (2026-09-23)
+
+- Added a read-only `today_weather.py` Streamlit module for a separate hourly
+  Open-Meteo view of the current Kyiv-local day.
+- The integration point is limited to one import, one additional tab, and one
+  renderer call in `app.py`; `collector.py`, Google Sheets, model code, and
+  existing tabs remain unchanged.
+- The detailed view loads only after an explicit user action, is cached for 15
+  minutes, supports manual refresh, and degrades to an in-tab warning when
+  the external weather request is unavailable.
+
 Стан на 2026-08-14 після аудиту якості прогнозу:
 
 - Branch: `main`.

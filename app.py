@@ -13,6 +13,7 @@ except Exception:
     _weather_service_open_meteo = None
 from dashboard_components import draw_main_chart, draw_metrics, draw_weather_strip
 from ui_components import draw_training_tab, draw_control_log_tab, draw_base_tab, draw_meteo_tab, draw_plan_tab
+from today_weather import draw_today_weather_tab
 
 # Налаштування сторiнки
 st.set_page_config(page_title="SkyGrid Solar AI", layout="wide", page_icon="☀️")
@@ -451,7 +452,7 @@ if not df_f.empty:
             st.stop()
 
         # 3. Вкладки
-        tabs = st.tabs(["Прогноз", "Якість ШІ", "Журнал", "Дані", "Метеоаналіз", "План"])
+        tabs = st.tabs(["Прогноз", "Якість ШІ", "Журнал", "Дані", "Метеоаналіз", "План", "Погода сьогодні"])
 
         with tabs[0]:
             saved_capacity_mw = load_capacity_from_sheets()
@@ -567,6 +568,9 @@ if not df_f.empty:
             if st.session_state.get("plan_tab_loaded"):
                 df_plan = load_plan_from_sheets(now_ua.month, now_ua.year, capacity_mw)
                 draw_plan_tab(df_h, df_f, df_plan, now_ua)
+
+        with tabs[6]:
+            draw_today_weather_tab()
 
     except Exception as e:
         st.error(f"Критична помилка додатка: {e}")
