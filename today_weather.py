@@ -84,6 +84,16 @@ WEATHER_CODES = {
     99: "Сильна гроза з градом",
 }
 
+COMPACT_COLUMNS = (
+    "Time",
+    "temperature_2m",
+    "cloud_cover",
+    "shortwave_radiation",
+    "precipitation",
+    "wind_speed_10m",
+    "weather_code",
+)
+
 
 @st.cache_data(ttl=900)
 def fetch_today_detailed_weather() -> pd.DataFrame:
@@ -131,6 +141,58 @@ def _format_hourly_table(frame: pd.DataFrame) -> pd.DataFrame:
     return table.rename(columns=rename).round(2)
 
 
+def _format_compact_hourly_table(frame: pd.DataFrame) -> pd.DataFrame:
+    """Return the solar-focused hourly view shown by default."""
+
+    compact = frame.loc[:, [column for column in COMPACT_COLUMNS if column in frame]].copy()
+    compact["Час"] = compact.pop("Time").dt.strftime("%H:%M")
+    compact["Стан"] = compact["weather_code"].map(WEATHER_CODES).fillna("—")
+    compact = compact.drop(columns=["weather_code"])
+    rename = {
+        "temperature_2m": "Температура, °C",
+        "cloud_cover": "Хмарність, %",
+        "shortwave_radiation": "Радіація, Вт/м²",
+        "precipitation": "Опади, мм",
+        "wind_speed_10m": "Вітер, м/с",
+    }
+    return compact.rename(columns=rename).round(2)
+
+
+def _render_kpi_cards(first: pd.Series) -> None:
+    """Render a responsive KPI grid with solar metrics first."""
+
+    def value(field: str, suffix: str = "", digits: int = 1) -> str:
+        current = first.get(field)
+        if pd.isna(current):
+            return "—"
+        return f"{current:.{digits}f}{suffix}"
+
+    weather_code = first.get("weather_code")
+    weather_label = (
+        WEATHER_CODES.get(int(weather_code), "—")
+        if pd.notna(weather_code)
+        else "—"
+    )
+    cards = [
+        ("☀️", "Радіація", value("shortwave_radiation", " Вт/м²", 0), "solar"),
+        ("☁️", "Хмарність", value("cloud_cover", " %", 0), "solar"),
+        ("🌡️", "Температура", value("temperature_2m", " °C"), "neutral"),
+        ("↔️", "Відчувається", value("apparent_temperature", " °C"), "neutral"),
+        ("💨", "Вітер", value("wind_speed_10m", " м/с"), "neutral"),
+        ("☔", "Стан", weather_label, "neutral"),
+    ]
+    html = """<div class="weather-kpi-grid">{}\n</div>""".format(
+        "".join(
+            f'''<div class="weather-kpi {tone}">
+                <div class="weather-kpi-label"><span>{icon}</span>{label}</div>
+                <div class="weather-kpi-value">{display}</div>
+            </div>'''
+            for icon, label, display, tone in cards
+        )
+    )
+    st.markdown(html, unsafe_allow_html=True)
+
+
 def draw_today_weather_tab() -> None:
     """Render an isolated, read-only detailed weather tab."""
 
@@ -140,13 +202,15 @@ def draw_today_weather_tab() -> None:
         "Дані не записуються в Google Sheets і не впливають на модель."
     )
     if not st.session_state.get("today_weather_loaded", False):
-        st.info("Прогноз завантажується окремою кнопкою, щоб не додавати запитів до основної моделі.")
+        st.caption("Прогноз завантажується окремо й не додає запитів до основної моделі.")
         if not st.button("Завантажити прогноз на сьогодні", key="load_today_weather"):
             return
         st.session_state["today_weather_loaded"] = True
 
-    if st.button("Оновити погодний прогноз", key="refresh_today_weather"):
+    action_columns = st.columns([1, 1, 2])
+    if action_columns[0].button("Оновити", key="refresh_today_weather"):
         fetch_today_detailed_weather.clear()
+    action_columns[1].caption("Оновлюється кожні 15 хв")
 
     frame = fetch_today_detailed_weather()
     if frame.empty:
@@ -154,24 +218,34 @@ def draw_today_weather_tab() -> None:
         return
 
     first = frame.iloc[0]
-    metric_columns = st.columns(5)
-    metric_columns[0].metric("Температура", f"{first['temperature_2m']:.1f} °C")
-    metric_columns[1].metric("Відчувається", f"{first['apparent_temperature']:.1f} °C")
-    metric_columns[2].metric("Хмарність", f"{first['cloud_cover']:.0f} %")
-    metric_columns[3].metric("Вітер", f"{first['wind_speed_10m']:.1f} м/с")
-    weather_code = first.get("weather_code")
-    weather_label = WEATHER_CODES.get(int(weather_code), "—") if pd.notna(weather_code) else "—"
-    metric_columns[4].metric("Стан", weather_label)
-
-    st.plotly_chart(
-        _build_weather_chart(frame),
-        use_container_width=True,
+    st.markdown(
+        """
+        <style>
+        .weather-kpi-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: .65rem; margin: .4rem 0 1rem; }
+        .weather-kpi { background: #1e1e2e; border: 1px solid #343448; border-radius: 12px; padding: .75rem .85rem; min-height: 88px; }
+        .weather-kpi.solar { border-color: #9b6d19; background: linear-gradient(145deg, #2a2519, #1e1e2e); }
+        .weather-kpi-label { color: #a9acbd; font-size: .82rem; white-space: nowrap; }
+        .weather-kpi-label span { margin-right: .35rem; }
+        .weather-kpi-value { color: #f3f4f8; font-size: 1.35rem; font-weight: 700; margin-top: .45rem; white-space: nowrap; }
+        @media (max-width: 900px) { .weather-kpi-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+        @media (max-width: 520px) { .weather-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+        </style>
+        """,
+        unsafe_allow_html=True,
     )
+    _render_kpi_cards(first)
+
+    st.subheader("Погодинна картина для СЕС")
+    st.plotly_chart(_build_weather_chart(frame), use_container_width=True)
+    st.subheader("Коротка таблиця")
     st.dataframe(
-        _format_hourly_table(frame),
+        _format_compact_hourly_table(frame),
         use_container_width=True,
         hide_index=True,
     )
+    with st.expander("Розширені параметри"):
+        st.caption("Додаткові метеопараметри залишені доступними окремо, щоб не перевантажувати основний екран.")
+        st.dataframe(_format_hourly_table(frame), use_container_width=True, hide_index=True)
 
 
 def _build_weather_chart(frame: pd.DataFrame):
@@ -180,23 +254,57 @@ def _build_weather_chart(frame: pd.DataFrame):
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
 
-    figure = make_subplots(specs=[[{"secondary_y": True}]])
-    figure.add_trace(
-        go.Scatter(x=frame["Time"], y=frame["temperature_2m"], name="Температура, °C"),
-        secondary_y=False,
-    )
-    figure.add_trace(
-        go.Bar(x=frame["Time"], y=frame["precipitation"], name="Опади, мм", opacity=0.45),
-        secondary_y=True,
+    figure = make_subplots(
+        rows=2,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.12,
+        row_heights=[0.62, 0.38],
+        specs=[[{"secondary_y": True}], [{"secondary_y": True}]],
     )
     figure.add_trace(
         go.Scatter(
             x=frame["Time"], y=frame["shortwave_radiation"],
-            name="Радіація, Вт/м²", line=dict(color="#ffb800"),
+            name="Радіація, Вт/м²", mode="lines",
+            line=dict(color="#ffb800", width=3), fill="tozeroy",
+            fillcolor="rgba(255,184,0,.18)",
         ),
-        secondary_y=True,
+        row=1, col=1, secondary_y=False,
     )
-    figure.update_layout(height=340, margin=dict(l=0, r=0, t=20, b=0), hovermode="x unified")
-    figure.update_yaxes(title_text="°C", secondary_y=False)
-    figure.update_yaxes(title_text="мм / Вт/м²", secondary_y=True)
+    figure.add_trace(
+        go.Scatter(
+            x=frame["Time"], y=frame["cloud_cover"],
+            name="Хмарність, %", line=dict(color="#8d96aa", width=2, dash="dot"),
+        ),
+        row=1, col=1, secondary_y=True,
+    )
+    figure.add_trace(
+        go.Scatter(
+            x=frame["Time"], y=frame["temperature_2m"],
+            name="Температура, °C", line=dict(color="#f2f4f8", width=2),
+        ),
+        row=2, col=1, secondary_y=False,
+    )
+    figure.add_trace(
+        go.Bar(
+            x=frame["Time"], y=frame["precipitation"], name="Опади, мм",
+            marker_color="#4da3d9", opacity=0.55,
+        ),
+        row=2, col=1, secondary_y=True,
+    )
+    figure.add_trace(
+        go.Scatter(
+            x=frame["Time"], y=frame["wind_speed_10m"],
+            name="Вітер, м/с", line=dict(color="#69c0a8", width=2, dash="dash"),
+        ),
+        row=2, col=1, secondary_y=True,
+    )
+    figure.update_layout(
+        height=520, margin=dict(l=0, r=0, t=20, b=0), hovermode="x unified",
+        legend=dict(orientation="h", y=1.08),
+    )
+    figure.update_yaxes(title_text="Вт/м²", row=1, col=1, secondary_y=False)
+    figure.update_yaxes(title_text="%", row=1, col=1, secondary_y=True)
+    figure.update_yaxes(title_text="°C", row=2, col=1, secondary_y=False)
+    figure.update_yaxes(title_text="м/с / мм", row=2, col=1, secondary_y=True)
     return figure
