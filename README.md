@@ -25,6 +25,14 @@ python scripts/forecast_quality_report.py
 
 Деталі: [`docs/deployment.md`](docs/deployment.md).
 
+## Anonymous usage analytics
+
+The public Streamlit page can send an anonymous `$pageview` event to PostHog when
+`POSTHOG_API_KEY` is configured in Streamlit Secrets or the hosting environment.
+Autocapture, session recording, person profiles, and application inputs remain
+disabled. The event is tagged as `skygrid-solar` so it can be compared with RDN
+Market Intelligence in the same PostHog project.
+
 ## Operational checks
 
 Якщо картка `Факт з початку місяця` виглядає заниженою, спочатку перевірте останній запуск `SkyGrid Auto Sync` у GitHub Actions. Логи мають містити імпорт листів/фактів з FusionSolar. Помилка Gmail IMAP `AUTHENTICATIONFAILED` означає, що треба оновити `EMAIL_USER` / `EMAIL_PASS` у GitHub Actions Secrets і вручну перезапустити workflow.

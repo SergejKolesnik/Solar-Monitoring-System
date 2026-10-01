@@ -14,9 +14,11 @@ except Exception:
 from dashboard_components import draw_main_chart, draw_metrics, draw_weather_strip
 from ui_components import draw_training_tab, draw_control_log_tab, draw_base_tab, draw_meteo_tab, draw_plan_tab
 from today_weather import draw_today_weather_tab
+from usage_analytics import capture_anonymous_pageview
 
 # Налаштування сторiнки
 st.set_page_config(page_title="SkyGrid Solar AI", layout="wide", page_icon="☀️")
+capture_anonymous_pageview()
 UA_TZ = pytz.timezone('Europe/Kyiv')
 now_ua = datetime.now(UA_TZ).replace(tzinfo=None)
 
