@@ -101,6 +101,7 @@ README посилається на `solar_ai_base.csv`, але такого trac
 - Camino Planner публікується окремо через GitHub Pages із `docs/camino/`.
 - `Dockerfile` і `docs/deployment.md` додають другий, production-style шлях для запуску Streamlit UI як контейнера на Cloud Run/Render/Railway/VPS із власним доменом. Перший етап не переносить `collector.py` з GitHub Actions і не змінює модель або Google Sheets data flow.
 - `runtime_config.py` дозволяє UI читати `GOOGLE_CREDENTIALS` і `WEATHER_API_KEY` як зі Streamlit Secrets, так і з environment variables для контейнерного хостингу.
+- `usage_analytics.py` optionally sends one anonymous PostHog page-view event tagged `skygrid-solar`; tracking remains disabled when `POSTHOG_API_KEY` is absent.
 
 Фактичні налаштування Streamlit Cloud поза репозиторієм, активність deployment і поточний стан GitHub Secrets локально **не підтверджені**.
 
