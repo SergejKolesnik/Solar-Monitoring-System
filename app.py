@@ -13,7 +13,7 @@ try:
 except Exception:
     _weather_service_open_meteo = None
 from dashboard_components import draw_main_chart, draw_metrics, draw_weather_strip
-from ui_components import draw_training_tab, draw_control_log_tab, draw_base_tab, draw_meteo_tab, draw_plan_tab
+from ui_components import draw_quality_summary, draw_training_tab, draw_meteo_tab, draw_plan_tab
 from today_weather import draw_today_weather_tab
 from usage_analytics import capture_anonymous_pageview
 
@@ -454,10 +454,12 @@ if not df_f.empty:
             st.warning("База даних порожня або недоступна.")
             st.stop()
 
-        # 3. Вкладки
-        tabs = st.tabs(["Прогноз", "Якість ШІ", "Журнал", "Дані", "Метеоаналіз", "План", "Погода сьогодні"])
+        # Основні робочі сторінки; технічні журнал і сирі дані з навігації прибрані.
+        tabs = st.tabs(["Огляд", "План", "Погода", "Якість ШІ"])
 
         with tabs[0]:
+            st.markdown("### Огляд прогнозу на завтра")
+            st.caption("Ключові показники для планування закупівлі електроенергії")
             saved_capacity_mw = load_capacity_from_sheets()
             col_cap, col_info = st.columns([1, 3])
             with col_cap:
@@ -513,56 +515,43 @@ if not df_f.empty:
             # Дані для вкладки "Якість ШІ" формуються з уже збережених помилок,
             # а не через повторне навчання моделі в app.py.
             draw_metrics(df_f, df_h, now_ua, timedelta, df_open_meteo)
-            st.write("")
-            draw_weather_strip(df_f, now_ua, timedelta)
 
             st.write("")
             title_col, download_col = st.columns([3, 1])
             with title_col:
                 st.markdown("##### Погодинний прогноз генерації на 3 дні")
             with download_col:
-                output = io.BytesIO()
-                export_from = pd.Timestamp((now_ua + timedelta(days=1)).date())
-                export_to = export_from + pd.Timedelta(days=3)
-                df_export = df_f[(df_f['Time'] >= export_from) & (df_f['Time'] < export_to)].copy()
-                export_cols = [
-                    'Time', 'AI_MW', 'Forecast_MW',
-                    'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb'
-                ]
-                df_export = df_export[[col for col in export_cols if col in df_export.columns]]
-                df_export = df_export.rename(columns={
-                    'Time': 'Дата/Час',
-                    'AI_MW': 'Прогнозована потужність ШІ, МВт',
-                    'Forecast_MW': 'Базовий прогноз сайту, МВт',
-                    'CloudCover': 'Очікувана хмарність, %',
-                    'Temp': 'Температура, °C',
-                    'WindSpeed': 'Швидкість вітру',
-                    'PrecipProb': 'Ймовірність опадів, %',
-                })
-                with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    df_export.to_excel(writer, index=False, sheet_name='Hourly_Forecast')
-                st.download_button(
-                    label="📥 Завантажити погодинний прогноз (.xlsx)",
-                    data=output.getvalue(),
-                    file_name=f"SkyGrid_Hourly_Forecast_{export_from.strftime('%d_%m_%Y')}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
+                with st.expander("Експорт", expanded=False):
+                    output = io.BytesIO()
+                    export_from = pd.Timestamp((now_ua + timedelta(days=1)).date())
+                    export_to = export_from + pd.Timedelta(days=3)
+                    df_export = df_f[(df_f['Time'] >= export_from) & (df_f['Time'] < export_to)].copy()
+                    export_cols = [
+                        'Time', 'AI_MW', 'Forecast_MW',
+                        'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb'
+                    ]
+                    df_export = df_export[[col for col in export_cols if col in df_export.columns]]
+                    df_export = df_export.rename(columns={
+                        'Time': 'Дата/Час',
+                        'AI_MW': 'Прогнозована потужність ШІ, МВт',
+                        'Forecast_MW': 'Базовий прогноз сайту, МВт',
+                        'CloudCover': 'Очікувана хмарність, %',
+                        'Temp': 'Температура, °C',
+                        'WindSpeed': 'Швидкість вітру',
+                        'PrecipProb': 'Ймовірність опадів, %',
+                    })
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        df_export.to_excel(writer, index=False, sheet_name='Hourly_Forecast')
+                    st.download_button(
+                        label="📥 Завантажити погодинний прогноз (.xlsx)",
+                        data=output.getvalue(),
+                        file_name=f"SkyGrid_Hourly_Forecast_{export_from.strftime('%d_%m_%Y')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
 
             draw_main_chart(df_f, now_ua)
 
         with tabs[1]:
-            draw_training_tab(df_h)
-
-        with tabs[2]:
-            draw_control_log_tab(df_h, df_f, df_open_meteo, now_ua)
-
-        with tabs[3]:
-            draw_base_tab(df_h)
-
-        with tabs[4]:
-            draw_meteo_tab(df_f, df_open_meteo)
-
-        with tabs[5]:
             st.info(
                 "План генерації завантажується окремо, щоб не затримувати запуск основної сторінки."
             )
@@ -572,8 +561,20 @@ if not df_f.empty:
                 df_plan = load_plan_from_sheets(now_ua.month, now_ua.year, capacity_mw)
                 draw_plan_tab(df_h, df_f, df_plan, now_ua)
 
-        with tabs[6]:
-            draw_today_weather_tab()
+        with tabs[2]:
+            st.markdown("### Погода та її вплив на генерацію")
+            draw_weather_strip(df_f, now_ua, timedelta)
+            with st.expander("Порівняння джерел і детальний метеоаналіз", expanded=False):
+                draw_meteo_tab(df_f, df_open_meteo)
+            with st.expander("Погодинна погода сьогодні", expanded=False):
+                draw_today_weather_tab()
+
+        with tabs[3]:
+            st.markdown("### Точність прогнозу")
+            st.caption("Короткий підсумок за фактичними годинами; деталі можна розгорнути нижче.")
+            draw_quality_summary(df_h)
+            with st.expander("Докладна перевірка якості та історія похибок", expanded=False):
+                draw_training_tab(df_h)
 
     except Exception as e:
         st.error(f"Критична помилка додатка: {e}")

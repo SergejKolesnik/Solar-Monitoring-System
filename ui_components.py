@@ -609,7 +609,6 @@ def _draw_hourly_model_audit(df_fact):
             use_container_width=True,
             hide_index=True
         )
-
     recent_start = pd.Timestamp(hourly['Дата'].max()) - pd.Timedelta(days=13)
     recent = hourly[pd.to_datetime(hourly['Дата']) >= recent_start].copy()
     if not recent.empty:
@@ -659,6 +658,41 @@ def _draw_hourly_model_audit(df_fact):
         st.dataframe(worst_display, use_container_width=True, hide_index=True)
 
     st.write("---")
+
+
+def draw_quality_summary(df_h):
+    """Show a compact, read-only seven-day quality summary for the overview tab."""
+    required = {'Time', 'Fact_MW', 'Forecast_MW', 'AI_Forecast_MW'}
+    if df_h is None or df_h.empty or not required.issubset(df_h.columns):
+        st.info("Поки недостатньо даних, щоб коротко підсумувати точність прогнозу.")
+        return
+
+    df = _clean_numeric(
+        df_h.copy(), ['Fact_MW', 'Forecast_MW', 'AI_Forecast_MW']
+    )
+    df['Time'] = parse_local_time_series(df['Time'])
+    df = df.dropna(subset=['Time'])
+    now_kyiv = pd.Timestamp.now(tz='Europe/Kyiv').tz_localize(None)
+    df_fact = df[valid_fact_mask(df, now=now_kyiv) & (df['Forecast_MW'] > 0.05)].copy()
+    hourly = _build_hourly_quality_frame(df_fact)
+    latest = _summarize_hourly_quality(hourly, 7, 'Останні 7 днів')
+    if not latest:
+        st.info("Немає достатньо погодинних збігів факту, базового прогнозу й ШІ.")
+        return
+
+    latest_fact = df_fact['Time'].max()
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("MAE ШІ · 7 днів", f"{latest['MAE ШІ МВт']:.2f} МВт")
+    c2.metric("Зміна до бази", f"{latest['Покращення ШІ %']:+.1f}%")
+    c3.metric("Годин, де ШІ краще", f"{latest['Годин, де ШІ краще %']:.0f}%")
+    c4.metric("Останній факт", latest_fact.strftime('%d.%m %H:%M'))
+
+    if latest['Покращення ШІ %'] < 0:
+        st.warning("За останні 7 днів ШІ мав більшу погодинну похибку за базовий прогноз.")
+    elif latest['Покращення ШІ %'] >= 10:
+        st.success("За останні 7 днів ШІ зменшив погодинну похибку проти бази.")
+    else:
+        st.info("Різниця між ШІ та базовим прогнозом поки невелика.")
 
 
 def _draw_error_factor_analysis(df_fact):

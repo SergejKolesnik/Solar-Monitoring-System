@@ -534,25 +534,6 @@ def _weather_icon(cloudcover, precipprob=0):
     return "☀️"
 
 
-def _month_fact_mwh(df_h, now_ua):
-    if df_h is None or df_h.empty or 'Time' not in df_h.columns or 'Fact_MW' not in df_h.columns:
-        return 0.0, None
-
-    df = _clean_numeric(df_h, ['Fact_MW'])
-    df['Time'] = parse_local_time_series(df['Time'])
-    df = df.dropna(subset=['Time'])
-    month_mask = (
-        (df['Time'].dt.year == now_ua.year) &
-        (df['Time'].dt.month == now_ua.month) &
-        valid_fact_mask(df, now=now_ua)
-    )
-    month_df = df[month_mask]
-    if month_df.empty:
-        return 0.0, None
-
-    return float(month_df['Fact_MW'].sum()), month_df['Time'].max()
-
-
 def _clamp_pct(value):
     return max(0.0, min(100.0, float(value or 0)))
 
@@ -616,6 +597,45 @@ def _recent_fact_median(df_h):
     return float(daily.median())
 
 
+def _tomorrow_weather_source_stats(df_vc, df_open_meteo, tomorrow):
+    """Compare source totals using only matching forecast hours for tomorrow."""
+    required = {'Time', 'Forecast_MW'}
+    if (
+        df_vc is None or df_open_meteo is None
+        or df_vc.empty or df_open_meteo.empty
+        or not required.issubset(df_vc.columns)
+        or not required.issubset(df_open_meteo.columns)
+    ):
+        return None
+
+    vc = df_vc[['Time', 'Forecast_MW']].copy()
+    om = df_open_meteo[['Time', 'Forecast_MW']].copy()
+    for frame in (vc, om):
+        frame['Time'] = pd.to_datetime(frame['Time'], errors='coerce')
+        frame['Forecast_MW'] = pd.to_numeric(frame['Forecast_MW'], errors='coerce')
+        frame.dropna(subset=['Time', 'Forecast_MW'], inplace=True)
+        frame.drop_duplicates('Time', keep='last', inplace=True)
+
+    paired = vc.merge(om, on='Time', suffixes=('_vc', '_om'), how='inner')
+    paired = paired[
+        (paired['Time'].dt.date == tomorrow)
+        & (paired['Forecast_MW_vc'] > 0.05)
+        & (paired['Forecast_MW_om'] > 0.05)
+    ]
+    if paired.empty:
+        return None
+
+    vc_mwh = float(paired['Forecast_MW_vc'].sum())
+    om_mwh = float(paired['Forecast_MW_om'].sum())
+    gap_pct = abs(vc_mwh - om_mwh) / max(vc_mwh, om_mwh) * 100
+    return {
+        'vc_mwh': vc_mwh,
+        'om_mwh': om_mwh,
+        'gap_pct': gap_pct,
+        'hours': int(len(paired)),
+    }
+
+
 def _forecast_trust(df, df_h, df_open_meteo, now_ua, tomorrow):
     score = 100
     issues = []
@@ -667,18 +687,14 @@ def _forecast_trust(df, df_h, df_open_meteo, now_ua, tomorrow):
         else:
             positives.append("прогноз у межах останньої генерації")
 
-    meteo_gap = None
-    if df_open_meteo is not None and not df_open_meteo.empty:
-        om = _clean_numeric(df_open_meteo.copy(), ['Forecast_MW'])
-        om['Time'] = pd.to_datetime(om['Time'], errors='coerce')
-        om_tomorrow = _daily_energy(om, tomorrow, 'Forecast_MW')
-        if om_tomorrow > 0 and base_tomorrow > 0:
-            meteo_gap = abs(om_tomorrow - base_tomorrow) / max(om_tomorrow, base_tomorrow) * 100
-            if meteo_gap >= 35:
-                score -= 15
-                issues.append(f"метеоджерела розходяться на {meteo_gap:.0f}%")
-            else:
-                positives.append("метеоджерела узгоджуються")
+    weather_stats = _tomorrow_weather_source_stats(df, df_open_meteo, tomorrow)
+    if weather_stats:
+        meteo_gap = weather_stats['gap_pct']
+        if meteo_gap >= 35:
+            score -= 15
+            issues.append(f"метеоджерела розходяться на {meteo_gap:.0f}%")
+        else:
+            positives.append("метеоджерела узгоджуються")
     else:
         score -= 5
         issues.append("Open-Meteo недоступний для контролю")
@@ -752,24 +768,15 @@ def draw_metrics(df_f, df_h, now_ua, timedelta, df_open_meteo=None):
 
     capacity_mw = float(df['Capacity_MW'].max()) if 'Capacity_MW' in df.columns and not df.empty else 0.0
     full_load_hours = (tomorrow_mwh / capacity_mw) if capacity_mw > 0 else 0.0
-    month_fact_mwh, month_last_time = _month_fact_mwh(df_h, now_ua)
-    month_note = "фактична генерація за поточний місяць"
-    expected_lag_days = 2 if now_ua.hour < 9 else 1
-    expected_latest_date = (pd.Timestamp(now_ua.date()) - pd.Timedelta(days=expected_lag_days)).date()
-    month_fact_stale = True
-    if month_last_time is not None:
-        month_last_ts = pd.to_datetime(month_last_time)
-        month_fact_stale = month_last_ts.date() < expected_latest_date
-        if month_fact_stale:
-            month_note = f"неповні дані до {month_last_ts.strftime('%d.%m %H:%M')}"
-        else:
-            month_note = f"останній факт: {month_last_ts.strftime('%d.%m %H:%M')}"
     peak_pct = (peak_mw / capacity_mw * 100) if capacity_mw > 0 else 0.0
-    month_capacity_factor = 0.0
-    if capacity_mw > 0 and now_ua.day > 0:
-        month_capacity_factor = month_fact_mwh / (capacity_mw * 24 * now_ua.day) * 100
-    month_freshness = 42.0 if month_fact_stale else 100.0
-    month_badge = "ДАНІ ВІДСТАЮТЬ" if month_fact_stale else f"КВВП {month_capacity_factor:.1f}%"
+    weather_stats = _tomorrow_weather_source_stats(df, df_open_meteo, tomorrow)
+    weather_gap = weather_stats['gap_pct'] if weather_stats else None
+    weather_accent = (
+        '#ef4444' if weather_gap is not None and weather_gap >= 35
+        else '#ffb800' if weather_gap is not None and weather_gap >= 20
+        else '#10b981' if weather_gap is not None
+        else '#64748b'
+    )
 
     cards = [
         {
@@ -795,15 +802,25 @@ def draw_metrics(df_f, df_h, now_ua, timedelta, df_open_meteo=None):
             "progress": _clamp_pct(peak_pct),
         },
         {
-            "label": "Факт з початку місяця",
-            "value": f"{month_fact_mwh:.1f}",
-            "unit": "МВт·год",
-            "badge": month_badge if month_fact_mwh > 0 else "Немає факту",
-            "note": month_note,
-            "icon": "▣",
-            "accent": "#ffb800" if month_fact_stale else "#10b981",
-            "glow": "rgba(255,184,0,0.18)" if month_fact_stale else "rgba(16,185,129,0.18)",
-            "progress": _clamp_pct(month_freshness),
+            "label": "Розбіжність погоди",
+            "value": f"{weather_gap:.0f}%" if weather_gap is not None else "—",
+            "unit": "",
+            "badge": (
+                f"VC {weather_stats['vc_mwh']:.0f} · OM {weather_stats['om_mwh']:.0f} МВт·год"
+                if weather_stats else "Немає спільних даних"
+            ),
+            "note": (
+                f"за {weather_stats['hours']} спільними годинами на завтра"
+                if weather_stats else "порівняння прогнозів двох джерел"
+            ),
+            "icon": "☁",
+            "accent": weather_accent,
+            "glow": (
+                "rgba(16,185,129,0.18)" if weather_accent == '#10b981'
+                else "rgba(255,184,0,0.18)" if weather_accent == '#ffb800'
+                else "rgba(100,116,139,0.16)"
+            ),
+            "progress": _clamp_pct(weather_gap or 0),
         },
     ]
 
