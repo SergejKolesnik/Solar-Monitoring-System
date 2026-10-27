@@ -2,6 +2,8 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from data_quality import parse_local_time_series, valid_fact_mask
+
 
 def draw_app_header(logo_url):
     st.markdown(
@@ -537,11 +539,12 @@ def _month_fact_mwh(df_h, now_ua):
         return 0.0, None
 
     df = _clean_numeric(df_h, ['Fact_MW'])
-    df['Time'] = pd.to_datetime(df['Time'], errors='coerce')
+    df['Time'] = parse_local_time_series(df['Time'])
     df = df.dropna(subset=['Time'])
     month_mask = (
         (df['Time'].dt.year == now_ua.year) &
-        (df['Time'].dt.month == now_ua.month)
+        (df['Time'].dt.month == now_ua.month) &
+        valid_fact_mask(df, now=now_ua)
     )
     month_df = df[month_mask]
     if month_df.empty:

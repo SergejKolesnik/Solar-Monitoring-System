@@ -36,6 +36,7 @@ SkyGrid Solar AI — система моніторингу, аналізу та 
 |---|---|
 | `app.py` | Streamlit entry point; завантажує Google Sheets, погоду і план, керує вкладками та відображенням прогнозу. |
 | `collector.py` | Production pipeline: факти з email, погода, базовий прогноз, перевірки якості, навчання корекції, Google Sheets і shadow sync у Supabase. |
+| `data_quality.py` | Єдині правила відбору валідного факту, нормалізація київського часу та детермінована обробка DST. |
 | `weather_service.py` | Клієнти Visual Crossing та Open-Meteo, базова формула прогнозу і розрахунок site coefficient. |
 | `dashboard_components.py` | Основний графік, метрики, weather strip і індикатор довіри до прогнозу. |
 | `ui_components.py` | Вкладки якості AI, даних, журналу, метеоаналізу й плану; read-only діагностика та shadow-експеримент. |
@@ -71,7 +72,8 @@ README посилається на `solar_ai_base.csv`, але такого trac
 - Навчання потребує щонайменше 20 валідних рядків із позитивними фактом і базовим прогнозом; інакше AI-прогноз дорівнює базовому.
 - Корекція обмежується ±30% базового прогнозу, результат — діапазоном від 0 до потужності СЕС; нічні години обнуляються.
 - Collector навчає модель у часовому вікні або коли прогноз на поточний день відсутній, після чого зберігає прогноз у Google Sheets.
-- Поточний training MAE обчислюється на навчальних даних. Chronological holdout/backtest для production-моделі не реалізовано.
+- Training MAE лишається діагностикою, але допуск моделі визначає окремий chronological holdout.
+- Перед production-навчанням кандидат проходить chronological holdout за останні 14 днів (або останні 20 рядків при короткому вікні). Якщо його MAE не краща за базу щонайменше на 2%, collector записує базовий прогноз замість AI-корекції.
 - `ui_components.py` містить read-only shadow-експеримент корекції за bucket хмарності. Він лише відображає порівняння і не змінює operational `AI_Forecast_MW`.
 - `scripts/forecast_quality_report.py` дає read-only CLI-звіт якості по Google Sheets CSV: погодинні MAE/RMSE/bias у МВт, розбивку по ранку/піку/вечору, найгірші години, добову MAPE як контрольний health-check і окрему оцінку shadow-корекції.
 
@@ -94,7 +96,7 @@ README посилається на `solar_ai_base.csv`, але такого trac
 
 ## Deployment
 
-- Streamlit badge і README ведуть на `https://solar-monitoring-system.streamlit.app/`.
+- Streamlit badge і README ведуть на чинний `https://pd2b4edrjntm8tyeulappbo.streamlit.app/`.
 - `.github/workflows/auto_sync.yml` запускає `collector.py` за розкладом і вручну з Python 3.9 та GitHub Secrets.
 - `.github/workflows/keep_alive.yml` періодично пінгує Streamlit URL.
 - `.github/workflows/fix_base.yml` є ручним one-time workflow.
@@ -131,9 +133,9 @@ README посилається на `solar_ai_base.csv`, але такого trac
 1. README починається з Camino і змішує два незалежні продукти; Solar-проєкт має бути описаний першим.
 2. README містить посилання на відсутній `solar_ai_base.csv` і згадку про «нейронні мережі», тоді як підтверджені моделі — gradient boosting.
 3. `fix_base.yml` запускає відсутній у репозиторії `fix_base.py`, тому workflow виглядає непрацездатним.
-4. README URL (`solar-monitoring-system.streamlit.app`) і фактичний Streamlit Cloud URL (`pd2h4edrjntm8ityeulappbo.streamlit.app`) потребують остаточного узгодження; `keep_alive.yml` оновлено на фактичний URL з робочих сесій.
+4. Фактичний Streamlit Cloud URL — `pd2b4edrjntm8tyeulappbo.streamlit.app`; README і `keep_alive.yml` мають залишатися узгодженими з ним.
 5. `requirements.txt` не містить явної залежності `streamlit`, хоча основний застосунок її імпортує.
-6. Немає автоматичних тестів і CI-перевірки синтаксису/тестів.
+6. Автоматичні unit-тести є, але окремого обов'язкового CI workflow для повного test suite ще немає.
 7. `model_engine.py` дублює окремий модельний шлях і може створювати плутанину щодо production-моделі.
 8. `app.py`, `dashboard_components.py` та особливо `ui_components.py` великі й поєднують багато UI-відповідальностей; рефакторинг не входив у цей аудит.
 
@@ -152,7 +154,7 @@ README посилається на `solar_ai_base.csv`, але такого trac
 3. Підняти staging-контейнер Streamlit UI на обраному хостингу з env/secrets і власним тестовим URL; поточний Streamlit Cloud залишити fallback.
 4. Вирішити долю `fix_base.yml`: повернути підтверджений script або видалити/архівувати workflow окремим погодженим завданням.
 5. Додати мінімальні автоматичні тести для чистих функцій даних і прогнозування та CI syntax/test check.
-6. Додати chronological holdout/backtest для порівняння baseline та AI по погодинних метриках MAE/RMSE/bias, особливо для ранку, пікових годин і вечора.
+6. Накопичувати результати chronological holdout і окремо оцінити модель для пікових годин 10:00–15:00, де остання якість найгірша.
 7. Після достатнього періоду спостереження окремо оцінити shadow-експеримент; не змінювати operational прогноз без доказів.
 8. Розглянути перенесення Camino до окремого репозиторію лише як окреме, явно погоджене рішення.
 
@@ -205,6 +207,10 @@ README посилається на `solar_ai_base.csv`, але такого trac
   - shadow-корекція за 7/14 днів гірша за поточний AI, тому не готова до production promotion.
 
 ## Architectural decisions
+
+- 2026-10-27: сирі факти в Google Sheets не видаляються автоматично; модель, UI, read-only звіт і Supabase shadow-sync використовують спільний `valid_fact_mask` (позитивний факт, не майбутній, не вище 110% потужності).
+- 2026-10-27: AI-корекція допускається до operational прогнозу тільки після хронологічної перевірки на невиданому моделі часовому відрізку; при провалі використовується базовий прогноз.
+- 2026-10-27: неоднозначна осіння година Києва локалізується детерміновано; явний `DST` означає літній екземпляр, без суфікса використовується стандартний.
 
 - 2026-08-11: зафіксовано, що Solar Python/Streamlit application є основним продуктом, а `docs/camino/` — окремим co-located компонентом без runtime-зв’язку.
 - 2026-08-11: Google Sheets задокументовано як чинне operational-сховище; Supabase — як shadow-копію до окремого рішення про міграцію.

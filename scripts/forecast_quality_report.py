@@ -9,11 +9,19 @@ from __future__ import annotations
 
 import argparse
 import io
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import requests
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from data_quality import parse_local_time_series, valid_fact_mask
 
 
 DEFAULT_SHEET_ID = "1ckVoJla9DA3BLQfBDy30sXmaOyH2HSqCZ1FbZtUDr9Q"
@@ -87,7 +95,7 @@ def prepare_frame(df: pd.DataFrame) -> pd.DataFrame:
     """Normalize dates and numeric columns used by the report."""
 
     prepared = df.copy()
-    prepared["Time"] = pd.to_datetime(prepared["Time"], errors="coerce")
+    prepared["Time"] = parse_local_time_series(prepared["Time"])
     prepared = prepared.dropna(subset=["Time"]).sort_values("Time")
 
     for column in NUMERIC_COLUMNS:
@@ -99,13 +107,23 @@ def prepare_frame(df: pd.DataFrame) -> pd.DataFrame:
             prepared[column] = 0.0
         prepared[column] = prepared[column].fillna(0.0)
 
+    prepared["Valid_Fact"] = valid_fact_mask(prepared)
+
     return prepared
+
+
+def _valid_fact_rows(df: pd.DataFrame) -> pd.Series:
+    """Return the prepared validity column or calculate it for direct callers."""
+
+    if "Valid_Fact" in df.columns:
+        return df["Valid_Fact"].fillna(False).astype(bool)
+    return valid_fact_mask(df)
 
 
 def build_daily_quality(df: pd.DataFrame) -> pd.DataFrame:
     """Aggregate hourly rows into daily MWh quality metrics."""
 
-    daily_source = df.copy()
+    daily_source = df[_valid_fact_rows(df)].copy()
     daily_source["Date"] = daily_source["Time"].dt.date
     daily_source["Has_Fact"] = daily_source["Fact_MW"] > 0.05
 
@@ -173,7 +191,7 @@ def build_hourly_quality(df: pd.DataFrame) -> pd.DataFrame:
     """Build per-hour quality rows for the productive daylight period."""
 
     hourly = df[
-        (df["Fact_MW"] > 0.05)
+        _valid_fact_rows(df)
         & (df["Forecast_MW"] > 0.05)
         & (df["AI_Forecast_MW"] > 0.05)
     ].copy()
@@ -240,7 +258,7 @@ def build_shadow_quality(
         return pd.DataFrame()
 
     shadow = df[
-        (df["Fact_MW"] > 0.05)
+        _valid_fact_rows(df)
         & (df["Forecast_MW"] > 0.05)
         & (df["AI_Forecast_MW"] > 0.05)
     ].copy()
@@ -386,7 +404,7 @@ def main() -> int:
     daily = build_daily_quality(df)
     hourly = build_hourly_quality(df)
 
-    facts = df[df["Fact_MW"] > 0.05]
+    facts = df[_valid_fact_rows(df)]
     print(f"rows={len(df)}")
     print(f"data_range={df['Time'].min()}..{df['Time'].max()}")
     if not facts.empty:

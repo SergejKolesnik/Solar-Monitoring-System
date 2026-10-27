@@ -5,6 +5,7 @@ import gspread
 from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
 
+from data_quality import parse_local_time_series
 from runtime_config import get_json_secret
 from weather_service import fetch_weather_data, calc_forecast_mw
 try:
@@ -324,7 +325,7 @@ def load_base_from_sheets():
         if not data:
             return pd.DataFrame()
         df = pd.DataFrame(data)
-        df['Time'] = pd.to_datetime(df['Time'])
+        df['Time'] = parse_local_time_series(df['Time'])
         num_cols = [
             'Forecast_MW', 'CloudCover', 'Temp', 'WindSpeed', 'PrecipProb',
             'Fact_MW', 'Capacity_MW', 'AI_Forecast_MW',

@@ -12,6 +12,13 @@ from zoneinfo import ZoneInfo
 from google.oauth2.service_account import Credentials
 from sklearn.ensemble import HistGradientBoostingRegressor
 
+from data_quality import (
+    kyiv_now_naive,
+    localize_kyiv_timestamp,
+    parse_local_time_series,
+    valid_fact_mask,
+)
+
 SHEET_ID = "1ckVoJla9DA3BLQfBDy30sXmaOyH2HSqCZ1FbZtUDr9Q"
 SCOPES = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 SETTINGS_SHEET_NAME = "Settings"
@@ -24,6 +31,10 @@ WEATHER_LAST_UPDATE_KEY = "Weather_Last_Update"
 WEATHER_LAST_FAILED_UPDATE_KEY = "Weather_Last_Failed_Update"
 STAGING_SHEET_NAME = "_collector_staging"
 SHEET_WRITE_BATCH_SIZE = 500
+MODEL_VALIDATION_DAYS = 14
+MODEL_MIN_TRAIN_ROWS = 40
+MODEL_MIN_VALIDATION_ROWS = 20
+MODEL_REQUIRED_MAE_RATIO = 0.98
 
 
 class EmailFactSourceError(RuntimeError):
@@ -156,7 +167,7 @@ def load_df_from_sheet(sheet):
     df = pd.DataFrame(data)
     df = ensure_columns(df)
 
-    df['Time'] = pd.to_datetime(df['Time'], errors='coerce')
+    df['Time'] = parse_local_time_series(df['Time'])
     df = df[df['Time'].notna()].copy()
 
     for col in NUMERIC_COLS:
@@ -444,13 +455,9 @@ def _to_float(value, default=0.0):
 
 
 def _to_supabase_time(value):
-    ts = pd.to_datetime(value, errors='coerce')
+    ts = localize_kyiv_timestamp(value)
     if pd.isna(ts):
         return None
-    if ts.tzinfo is None:
-        ts = ts.tz_localize(KYIV_TZ)
-    else:
-        ts = ts.tz_convert(KYIV_TZ)
     return ts.isoformat()
 
 
@@ -509,9 +516,9 @@ def _sync_capacity_to_supabase(url, key, capacity_mw, run_at):
 
 def _sync_measurements_to_supabase(url, key, df, cutoff):
     rows = []
-    df_fact = df[pd.to_datetime(df['Time'], errors='coerce') >= cutoff].copy()
+    times = parse_local_time_series(df['Time'])
+    df_fact = df[(times >= cutoff) & valid_fact_mask(df)].copy()
     df_fact['Fact_MW'] = pd.to_numeric(df_fact['Fact_MW'], errors='coerce').fillna(0)
-    df_fact = df_fact[df_fact['Fact_MW'] > 0]
 
     for _, row in df_fact.iterrows():
         time_value = _to_supabase_time(row['Time'])
@@ -587,11 +594,12 @@ def _sync_generation_forecasts_to_supabase(url, key, df, cutoff, run_at):
 
 
 def _sync_quality_to_supabase(url, key, df, cutoff):
-    dfq = df[pd.to_datetime(df['Time'], errors='coerce') >= cutoff].copy()
-    dfq['Time'] = pd.to_datetime(dfq['Time'], errors='coerce')
+    times = parse_local_time_series(df['Time'])
+    dfq = df[(times >= cutoff) & valid_fact_mask(df)].copy()
+    dfq['Time'] = parse_local_time_series(dfq['Time'])
     for col in ['Fact_MW', 'Forecast_MW', 'AI_Forecast_MW']:
         dfq[col] = pd.to_numeric(dfq[col], errors='coerce').fillna(0)
-    dfq = dfq[(dfq['Fact_MW'] > 0) & (dfq['Forecast_MW'] > 0)]
+    dfq = dfq[dfq['Forecast_MW'] > 0]
     if dfq.empty:
         return 0
 
@@ -664,7 +672,7 @@ def add_time_features(df):
     return df
 
 
-def calculate_errors(df):
+def calculate_errors(df, now=None):
     """
     Рахує помилки:
     Forecast_Error_MW = Fact_MW - Forecast_MW
@@ -679,7 +687,11 @@ def calculate_errors(df):
     forecast = pd.to_numeric(df['Forecast_MW'], errors='coerce').fillna(0)
     ai = pd.to_numeric(df['AI_Forecast_MW'], errors='coerce').fillna(0)
 
-    mask = fact > 0
+    mask = valid_fact_mask(
+        df,
+        now=now,
+        default_capacity_mw=DEFAULT_CAPACITY_MW,
+    )
 
     df['Forecast_Error_MW'] = 0.0
     df['Forecast_Error_Pct'] = 0.0
@@ -701,7 +713,7 @@ def calculate_errors(df):
 
 def log_data_quality(df, now, capacity_mw):
     dfq = ensure_columns(df).copy()
-    dfq['Time'] = pd.to_datetime(dfq['Time'], errors='coerce')
+    dfq['Time'] = parse_local_time_series(dfq['Time'])
     dfq = dfq[dfq['Time'].notna()].copy()
 
     if dfq.empty:
@@ -716,7 +728,12 @@ def log_data_quality(df, now, capacity_mw):
 
     warnings = []
 
-    fact_rows = dfq[fact > 0.01]
+    valid_facts = valid_fact_mask(
+        dfq,
+        now=now,
+        default_capacity_mw=capacity_mw,
+    )
+    fact_rows = dfq[valid_facts]
     if fact_rows.empty:
         warnings.append("no positive facts in table")
     else:
@@ -726,7 +743,7 @@ def log_data_quality(df, now, capacity_mw):
             warnings.append(f"latest positive fact is {fact_age_hours:.1f}h old ({latest_fact})")
 
     recent_start = now - timedelta(hours=30)
-    recent_fact_rows = dfq[(dfq['Time'] >= recent_start) & (fact > 0.01)]
+    recent_fact_rows = dfq[(dfq['Time'] >= recent_start) & valid_facts]
     if recent_fact_rows.empty:
         warnings.append("no positive facts in last 30h")
 
@@ -751,6 +768,10 @@ def log_data_quality(df, now, capacity_mw):
     if ai_over:
         warnings.append(f"{ai_over} AI forecast rows exceed 110% of capacity")
 
+    future_fact_rows = int(((dfq['Time'] > pd.Timestamp(now) + pd.Timedelta(hours=1)) & (fact > 0.01)).sum())
+    if future_fact_rows:
+        warnings.append(f"{future_fact_rows} positive fact rows are in the future")
+
     future_end = now + timedelta(hours=24)
     future_rows = dfq[(dfq['Time'] >= now) & (dfq['Time'] <= future_end)]
     future_forecast_hours = int((pd.to_numeric(future_rows['Forecast_MW'], errors='coerce').fillna(0) > 0).sum())
@@ -764,7 +785,97 @@ def log_data_quality(df, now, capacity_mw):
         print(f"Data quality: OK (latest fact: {latest_fact_text}, rows: {len(dfq)})")
 
 
-def train_model(df):
+def _new_correction_model():
+    """Build the production correction estimator with stable parameters."""
+
+    return HistGradientBoostingRegressor(
+        max_iter=300,
+        learning_rate=0.05,
+        max_leaf_nodes=15,
+        l2_regularization=0.1,
+        early_stopping=True,
+        random_state=42,
+    )
+
+
+def _bounded_ai_values(frame, predicted_error):
+    """Apply the same operational bounds used for saved AI forecasts."""
+
+    base = pd.to_numeric(frame['Forecast_MW'], errors='coerce').fillna(0).to_numpy()
+    capacity = pd.to_numeric(
+        frame['Capacity_MW'], errors='coerce'
+    ).fillna(DEFAULT_CAPACITY_MW).to_numpy()
+    hours = parse_local_time_series(frame['Time']).dt.hour.fillna(0).astype(int).to_numpy()
+
+    values = []
+    for base_value, error, cap, hour in zip(base, predicted_error, capacity, hours):
+        limit = max(float(base_value), 0.0) * 0.30
+        bounded_error = min(max(float(error), -limit), limit)
+        prediction = float(base_value) + bounded_error
+        if hour < 5 or hour > 21:
+            prediction = 0.0
+        values.append(min(max(prediction, 0.0), max(float(cap), 0.0)))
+    return pd.Series(values, index=frame.index, dtype=float)
+
+
+def _chronological_model_check(df_train, features):
+    """Validate a candidate model on the latest unseen chronological window."""
+
+    ordered = df_train.sort_values('Time').copy()
+    latest_time = ordered['Time'].max()
+    cutoff = latest_time - pd.Timedelta(days=MODEL_VALIDATION_DAYS)
+    train_part = ordered[ordered['Time'] < cutoff]
+    validation_part = ordered[ordered['Time'] >= cutoff]
+
+    if len(validation_part) < MODEL_MIN_VALIDATION_ROWS:
+        split_at = max(
+            MODEL_MIN_TRAIN_ROWS,
+            len(ordered) - MODEL_MIN_VALIDATION_ROWS,
+        )
+        train_part = ordered.iloc[:split_at]
+        validation_part = ordered.iloc[split_at:]
+
+    if (
+        len(train_part) < MODEL_MIN_TRAIN_ROWS
+        or len(validation_part) < MODEL_MIN_VALIDATION_ROWS
+    ):
+        print(
+            "Недостатньо даних для хронологічної перевірки моделі: "
+            f"train={len(train_part)}, validation={len(validation_part)}"
+        )
+        return False, None
+
+    candidate = _new_correction_model()
+    candidate.fit(
+        train_part[features].fillna(0).astype(float),
+        train_part['Forecast_Error_MW'].astype(float),
+    )
+    predicted_error = candidate.predict(
+        validation_part[features].fillna(0).astype(float)
+    )
+    ai_values = _bounded_ai_values(validation_part, predicted_error)
+    facts = pd.to_numeric(validation_part['Fact_MW'], errors='coerce')
+    base = pd.to_numeric(validation_part['Forecast_MW'], errors='coerce')
+    base_mae = float((base - facts).abs().mean())
+    ai_mae = float((ai_values - facts).abs().mean())
+    ratio = ai_mae / base_mae if base_mae > 0 else float('inf')
+    accepted = ratio <= MODEL_REQUIRED_MAE_RATIO
+    print(
+        "Хронологічна перевірка моделі: "
+        f"train={len(train_part)}, validation={len(validation_part)}, "
+        f"base_mae={base_mae:.3f} МВт, ai_mae={ai_mae:.3f} МВт, "
+        f"ratio={ratio:.3f}, accepted={accepted}"
+    )
+    return accepted, {
+        'train_rows': len(train_part),
+        'validation_rows': len(validation_part),
+        'base_mae': base_mae,
+        'ai_mae': ai_mae,
+        'ratio': ratio,
+    }
+
+
+def train_model(df, now=None):
     """
     Навчає модель НЕ напряму на Fact_MW.
 
@@ -776,34 +887,36 @@ def train_model(df):
         AI_Forecast_MW = Forecast_MW + predicted_error
     """
     df = ensure_columns(df)
-    df = calculate_errors(df)
+    df = calculate_errors(df, now=now)
     df = add_time_features(df)
 
     features = [c for c in FEATURE_COLS if c in df.columns]
 
     # Навчаємося тільки там, де є реальний факт і є денна генерація/базовий прогноз
     df_train = df[
-        (pd.to_numeric(df['Fact_MW'], errors='coerce').fillna(0) > 0.05) &
+        valid_fact_mask(
+            df,
+            now=now,
+            default_capacity_mw=DEFAULT_CAPACITY_MW,
+        ) &
         (pd.to_numeric(df['Forecast_MW'], errors='coerce').fillna(0) > 0.05)
     ].copy()
 
     df_train = df_train.dropna(subset=features)
 
-    if len(df_train) < 20:
+    if len(df_train) < MODEL_MIN_TRAIN_ROWS + MODEL_MIN_VALIDATION_ROWS:
         print(f"Недостатньо даних для навчання моделі корекції: {len(df_train)} записів")
+        return None, features
+
+    accepted, _ = _chronological_model_check(df_train, features)
+    if not accepted:
+        print("Модель не пройшла хронологічну перевірку — використовуємо базовий прогноз")
         return None, features
 
     X = df_train[features].fillna(0).astype(float)
     y = df_train['Forecast_Error_MW'].astype(float)
 
-    model = HistGradientBoostingRegressor(
-        max_iter=300,
-        learning_rate=0.05,
-        max_leaf_nodes=15,
-        l2_regularization=0.1,
-        early_stopping=True,
-        random_state=42
-    )
+    model = _new_correction_model()
     model.fit(X, y)
 
     mae = abs(y - model.predict(X)).mean()
@@ -822,7 +935,7 @@ def save_ai_forecast(df, model, features):
     """
     df = ensure_columns(df).copy()
 
-    today = datetime.now().date()
+    today = kyiv_now_naive().date()
     forecast_end = today + timedelta(days=3)
 
     time_col = pd.to_datetime(df['Time'], errors='coerce')
@@ -837,10 +950,8 @@ def save_ai_forecast(df, model, features):
         print("Немає погодних даних для прогнозу")
         return df
 
-    base_forecast = pd.to_numeric(df_to_predict['Forecast_MW'], errors='coerce').fillna(0)
-
     if model is None:
-        preds = base_forecast.tolist()
+        predicted_error = [0.0] * len(df_to_predict)
         print("Модель не навчена — AI_Forecast_MW тимчасово дорівнює Forecast_MW")
     else:
         df_pred = add_time_features(df_to_predict)
@@ -848,27 +959,8 @@ def save_ai_forecast(df, model, features):
 
         X_pred = df_pred[avail_features].fillna(0).astype(float)
         predicted_error = model.predict(X_pred)
-        error_limit = base_forecast.values * 0.30
-        predicted_error = [
-            min(max(float(err), -float(limit)), float(limit))
-            for err, limit in zip(predicted_error, error_limit)
-        ]
 
-        preds = base_forecast.values + predicted_error
-
-    # Обмеження: прогноз не може бути нижче 0 і вище встановленої потужності
-    capacity = pd.to_numeric(df_to_predict['Capacity_MW'], errors='coerce').fillna(12.5).values
-
-    result = []
-    hours = pd.to_datetime(df_to_predict['Time'], errors='coerce').dt.hour.fillna(0).astype(int)
-
-    for p, cap, h in zip(preds, capacity, hours):
-        if h < 5 or h > 21:
-            result.append(0.0)
-        else:
-            p = max(0.0, float(p))
-            p = min(p, float(cap))
-            result.append(round(p, 3))
+    result = _bounded_ai_values(df_to_predict, predicted_error).round(3).tolist()
 
     df.loc[mask_future, 'AI_Forecast_MW'] = result
 
@@ -1025,12 +1117,28 @@ def read_facts_from_email(days=30):
     return facts
 
 
-def update_facts(df, facts):
+def update_facts(df, facts, capacity_mw=DEFAULT_CAPACITY_MW, now=None):
+    """Merge only plausible facts while keeping rejected source rows untouched."""
+
     if not facts:
         print("Нових фактів не знайдено")
         return df
 
     df_new = pd.DataFrame(facts)
+    df_new['Capacity_MW'] = float(capacity_mw)
+    valid = valid_fact_mask(
+        df_new,
+        now=now,
+        default_capacity_mw=capacity_mw,
+    )
+    rejected_count = int((~valid).sum())
+    df_new = df_new[valid].drop(columns=['Capacity_MW'])
+    if rejected_count:
+        print(f"Відхилено невалідних фактів: {rejected_count}")
+    if df_new.empty:
+        print("Валідних нових фактів не знайдено")
+        return df
+
     df_new = df_new.groupby('Time')['Fact_MW'].max().reset_index()
 
     df = df.set_index('Time')
@@ -1148,6 +1256,7 @@ def update_weather(df, now, capacity_mw, spreadsheet):
 
 def main():
     now = datetime.now()
+    fact_now = kyiv_now_naive()
     print(f"СТАРТ: {now.strftime('%Y-%m-%d %H:%M:%S')}")
 
     spreadsheet = get_spreadsheet()
@@ -1161,7 +1270,7 @@ def main():
 
     # Читаємо факти з пошти
     facts = read_facts_from_email(days=30)
-    df = update_facts(df, facts)
+    df = update_facts(df, facts, capacity_mw=capacity_mw, now=fact_now)
 
     # Оновлення погоди
     df = update_weather(df, now, capacity_mw, spreadsheet)
@@ -1175,15 +1284,15 @@ def main():
     df['Capacity_MW'] = pd.to_numeric(df['Capacity_MW'], errors='coerce').fillna(capacity_mw)
     df.loc[df['Capacity_MW'] <= 0, 'Capacity_MW'] = capacity_mw
 
-    log_data_quality(df, now, capacity_mw)
+    log_data_quality(df, fact_now, capacity_mw)
 
     # Спочатку рахуємо помилки за вже наявними фактами
-    df = calculate_errors(df)
+    df = calculate_errors(df, now=fact_now)
 
     # Навчаємо модель якщо:
     # 1. Час між 5:00 і 15:00 UTC (8:00-18:00 Київ) — основне вікно
     # 2. АБО прогноз ШІ на сьогодні ще не заповнено
-    today_date = now.date()
+    today_date = fact_now.date()
     today_mask = pd.to_datetime(df['Time'], errors='coerce').dt.date == today_date
 
     today_has_ai = (
@@ -1197,15 +1306,15 @@ def main():
         reason = "вікно 5-15 UTC" if (5 <= now.hour <= 15) else "прогноз на сьогодні відсутній (fallback)"
         print(f"Час {now.hour}:00 UTC — навчаємо модель корекції ({reason})...")
 
-        model, features = train_model(df)
+        model, features = train_model(df, now=fact_now)
         df = save_ai_forecast(df, model, features)
 
         # Після оновлення AI_Forecast_MW ще раз рахуємо AI-помилки
-        df = calculate_errors(df)
+        df = calculate_errors(df, now=fact_now)
 
     else:
         print(f"Час {now.hour}:00 UTC — прогноз вже є на сьогодні, пропускаємо навчання")
-        df = calculate_errors(df)
+        df = calculate_errors(df, now=fact_now)
 
     # Не зберігаємо службові часові ознаки у Google Sheet
     df = df.drop(columns=TIME_FEATURE_COLS, errors='ignore')
