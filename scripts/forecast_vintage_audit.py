@@ -88,6 +88,13 @@ def _candidate_metric(label: str, frame: pd.DataFrame, prediction_column: str) -
     )
 
 
+def _weather_source_metric(label: str, frame: pd.DataFrame) -> str:
+    if frame.empty:
+        return f"{label}: недостатньо спільних point-in-time годин"
+    base_mae = (frame["provider_forecast_mw"] - frame["fact_mw"]).abs().mean()
+    return f"{label}: n={len(frame)}, MAE={base_mae:.3f} МВт"
+
+
 def _walk_forward_candidates(vintage: pd.DataFrame) -> pd.DataFrame:
     """Fit candidates only on earlier facts available at each issue timestamp."""
 
@@ -257,7 +264,7 @@ def build_report(now: datetime | None = None) -> str:
         url,
         "generation_forecasts",
         {
-            "select": "target_time,forecast_mw,ai_forecast_mw,capacity_mw,forecast_run_at,model_version",
+            "select": "target_time,forecast_mw,ai_forecast_mw,capacity_mw,forecast_run_at,model_version,source",
             "target_time": f"gte.{query_start.isoformat()}",
             "and": f"(target_time.lt.{query_end.isoformat()})",
             "order": "target_time.asc,forecast_run_at.asc",
@@ -279,7 +286,7 @@ def build_report(now: datetime | None = None) -> str:
         url,
         "weather_forecasts",
         {
-            "select": "time,cloudcover,temp,windspeed,precipprob,loaded_at",
+            "select": "time,provider,rad,cloudcover,temp,windspeed,precipprob,loaded_at",
             "time": f"gte.{query_start.isoformat()}",
             "and": f"(time.lt.{query_end.isoformat()})",
             "order": "time.asc,loaded_at.asc",
@@ -300,6 +307,17 @@ def build_report(now: datetime | None = None) -> str:
         if not frame.empty:
             frame["target_utc"] = pd.to_datetime(frame[column], utc=True, errors="coerce")
             frame["target_day"] = frame["target_utc"].dt.tz_convert(KYIV).dt.date
+    if "source" not in forecasts.columns:
+        forecasts["source"] = "legacy"
+    legacy_forecast_count = int((forecasts["source"] != "collector_utc_v2").sum())
+    forecasts = forecasts[forecasts["source"] == "collector_utc_v2"].copy()
+    if forecasts.empty:
+        return (
+            "## Бектест прогнозу до 12:00 попереднього дня\n\n"
+            f"Знайдено старих знімків: {legacy_forecast_count}, але їхні мітки часу "
+            "непридатні для перевірки cutoff. Потрібно накопичити знімки з виправленим UTC-часом."
+        )
+
     forecasts["run_utc"] = pd.to_datetime(forecasts["forecast_run_at"], utc=True, errors="coerce")
     forecasts["run_local"] = forecasts["run_utc"].dt.tz_convert(KYIV)
     facts["fact_mw"] = pd.to_numeric(facts["fact_mw"], errors="coerce")
@@ -309,7 +327,11 @@ def build_report(now: datetime | None = None) -> str:
     forecasts["capacity_mw"] = pd.to_numeric(forecasts["capacity_mw"], errors="coerce")
 
     if not weather.empty:
+        if "provider" not in weather.columns:
+            weather["provider"] = "visual_crossing"
+        weather["provider"] = weather["provider"].fillna("visual_crossing")
         weather["loaded_utc"] = pd.to_datetime(weather["loaded_at"], utc=True, errors="coerce")
+        weather["rad"] = pd.to_numeric(weather.get("rad"), errors="coerce")
         weather["cloudcover"] = pd.to_numeric(weather["cloudcover"], errors="coerce")
         for column in ("temp", "windspeed", "precipprob"):
             weather[column] = pd.to_numeric(weather[column], errors="coerce")
@@ -369,7 +391,71 @@ def build_report(now: datetime | None = None) -> str:
     ].copy()
     lines.append(_metric_line("Усі продуктивні години", merged))
 
+    if not weather.empty:
+        matched_weather = weather.merge(
+            selected_frame[["target_utc", "run_utc", "capacity_mw"]].drop_duplicates(),
+            left_on=["target_utc", "loaded_utc"],
+            right_on=["target_utc", "run_utc"],
+            how="inner",
+        ).merge(
+            facts[["target_utc", "fact_mw"]].dropna().drop_duplicates("target_utc"),
+            on="target_utc",
+            how="inner",
+        )
+        matched_weather["provider_forecast_mw"] = (
+            matched_weather["rad"]
+            * 0.0114
+            * matched_weather["capacity_mw"]
+            / 12.5
+        )
+        matched_weather["local_hour"] = matched_weather[
+            "target_utc"
+        ].dt.tz_convert(KYIV).dt.hour
+        matched_weather = matched_weather[
+            (matched_weather["fact_mw"] > 0.05)
+            & (matched_weather["provider_forecast_mw"] > 0.05)
+            & matched_weather["local_hour"].between(5, 20)
+        ]
+        source_sets = {
+            provider: group.set_index("target_utc")
+            for provider, group in matched_weather.groupby("provider")
+        }
+        if "visual_crossing" in source_sets and "open_meteo" in source_sets:
+            common_times = source_sets["visual_crossing"].index.intersection(
+                source_sets["open_meteo"].index
+            )
+            vc_rows = source_sets["visual_crossing"].loc[common_times]
+            om_rows = source_sets["open_meteo"].loc[common_times]
+            lines.extend(
+                [
+                    "",
+                    "### Погодні джерела на однакових прогнозних знімках до 12:00",
+                    f"Спільні години з фактами: {len(common_times)}.",
+                    _weather_source_metric("Visual Crossing", vc_rows),
+                    _weather_source_metric("Open-Meteo", om_rows),
+                    _weather_source_metric(
+                        "Visual Crossing, хмарність ≥70%",
+                        vc_rows[vc_rows["cloudcover"] >= 70],
+                    ),
+                    _weather_source_metric(
+                        "Open-Meteo, хмарність ≥70%",
+                        om_rows[om_rows["cloudcover"] >= 70],
+                    ),
+                ]
+            )
+        else:
+            lines.extend(
+                [
+                    "",
+                    "### Погодні джерела на однакових прогнозних знімках до 12:00",
+                    "Порівняння почнеться після появи vintage-знімків обох джерел.",
+                ]
+            )
+
     if not weather.empty and not merged.empty:
+        # Keep the existing model diagnostic tied to its production source.
+        # Open-Meteo rows are evaluated separately below to avoid duplicate joins.
+        weather = weather[weather["provider"] == "visual_crossing"].copy()
         weather = weather.sort_values("target_utc").copy()
         weather["cloud_change_pct_points"] = weather.groupby(
             ["target_day", "loaded_utc"]
