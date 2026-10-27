@@ -9,7 +9,7 @@ permissions:
 jobs:
   audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -18,7 +18,7 @@ jobs:
         with:
           python-version: '3.11'
       - name: Install dependencies
-        run: pip install pandas requests
+        run: pip install pandas requests scikit-learn
       - name: Read-only vintage backtest
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}

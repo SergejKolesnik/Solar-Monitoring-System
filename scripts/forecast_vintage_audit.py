@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import os
-from datetime import date, datetime, time, timedelta
+from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 import requests
+from sklearn.linear_model import Ridge
+from sklearn.ensemble import HistGradientBoostingRegressor
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
 
 
 KYIV = ZoneInfo("Europe/Kyiv")
@@ -61,6 +65,87 @@ def _metric_line(label: str, frame: pd.DataFrame) -> str:
     )
 
 
+def _candidate_metric(label: str, frame: pd.DataFrame, prediction_column: str) -> str:
+    if frame.empty:
+        return f"{label}: недостатньо збігів факт/прогноз"
+    base_mae = (frame["forecast_mw"] - frame["fact_mw"]).abs().mean()
+    model_mae = (frame[prediction_column] - frame["fact_mw"]).abs().mean()
+    improvement = (1 - model_mae / base_mae) * 100 if base_mae > 0 else 0.0
+    return (
+        f"{label}: n={len(frame)}, база MAE={base_mae:.3f} МВт, "
+        f"кандидат MAE={model_mae:.3f} МВт, зміна={improvement:+.1f}%"
+    )
+
+
+def _walk_forward_candidates(vintage: pd.DataFrame) -> pd.DataFrame:
+    """Fit candidates only on earlier facts available at each issue timestamp."""
+
+    feature_columns = [
+        "forecast_mw",
+        "cloudcover",
+        "temp",
+        "windspeed",
+        "precipprob",
+        "hour",
+        "month",
+        "day_of_year",
+        "cloud_change_pct_points",
+    ]
+    data = vintage.dropna(
+        subset=feature_columns
+        + ["fact_mw", "fact_loaded_utc", "run_utc", "capacity_mw"]
+    ).copy()
+    data = data[(data["fact_mw"] > 0.05) & (data["forecast_mw"] > 0.05)]
+    data = data[data["target_utc"].dt.tz_convert(KYIV).dt.hour.between(5, 20)]
+    predictions = []
+
+    for target_day in sorted(data["target_day"].unique()):
+        test_rows = data[data["target_day"] == target_day].copy()
+        if test_rows.empty:
+            continue
+        issue_run = test_rows["run_utc"].max()
+        train_rows = data[
+            (data["target_day"] < target_day)
+            & (data["fact_loaded_utc"] <= issue_run)
+        ].copy()
+        if len(train_rows) < 120:
+            continue
+
+        estimators = {
+            "walk_forward_hgb": HistGradientBoostingRegressor(
+                max_iter=300,
+                learning_rate=0.05,
+                max_leaf_nodes=15,
+                l2_regularization=0.1,
+                early_stopping=True,
+                random_state=42,
+            ),
+            "walk_forward_ridge": make_pipeline(
+                StandardScaler(), Ridge(alpha=10.0)
+            ),
+        }
+        for name, estimator in estimators.items():
+            estimator.fit(
+                train_rows[feature_columns].astype(float),
+                train_rows["fact_mw"] - train_rows["forecast_mw"],
+            )
+            residual = estimator.predict(test_rows[feature_columns].astype(float))
+            base = test_rows["forecast_mw"].to_numpy()
+            capacity = test_rows["capacity_mw"].to_numpy()
+            bound = base * 0.30
+            predicted = (base + residual.clip(-bound, bound)).clip(0, capacity)
+            result = test_rows[["target_utc", "target_day", "fact_mw", "forecast_mw", "ai_forecast_mw", "cloudcover"]].copy()
+            result[name] = predicted
+            result["walk_forward_train_rows"] = len(train_rows)
+            predictions.append(result)
+
+    if not predictions:
+        return pd.DataFrame()
+    combined = pd.concat(predictions, ignore_index=True)
+    keys = ["target_utc", "target_day"]
+    return combined.groupby(keys, as_index=False).first()
+
+
 def build_report(now: datetime | None = None) -> str:
     """Evaluate the latest forecast issued by 12:00 Kyiv time on the prior day."""
 
@@ -92,7 +177,7 @@ def build_report(now: datetime | None = None) -> str:
         url,
         "generation_forecasts",
         {
-            "select": "target_time,forecast_mw,ai_forecast_mw,forecast_run_at,model_version",
+            "select": "target_time,forecast_mw,ai_forecast_mw,capacity_mw,forecast_run_at,model_version",
             "target_time": f"gte.{query_start.isoformat()}",
             "and": f"(target_time.lt.{query_end.isoformat()})",
             "order": "target_time.asc,forecast_run_at.asc",
@@ -103,7 +188,7 @@ def build_report(now: datetime | None = None) -> str:
         url,
         "solar_measurements",
         {
-            "select": "time,fact_mw",
+            "select": "time,fact_mw,loaded_at",
             "time": f"gte.{query_start.isoformat()}",
             "and": f"(time.lt.{query_end.isoformat()})",
             "order": "time.asc",
@@ -114,7 +199,7 @@ def build_report(now: datetime | None = None) -> str:
         url,
         "weather_forecasts",
         {
-            "select": "time,cloudcover,loaded_at",
+            "select": "time,cloudcover,temp,windspeed,precipprob,loaded_at",
             "time": f"gte.{query_start.isoformat()}",
             "and": f"(time.lt.{query_end.isoformat()})",
             "order": "time.asc,loaded_at.asc",
@@ -138,12 +223,16 @@ def build_report(now: datetime | None = None) -> str:
     forecasts["run_utc"] = pd.to_datetime(forecasts["forecast_run_at"], utc=True, errors="coerce")
     forecasts["run_local"] = forecasts["run_utc"].dt.tz_convert(KYIV)
     facts["fact_mw"] = pd.to_numeric(facts["fact_mw"], errors="coerce")
+    facts["fact_loaded_utc"] = pd.to_datetime(facts["loaded_at"], utc=True, errors="coerce")
     for column in ("forecast_mw", "ai_forecast_mw"):
         forecasts[column] = pd.to_numeric(forecasts[column], errors="coerce")
+    forecasts["capacity_mw"] = pd.to_numeric(forecasts["capacity_mw"], errors="coerce")
 
     if not weather.empty:
         weather["loaded_utc"] = pd.to_datetime(weather["loaded_at"], utc=True, errors="coerce")
         weather["cloudcover"] = pd.to_numeric(weather["cloudcover"], errors="coerce")
+        for column in ("temp", "windspeed", "precipprob"):
+            weather[column] = pd.to_numeric(weather[column], errors="coerce")
         weather = weather.dropna(subset=["target_utc", "loaded_utc"])
 
     target_days = sorted(
@@ -187,7 +276,9 @@ def build_report(now: datetime | None = None) -> str:
     issue_hours = selected_runs["run_local"].dt.strftime("%H:%M")
     issue_hour_median = selected_runs["run_local"].dt.hour.median()
     merged = selected_frame.merge(
-        facts[["target_utc", "fact_mw"]].dropna().drop_duplicates("target_utc"),
+        facts[["target_utc", "fact_mw", "fact_loaded_utc"]]
+        .dropna()
+        .drop_duplicates("target_utc"),
         on="target_utc",
         how="inner",
     )
@@ -205,7 +296,15 @@ def build_report(now: datetime | None = None) -> str:
         )["cloudcover"].diff().abs()
         merged = merged.merge(
             weather[
-                ["target_utc", "loaded_utc", "cloudcover", "cloud_change_pct_points"]
+                [
+                    "target_utc",
+                    "loaded_utc",
+                    "cloudcover",
+                    "temp",
+                    "windspeed",
+                    "precipprob",
+                    "cloud_change_pct_points",
+                ]
             ].drop_duplicates(
                 ["target_utc", "loaded_utc"]
             ),
@@ -232,6 +331,42 @@ def build_report(now: datetime | None = None) -> str:
                 f"Годин без погодного знімка тієї самої версії: {merged['cloudcover'].isna().sum()}.",
             ]
         )
+        merged["hour"] = merged["target_utc"].dt.tz_convert(KYIV).dt.hour
+        merged["month"] = merged["target_utc"].dt.tz_convert(KYIV).dt.month
+        merged["day_of_year"] = merged["target_utc"].dt.tz_convert(KYIV).dt.dayofyear
+        merged["capacity_mw"] = pd.to_numeric(merged["capacity_mw"], errors="coerce")
+        candidate_rows = _walk_forward_candidates(merged)
+        if candidate_rows.empty:
+            lines.append("Walk-forward кандидатам не вистачило історичних point-in-time фактів.")
+        else:
+            lines.extend(
+                [
+                    "",
+                    "### Офлайн walk-forward кандидати (робочий прогноз не змінюється)",
+                    f"Дати тесту: {candidate_rows['target_day'].nunique()}; "
+                    f"погодинних фактів: {len(candidate_rows)}; "
+                    f"мінімум навчальних рядків: {candidate_rows['walk_forward_train_rows'].min()}.",
+                    _candidate_metric(
+                        "Поточний збережений AI", candidate_rows, "ai_forecast_mw"
+                    ),
+                    _candidate_metric(
+                        "HistGradientBoosting", candidate_rows, "walk_forward_hgb"
+                    ),
+                    _candidate_metric(
+                        "Ridge", candidate_rows, "walk_forward_ridge"
+                    ),
+                    _candidate_metric(
+                        "HGB на хмарності ≥70%",
+                        candidate_rows[candidate_rows["cloudcover"] >= 70],
+                        "walk_forward_hgb",
+                    ),
+                    _candidate_metric(
+                        "Ridge на хмарності ≥70%",
+                        candidate_rows[candidate_rows["cloudcover"] >= 70],
+                        "walk_forward_ridge",
+                    ),
+                ]
+            )
     else:
         lines.append("Погодинний погодний знімок для групування за хмарністю відсутній.")
 
