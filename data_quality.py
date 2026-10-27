@@ -61,12 +61,33 @@ def valid_fact_mask(
     at its boundary without accepting rows from the forecast horizon.
     """
 
+    if df.empty or "Fact_MW" not in df.columns:
+        return pd.Series(False, index=df.index, dtype=bool)
+
+    measurements = valid_measurement_mask(
+        df,
+        now=now,
+        default_capacity_mw=default_capacity_mw,
+        max_capacity_factor=max_capacity_factor,
+    )
+    facts = pd.to_numeric(df["Fact_MW"], errors="coerce")
+    return measurements & facts.gt(float(min_fact_mw))
+
+
+def valid_measurement_mask(
+    df: pd.DataFrame,
+    *,
+    now=None,
+    default_capacity_mw: float = 15.2,
+    max_capacity_factor: float = MAX_CAPACITY_FACTOR,
+) -> pd.Series:
+    """Identify plausible measurements, including legitimate zero generation."""
+
     if df.empty or "Time" not in df.columns or "Fact_MW" not in df.columns:
         return pd.Series(False, index=df.index, dtype=bool)
 
     times = parse_local_time_series(df["Time"])
     facts = pd.to_numeric(df["Fact_MW"], errors="coerce")
-
     if "Capacity_MW" in df.columns:
         capacity = pd.to_numeric(df["Capacity_MW"], errors="coerce")
     else:
@@ -81,7 +102,8 @@ def valid_fact_mask(
 
     return (
         times.notna()
-        & facts.gt(float(min_fact_mw))
+        & facts.notna()
+        & facts.ge(0.0)
         & facts.le(capacity * float(max_capacity_factor))
         & times.le(now_timestamp + FUTURE_FACT_TOLERANCE)
     )

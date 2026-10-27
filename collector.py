@@ -15,8 +15,10 @@ from sklearn.ensemble import HistGradientBoostingRegressor
 from data_quality import (
     kyiv_now_naive,
     localize_kyiv_timestamp,
+    parse_local_timestamp,
     parse_local_time_series,
     valid_fact_mask,
+    valid_measurement_mask,
 )
 
 SHEET_ID = "1ckVoJla9DA3BLQfBDy30sXmaOyH2HSqCZ1FbZtUDr9Q"
@@ -1078,7 +1080,7 @@ def read_facts_from_email(days=30):
                                 if t_raw is None or str(t_raw).strip() in ('', 'nan'):
                                     continue
 
-                                t = pd.to_datetime(t_raw, errors='coerce')
+                                t = parse_local_timestamp(t_raw)
 
                                 if pd.isna(t):
                                     continue
@@ -1126,7 +1128,7 @@ def update_facts(df, facts, capacity_mw=DEFAULT_CAPACITY_MW, now=None):
 
     df_new = pd.DataFrame(facts)
     df_new['Capacity_MW'] = float(capacity_mw)
-    valid = valid_fact_mask(
+    valid = valid_measurement_mask(
         df_new,
         now=now,
         default_capacity_mw=capacity_mw,
