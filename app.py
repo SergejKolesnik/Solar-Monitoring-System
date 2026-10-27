@@ -5,7 +5,7 @@ import gspread
 from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
 
-from data_quality import parse_local_time_series
+from data_quality import parse_local_time_series, valid_fact_mask
 from runtime_config import get_json_secret
 from weather_service import fetch_weather_data, calc_forecast_mw
 try:
@@ -13,7 +13,7 @@ try:
 except Exception:
     _weather_service_open_meteo = None
 from dashboard_components import draw_main_chart, draw_metrics, draw_weather_strip
-from ui_components import draw_quality_summary, draw_training_tab, draw_meteo_tab, draw_plan_tab
+from ui_components import draw_training_tab, draw_meteo_tab, draw_plan_tab
 from today_weather import draw_today_weather_tab
 from usage_analytics import capture_anonymous_pageview
 
@@ -35,6 +35,57 @@ MONTHS_UK = {
     5: 'Травень', 6: 'Червень', 7: 'Липень', 8: 'Серпень',
     9: 'Вересень', 10: 'Жовтень', 11: 'Листопад', 12: 'Грудень'
 }
+
+
+def draw_quality_summary(df_h):
+    """Render a compact seven-day quality summary on the main quality tab."""
+    required = {'Time', 'Fact_MW', 'Forecast_MW', 'AI_Forecast_MW'}
+    if df_h is None or df_h.empty or not required.issubset(df_h.columns):
+        st.info("Поки недостатньо даних, щоб підсумувати точність прогнозу.")
+        return
+
+    frame = df_h.copy()
+    for column in ('Fact_MW', 'Forecast_MW', 'AI_Forecast_MW'):
+        frame[column] = pd.to_numeric(
+            frame[column].astype(str).str.replace(',', '.', regex=False),
+            errors='coerce',
+        )
+    frame['Time'] = parse_local_time_series(frame['Time'])
+    frame = frame.dropna(subset=['Time'])
+    now_kyiv = pd.Timestamp.now(tz='Europe/Kyiv').tz_localize(None)
+    valid = frame[valid_fact_mask(frame, now=now_kyiv)].copy()
+    valid = valid[
+        (valid['Forecast_MW'] > 0.05)
+        & (valid['AI_Forecast_MW'] > 0.05)
+    ]
+    if valid.empty:
+        st.info("Немає погодинних збігів факту, базового прогнозу й ШІ.")
+        return
+
+    end_date = valid['Time'].max().normalize()
+    recent = valid[valid['Time'] >= end_date - pd.Timedelta(days=6)]
+    base_errors = (recent['Forecast_MW'] - recent['Fact_MW']).abs()
+    ai_errors = (recent['AI_Forecast_MW'] - recent['Fact_MW']).abs()
+    if recent.empty or base_errors.empty:
+        st.info("Недостатньо фактичних годин за останні 7 днів.")
+        return
+
+    base_mae = float(base_errors.mean())
+    ai_mae = float(ai_errors.mean())
+    improvement = 100 * (base_mae - ai_mae) / base_mae if base_mae > 0 else 0.0
+    better_hours = float((ai_errors < base_errors).mean() * 100)
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("MAE ШІ · 7 днів", f"{ai_mae:.2f} МВт")
+    c2.metric("Зміна до бази", f"{improvement:+.1f}%")
+    c3.metric("Годин, де ШІ краще", f"{better_hours:.0f}%")
+    c4.metric("Останній факт", valid['Time'].max().strftime('%d.%m %H:%M'))
+
+    if improvement < 0:
+        st.warning("За останні 7 днів ШІ мав більшу погодинну похибку за базовий прогноз.")
+    elif improvement >= 10:
+        st.success("За останні 7 днів ШІ зменшив погодинну похибку проти бази.")
+    else:
+        st.info("Різниця між ШІ та базовим прогнозом поки невелика.")
 
 
 @st.cache_data(ttl=1800)
