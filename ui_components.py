@@ -3,6 +3,8 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
+from data_quality import parse_local_time_series, valid_fact_mask
+
 
 def _clean_numeric(df, columns):
     df = df.copy()
@@ -102,7 +104,13 @@ def _draw_ai_data_diagnostics(df):
     now_kyiv = pd.Timestamp.now(tz='Europe/Kyiv').tz_localize(None)
     tomorrow = (now_kyiv.normalize() + pd.Timedelta(days=1)).date()
 
-    last_fact_time = _latest_positive_time(df, 'Fact_MW')
+    valid_facts = valid_fact_mask(df, now=now_kyiv)
+    valid_fact_rows = df[valid_facts].copy()
+    last_fact_time = (
+        parse_local_time_series(valid_fact_rows['Time']).max()
+        if not valid_fact_rows.empty
+        else None
+    )
     last_base_time = _latest_positive_time(df, 'Forecast_MW')
     last_ai_time = _latest_positive_time(df, 'AI_Forecast_MW')
 
@@ -129,8 +137,7 @@ def _draw_ai_data_diagnostics(df):
     fact_rows = pd.DataFrame()
     recent_fact_median = 0.0
     if 'Fact_MW' in df.columns:
-        fact_values = pd.to_numeric(df['Fact_MW'], errors='coerce').fillna(0)
-        fact_rows = df[fact_values > 0.05].copy()
+        fact_rows = valid_fact_rows
     if not fact_rows.empty:
         fact_rows['Дата'] = fact_rows['Time'].dt.date
         fact_daily = fact_rows.groupby('Дата')['Fact_MW'].sum().reset_index()
@@ -263,7 +270,7 @@ def _build_shadow_experiment(df_fact, lookback_days=30, min_samples=6):
         return pd.DataFrame()
 
     df = df_fact.copy()
-    df['Time'] = pd.to_datetime(df['Time'], errors='coerce')
+    df['Time'] = parse_local_time_series(df['Time'])
     df = df.dropna(subset=['Time']).sort_values('Time')
     df['Date'] = df['Time'].dt.date
     cloud_source = df['CloudCover'] if 'CloudCover' in df.columns else pd.Series([0] * len(df), index=df.index)
@@ -736,11 +743,23 @@ def draw_training_tab(df_h):
         return
 
     # Беремо тільки години, де є факт генерації. Нічні нулі не повинні прикрашати точність.
-    df_fact = df[(df['Fact_MW'] > 0.05) & (df['Forecast_MW'] > 0.05)].copy()
+    now_kyiv = pd.Timestamp.now(tz='Europe/Kyiv').tz_localize(None)
+    df_fact = df[
+        valid_fact_mask(df, now=now_kyiv) &
+        (df['Forecast_MW'] > 0.05)
+    ].copy()
     if df_fact.empty:
         st.info("Недостатньо історичних даних для аналізу.")
         return
 
+    df_fact['Forecast_Error_Pct'] = (
+        (df_fact['Fact_MW'] - df_fact['Forecast_MW']) /
+        df_fact['Fact_MW'] * 100
+    )
+    df_fact['AI_Error_Pct'] = (
+        (df_fact['Fact_MW'] - df_fact['AI_Forecast_MW']) /
+        df_fact['Fact_MW'] * 100
+    )
     df_fact['Base_Abs_Error_Pct'] = df_fact['Forecast_Error_Pct'].abs()
     df_fact['AI_Abs_Error_Pct'] = df_fact['AI_Error_Pct'].abs()
 
@@ -793,7 +812,6 @@ def draw_training_tab(df_h):
             daily[col] = pd.to_numeric(daily[col], errors='coerce').round(2)
 
     last_fact_time = pd.to_datetime(df_fact['Time'].max())
-    now_kyiv = pd.Timestamp.now(tz='Europe/Kyiv').tz_localize(None)
     expected_lag_days = 2 if now_kyiv.hour < 9 else 1
     expected_latest_date = (now_kyiv.normalize() - pd.Timedelta(days=expected_lag_days)).date()
     latest_fact_date = last_fact_time.date()
