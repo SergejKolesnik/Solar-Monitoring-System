@@ -183,6 +183,9 @@ def build_report(now: datetime | None = None) -> str:
         return "\n".join(lines)
 
     selected_frame = pd.concat(selected, ignore_index=True)
+    selected_runs = selected_frame[["target_day", "run_local"]].drop_duplicates()
+    issue_hours = selected_runs["run_local"].dt.strftime("%H:%M")
+    issue_hour_median = selected_runs["run_local"].dt.hour.median()
     merged = selected_frame.merge(
         facts[["target_utc", "fact_mw"]].dropna().drop_duplicates("target_utc"),
         on="target_utc",
@@ -196,8 +199,14 @@ def build_report(now: datetime | None = None) -> str:
     lines.append(_metric_line("Усі продуктивні години", merged))
 
     if not weather.empty and not merged.empty:
+        weather = weather.sort_values("target_utc").copy()
+        weather["cloud_change_pct_points"] = weather.groupby(
+            ["target_day", "loaded_utc"]
+        )["cloudcover"].diff().abs()
         merged = merged.merge(
-            weather[["target_utc", "loaded_utc", "cloudcover"]].drop_duplicates(
+            weather[
+                ["target_utc", "loaded_utc", "cloudcover", "cloud_change_pct_points"]
+            ].drop_duplicates(
                 ["target_utc", "loaded_utc"]
             ),
             left_on=["target_utc", "run_utc"],
@@ -207,11 +216,15 @@ def build_report(now: datetime | None = None) -> str:
         cloudy = merged[merged["cloudcover"] >= 70]
         mixed = merged[merged["cloudcover"].between(40, 69, inclusive="both")]
         clear = merged[merged["cloudcover"] < 40]
+        rapidly_changing = merged[merged["cloud_change_pct_points"] >= 25]
+        relatively_stable = merged[merged["cloud_change_pct_points"] < 10]
         lines.extend(
             [
                 _metric_line("Хмарність ≥70%", cloudy),
                 _metric_line("Хмарність 40–69%", mixed),
                 _metric_line("Хмарність <40%", clear),
+                _metric_line("Зміна хмарності ≥25 п.п./год", rapidly_changing),
+                _metric_line("Зміна хмарності <10 п.п./год", relatively_stable),
                 f"Годин без погодного знімка тієї самої версії: {merged['cloudcover'].isna().sum()}.",
             ]
         )
@@ -223,6 +236,8 @@ def build_report(now: datetime | None = None) -> str:
             "",
             "Показник зміни: додатне значення означає нижчу MAE моделі відносно бази; "
             "вибірка містить лише валідні денні факти.",
+            f"Час випуску вибраних знімків: {issue_hours.min()}–{issue_hours.max()} Kyiv; "
+            f"медіана години: {issue_hour_median:.1f}.",
         ]
     )
     return "\n".join(lines)
