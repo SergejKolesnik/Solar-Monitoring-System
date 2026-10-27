@@ -7,7 +7,7 @@ import io
 import json
 import csv
 import gspread
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from google.oauth2.service_account import Credentials
 from sklearn.ensemble import HistGradientBoostingRegressor
@@ -463,6 +463,17 @@ def _to_supabase_time(value):
     return ts.isoformat()
 
 
+def _run_at_utc(run_at):
+    """Normalize collector timestamps; naive collector times are UTC (Actions)."""
+    if run_at.tzinfo is None:
+        return run_at.replace(tzinfo=timezone.utc)
+    return run_at.astimezone(timezone.utc)
+
+
+def _run_at_kyiv_naive(run_at):
+    return _run_at_utc(run_at).astimezone(KYIV_TZ).replace(tzinfo=None)
+
+
 def _supabase_config():
     url = (os.getenv('SUPABASE_URL') or '').rstrip('/')
     key = os.getenv('SUPABASE_SERVICE_ROLE_KEY') or os.getenv('SUPABASE_KEY') or ''
@@ -503,7 +514,7 @@ def _supabase_post(url, key, table, rows, prefer='return=minimal', params=None):
 
 
 def _sync_capacity_to_supabase(url, key, capacity_mw, run_at):
-    valid_from = run_at.date().isoformat()
+    valid_from = _run_at_kyiv_naive(run_at).date().isoformat()
     row = {
         'valid_from': f"{valid_from}T00:00:00+00:00",
         'capacity_mw': _to_float(capacity_mw),
@@ -540,22 +551,22 @@ def _sync_measurements_to_supabase(url, key, df, cutoff):
     return len(rows)
 
 
-def _sync_weather_to_supabase(url, key, df, cutoff, run_at):
+def _sync_weather_to_supabase(url, key, df, cutoff, run_at, provider='visual_crossing'):
     rows = []
     df_weather = df[pd.to_datetime(df['Time'], errors='coerce') >= cutoff].copy()
-    loaded_at = run_at.replace(tzinfo=KYIV_TZ).isoformat() if run_at.tzinfo is None else run_at.isoformat()
+    loaded_at = _run_at_utc(run_at).isoformat()
 
     for _, row in df_weather.iterrows():
         time_value = _to_supabase_time(row['Time'])
         if not time_value:
             continue
         capacity_mw = _to_float(row.get('Capacity_MW', DEFAULT_CAPACITY_MW), DEFAULT_CAPACITY_MW)
-        rad = 0.0
-        if capacity_mw > 0:
+        rad = _to_float(row.get('Rad'))
+        if 'Rad' not in row and capacity_mw > 0:
             rad = _to_float(row.get('Forecast_MW', 0)) / (BASE_FORECAST_CONST * (capacity_mw / BASE_CAPACITY_MW))
         rows.append({
             'time': time_value,
-            'provider': 'visual_crossing',
+            'provider': provider,
             'rad': round(rad, 3),
             'cloudcover': _to_float(row.get('CloudCover', 0)),
             'temp': _to_float(row.get('Temp', 0)),
@@ -568,10 +579,49 @@ def _sync_weather_to_supabase(url, key, df, cutoff, run_at):
     return len(rows)
 
 
+def _fetch_open_meteo_snapshot():
+    """Fetch Open-Meteo hourly forecast for shadow-only vintage storage."""
+    response = requests.get(
+        'https://api.open-meteo.com/v1/forecast',
+        params={
+            'latitude': 47.631494,
+            'longitude': 34.348690,
+            'hourly': (
+                'temperature_2m,shortwave_radiation,cloud_cover,'
+                'wind_speed_10m,precipitation_probability'
+            ),
+            'forecast_days': 10,
+            'timezone': 'Europe/Kyiv',
+            'wind_speed_unit': 'ms',
+        },
+        timeout=15,
+    )
+    response.raise_for_status()
+    hourly = response.json().get('hourly', {})
+    times = hourly.get('time', [])
+    if not times:
+        return pd.DataFrame()
+
+    def values(name):
+        series = hourly.get(name, [])
+        if len(series) != len(times):
+            series = [None] * len(times)
+        return pd.to_numeric(pd.Series(series), errors='coerce')
+
+    return pd.DataFrame({
+        'Time': pd.to_datetime(times, errors='coerce'),
+        'Rad': values('shortwave_radiation'),
+        'CloudCover': values('cloud_cover'),
+        'Temp': values('temperature_2m'),
+        'WindSpeed': values('wind_speed_10m'),
+        'PrecipProb': values('precipitation_probability'),
+    }).dropna(subset=['Time'])
+
+
 def _sync_generation_forecasts_to_supabase(url, key, df, cutoff, run_at):
     rows = []
     df_forecast = df[pd.to_datetime(df['Time'], errors='coerce') >= cutoff].copy()
-    run_at_iso = run_at.replace(tzinfo=KYIV_TZ).isoformat() if run_at.tzinfo is None else run_at.isoformat()
+    run_at_iso = _run_at_utc(run_at).isoformat()
 
     for _, row in df_forecast.iterrows():
         time_value = _to_supabase_time(row['Time'])
@@ -588,7 +638,7 @@ def _sync_generation_forecasts_to_supabase(url, key, df, cutoff, run_at):
             'capacity_mw': _to_float(row.get('Capacity_MW', DEFAULT_CAPACITY_MW), DEFAULT_CAPACITY_MW),
             'model_version': 'collector-hist-gradient-error-v1',
             'forecast_run_at': run_at_iso,
-            'source': 'collector'
+            'source': 'collector_utc_v2'
         })
 
     _supabase_post(url, key, 'generation_forecasts', rows)
@@ -645,17 +695,28 @@ def sync_to_supabase_shadow(df, capacity_mw, run_at):
     try:
         url, key = config
         sync_days = int(os.getenv('SUPABASE_SYNC_DAYS', '40'))
-        cutoff = pd.Timestamp(run_at - timedelta(days=sync_days))
+        cutoff = pd.Timestamp(_run_at_kyiv_naive(run_at) - timedelta(days=sync_days))
 
         _sync_capacity_to_supabase(url, key, capacity_mw, run_at)
         facts_count = _sync_measurements_to_supabase(url, key, df, cutoff)
         weather_count = _sync_weather_to_supabase(url, key, df, cutoff, run_at)
+        open_meteo_weather_count = 0
+        try:
+            open_meteo_snapshot = _fetch_open_meteo_snapshot()
+            open_meteo_weather_count = _sync_weather_to_supabase(
+                url, key, open_meteo_snapshot, cutoff, run_at,
+                provider='open_meteo',
+            )
+        except Exception as e:
+            # A comparison-source outage must not interrupt the production collector.
+            print(f"Open-Meteo shadow snapshot failed: {e}")
         forecast_count = _sync_generation_forecasts_to_supabase(url, key, df, cutoff, run_at)
         quality_count = _sync_quality_to_supabase(url, key, df, cutoff)
 
         print(
             "Supabase shadow sync: "
-            f"facts={facts_count}, weather={weather_count}, "
+            f"facts={facts_count}, weather_vc={weather_count}, "
+            f"weather_open_meteo={open_meteo_weather_count}, "
             f"forecasts={forecast_count}, quality_days={quality_count}"
         )
     except Exception as e:
