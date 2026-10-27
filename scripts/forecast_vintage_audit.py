@@ -189,27 +189,40 @@ def _fixed_vintage_holdout(vintage: pd.DataFrame) -> tuple[pd.DataFrame, int]:
     if len(training) < 120 or validation.empty:
         return pd.DataFrame(), len(training)
 
-    model = HistGradientBoostingRegressor(
-        max_iter=300,
-        learning_rate=0.05,
-        max_leaf_nodes=15,
-        l2_regularization=0.1,
-        early_stopping=True,
-        random_state=42,
-    )
-    model.fit(
-        training[VINTAGE_FEATURE_COLUMNS].astype(float),
-        training["fact_mw"] - training["forecast_mw"],
-    )
-    residual = model.predict(validation[VINTAGE_FEATURE_COLUMNS].astype(float))
+    validation["cloud_change_pct_points"] = validation[
+        "cloud_change_pct_points"
+    ].fillna(0)
+    training["cloud_change_pct_points"] = training[
+        "cloud_change_pct_points"
+    ].fillna(0)
+    feature_sets = {
+        "vintage_holdout_hgb": VINTAGE_FEATURE_COLUMNS,
+        "vintage_holdout_hgb_cloud_delta": VINTAGE_FEATURE_COLUMNS
+        + ["cloud_change_pct_points"],
+    }
     base = validation["forecast_mw"].to_numpy()
     capacity = validation["capacity_mw"].to_numpy()
     bound = base * 0.30
-    validation["vintage_holdout_hgb"] = (base + residual.clip(-bound, bound)).clip(
-        0, capacity
-    )
+    for prediction_column, feature_columns in feature_sets.items():
+        model = HistGradientBoostingRegressor(
+            max_iter=300,
+            learning_rate=0.05,
+            max_leaf_nodes=15,
+            l2_regularization=0.1,
+            early_stopping=True,
+            random_state=42,
+        )
+        model.fit(
+            training[feature_columns].astype(float),
+            training["fact_mw"] - training["forecast_mw"],
+        )
+        residual = model.predict(validation[feature_columns].astype(float))
+        validation[prediction_column] = (base + residual.clip(-bound, bound)).clip(
+            0, capacity
+        )
     hours = validation["target_utc"].dt.tz_convert(KYIV).dt.hour
-    validation.loc[(hours < 5) | (hours > 21), "vintage_holdout_hgb"] = 0.0
+    night = (hours < 5) | (hours > 21)
+    validation.loc[night, list(feature_sets)] = 0.0
     return validation, len(training)
 
 
@@ -498,6 +511,20 @@ def build_report(now: datetime | None = None) -> str:
                     "HGB на хмарності ≥70%",
                     holdout_cloudy,
                     "vintage_holdout_hgb",
+                )
+            )
+            lines.append(
+                _candidate_metric(
+                    "HGB + зміна хмарності",
+                    holdout_rows,
+                    "vintage_holdout_hgb_cloud_delta",
+                )
+            )
+            lines.append(
+                _candidate_metric(
+                    "HGB + зміна хмарності на хмарності ≥70%",
+                    holdout_cloudy,
+                    "vintage_holdout_hgb_cloud_delta",
                 )
             )
     else:
