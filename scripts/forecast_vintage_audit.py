@@ -217,6 +217,9 @@ def build_report(now: datetime | None = None) -> str:
         mixed = merged[merged["cloudcover"].between(40, 69, inclusive="both")]
         clear = merged[merged["cloudcover"] < 40]
         rapidly_changing = merged[merged["cloud_change_pct_points"] >= 25]
+        moderately_changing = merged[
+            merged["cloud_change_pct_points"].between(10, 24.999, inclusive="both")
+        ]
         relatively_stable = merged[merged["cloud_change_pct_points"] < 10]
         lines.extend(
             [
@@ -224,6 +227,7 @@ def build_report(now: datetime | None = None) -> str:
                 _metric_line("Хмарність 40–69%", mixed),
                 _metric_line("Хмарність <40%", clear),
                 _metric_line("Зміна хмарності ≥25 п.п./год", rapidly_changing),
+                _metric_line("Зміна хмарності 10–24 п.п./год", moderately_changing),
                 _metric_line("Зміна хмарності <10 п.п./год", relatively_stable),
                 f"Годин без погодного знімка тієї самої версії: {merged['cloudcover'].isna().sum()}.",
             ]
