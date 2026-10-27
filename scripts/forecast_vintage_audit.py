@@ -339,6 +339,11 @@ def build_report(now: datetime | None = None) -> str:
         if candidate_rows.empty:
             lines.append("Walk-forward кандидатам не вистачило історичних point-in-time фактів.")
         else:
+            candidate_rows["target_month"] = pd.to_datetime(
+                candidate_rows["target_day"]
+            ).dt.strftime("%Y-%m")
+            recent_cutoff = candidate_rows["target_day"].max() - timedelta(days=13)
+            recent_rows = candidate_rows[candidate_rows["target_day"] >= recent_cutoff]
             lines.extend(
                 [
                     "",
@@ -365,8 +370,37 @@ def build_report(now: datetime | None = None) -> str:
                         candidate_rows[candidate_rows["cloudcover"] >= 70],
                         "walk_forward_ridge",
                     ),
+                    "",
+                    f"Останні 14 календарних днів: {recent_rows['target_day'].nunique()} дат, "
+                    f"{len(recent_rows)} годин.",
+                    _candidate_metric(
+                        "Збережений AI, останні 14 днів",
+                        recent_rows,
+                        "ai_forecast_mw",
+                    ),
+                    _candidate_metric(
+                        "HGB, останні 14 днів",
+                        recent_rows,
+                        "walk_forward_hgb",
+                    ),
+                    _candidate_metric(
+                        "HGB на хмарності ≥70%, останні 14 днів",
+                        recent_rows[recent_rows["cloudcover"] >= 70],
+                        "walk_forward_hgb",
+                    ),
                 ]
             )
+            for month, month_rows in candidate_rows.groupby("target_month"):
+                lines.append(
+                    f"{month}: "
+                    + _candidate_metric(
+                        "збережений AI", month_rows, "ai_forecast_mw"
+                    )
+                )
+                lines.append(
+                    f"{month}: "
+                    + _candidate_metric("HGB", month_rows, "walk_forward_hgb")
+                )
     else:
         lines.append("Погодинний погодний знімок для групування за хмарністю відсутній.")
 
