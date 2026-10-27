@@ -16,6 +16,17 @@ from sklearn.preprocessing import StandardScaler
 
 KYIV = ZoneInfo("Europe/Kyiv")
 PAGE_SIZE = 1000
+VINTAGE_FEATURE_COLUMNS = [
+    "forecast_mw",
+    "cloudcover",
+    "temp",
+    "windspeed",
+    "precipprob",
+    "capacity_mw",
+    "hour",
+    "month",
+    "day_of_year",
+]
 
 
 def _get_all_rows(session: requests.Session, base_url: str, table: str, params: dict) -> list[dict]:
@@ -144,6 +155,62 @@ def _walk_forward_candidates(vintage: pd.DataFrame) -> pd.DataFrame:
     combined = pd.concat(predictions, ignore_index=True)
     keys = ["target_utc", "target_day"]
     return combined.groupby(keys, as_index=False).first()
+
+
+def _fixed_vintage_holdout(vintage: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    """Mirror the production 14-day split using issue-time weather vintages."""
+
+    required = VINTAGE_FEATURE_COLUMNS + [
+        "fact_mw",
+        "fact_loaded_utc",
+        "run_utc",
+        "target_utc",
+        "target_day",
+        "capacity_mw",
+        "forecast_mw",
+        "ai_forecast_mw",
+    ]
+    data = vintage.dropna(subset=required).copy()
+    data = data[
+        (data["fact_mw"] > 0.05)
+        & (data["forecast_mw"] > 0.05)
+    ]
+    if data.empty:
+        return pd.DataFrame(), 0
+
+    latest_day = data["target_day"].max()
+    validation_start = latest_day - timedelta(days=13)
+    validation = data[data["target_day"] >= validation_start].copy()
+    training_cutoff = validation["run_utc"].min()
+    training = data[
+        (data["target_day"] < validation_start)
+        & (data["fact_loaded_utc"] <= training_cutoff)
+    ].copy()
+    if len(training) < 120 or validation.empty:
+        return pd.DataFrame(), len(training)
+
+    model = HistGradientBoostingRegressor(
+        max_iter=300,
+        learning_rate=0.05,
+        max_leaf_nodes=15,
+        l2_regularization=0.1,
+        early_stopping=True,
+        random_state=42,
+    )
+    model.fit(
+        training[VINTAGE_FEATURE_COLUMNS].astype(float),
+        training["fact_mw"] - training["forecast_mw"],
+    )
+    residual = model.predict(validation[VINTAGE_FEATURE_COLUMNS].astype(float))
+    base = validation["forecast_mw"].to_numpy()
+    capacity = validation["capacity_mw"].to_numpy()
+    bound = base * 0.30
+    validation["vintage_holdout_hgb"] = (base + residual.clip(-bound, bound)).clip(
+        0, capacity
+    )
+    hours = validation["target_utc"].dt.tz_convert(KYIV).dt.hour
+    validation.loc[(hours < 5) | (hours > 21), "vintage_holdout_hgb"] = 0.0
+    return validation, len(training)
 
 
 def build_report(now: datetime | None = None) -> str:
@@ -401,6 +468,38 @@ def build_report(now: datetime | None = None) -> str:
                     f"{month}: "
                     + _candidate_metric("HGB", month_rows, "walk_forward_hgb")
                 )
+        holdout_rows, holdout_train_count = _fixed_vintage_holdout(merged)
+        lines.extend(
+            [
+                "",
+                "### Фіксований 14-денний vintage holdout (ознаки production-моделі)",
+            ]
+        )
+        if holdout_rows.empty:
+            lines.append(
+                f"Недостатньо point-in-time даних: train={holdout_train_count}; "
+                "потрібно щонайменше 120 рядків навчання."
+            )
+        else:
+            lines.append(
+                f"train={holdout_train_count}; validation={len(holdout_rows)}; "
+                f"дати={holdout_rows['target_day'].nunique()}."
+            )
+            lines.append(
+                _candidate_metric(
+                    "HGB на збережених прогнозних ознаках",
+                    holdout_rows,
+                    "vintage_holdout_hgb",
+                )
+            )
+            holdout_cloudy = holdout_rows[holdout_rows["cloudcover"] >= 70]
+            lines.append(
+                _candidate_metric(
+                    "HGB на хмарності ≥70%",
+                    holdout_cloudy,
+                    "vintage_holdout_hgb",
+                )
+            )
     else:
         lines.append("Погодинний погодний знімок для групування за хмарністю відсутній.")
 
