@@ -26,7 +26,12 @@ if importlib.util.find_spec("sklearn") is None:
 
 import collector
 from dashboard_components import _month_fact_mwh
-from data_quality import localize_kyiv_timestamp, valid_fact_mask
+from data_quality import (
+    localize_kyiv_timestamp,
+    parse_local_timestamp,
+    valid_fact_mask,
+    valid_measurement_mask,
+)
 
 
 class FactValidationTests(unittest.TestCase):
@@ -90,6 +95,37 @@ class FactValidationTests(unittest.TestCase):
         positive = updated[pd.to_numeric(updated["Fact_MW"], errors="coerce") > 0]
         self.assertEqual(len(positive), 1)
         self.assertEqual(positive.iloc[0]["Fact_MW"], 10.0)
+
+    def test_zero_measurement_can_replace_stale_positive_value(self):
+        base = collector.ensure_columns(
+            pd.DataFrame(
+                {
+                    "Time": [pd.Timestamp("2026-10-27 11:00:00")],
+                    "Fact_MW": [5.0],
+                }
+            )
+        )
+
+        updated = collector.update_facts(
+            base,
+            [{"Time": datetime(2026, 10, 27, 11), "Fact_MW": 0.0}],
+            capacity_mw=15.2,
+            now=self.now,
+        )
+
+        self.assertEqual(updated.iloc[0]["Fact_MW"], 0.0)
+
+    def test_zero_is_valid_measurement_but_not_training_fact(self):
+        frame = pd.DataFrame(
+            {
+                "Time": ["2026-10-27 11:00:00"],
+                "Fact_MW": [0.0],
+                "Capacity_MW": [15.2],
+            }
+        )
+
+        self.assertTrue(valid_measurement_mask(frame, now=self.now).iloc[0])
+        self.assertFalse(valid_fact_mask(frame, now=self.now).iloc[0])
 
     def test_calculate_errors_ignores_invalid_facts(self):
         frame = collector.ensure_columns(
@@ -180,6 +216,12 @@ class FactValidationTests(unittest.TestCase):
 
 
 class DstHandlingTests(unittest.TestCase):
+    def test_dst_suffix_is_removed_before_parsing(self):
+        self.assertEqual(
+            parse_local_timestamp("2026-10-25 03:00:00 DST"),
+            pd.Timestamp("2026-10-25 03:00:00"),
+        )
+
     def test_repeated_hour_uses_explicit_dst_hint(self):
         daylight = localize_kyiv_timestamp("2026-10-25 03:00:00 DST")
         standard = localize_kyiv_timestamp("2026-10-25 03:00:00")
