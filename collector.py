@@ -1079,45 +1079,124 @@ def read_facts_from_email(days=30):
         mail = imaplib.IMAP4_SSL("imap.gmail.com")
         mail.login(email_user, email_pass)
 
-        ids = []
+        message_refs = []
+        checked_folders = []
+        search_errors = []
+        date_from = (datetime.now() - timedelta(days=days)).strftime("%d-%b-%Y")
+        configured_folders = get_email_folders()
+        all_mail_folder = next(
+            (folder for folder in configured_folders if 'all mail' in folder.lower()),
+            None,
+        )
+        folders_to_check = (
+            [all_mail_folder] + [
+                folder for folder in configured_folders if folder != all_mail_folder
+            ]
+            if all_mail_folder
+            else configured_folders
+        )
 
-        for folder in get_email_folders():
+        # A report can be moved by Gmail filters between FusionSolar, INBOX and
+        # All Mail. Gmail's All Mail is the canonical, de-duplicated view; use
+        # the other folders only when All Mail is unavailable.
+        for folder in folders_to_check:
             try:
-                status, _ = mail.select(folder)
+                status, _ = mail.select(folder, readonly=True)
                 if status != 'OK' and not (folder.startswith('"') and folder.endswith('"')):
-                    status, _ = mail.select(f'"{folder}"')
+                    status, _ = mail.select(f'"{folder}"', readonly=True)
 
                 if status != 'OK':
+                    search_errors.append(f"{folder}: select failed")
                     continue
 
-                date_from = (datetime.now() - timedelta(days=days)).strftime("%d-%b-%Y")
                 status2, data = mail.search(None, f'(SINCE "{date_from}")')
+                checked_folders.append(folder)
 
                 if status2 == 'OK' and data and data[0]:
                     found = data[0].split()
-
-                    if found:
-                        ids = found
-                        print(f"Знайдено {len(ids)} листів у {folder}")
+                    message_refs.extend((folder, message_id) for message_id in found)
+                    print(f"Знайдено {len(found)} листів у {folder}")
+                    if folder == all_mail_folder:
                         break
+                elif status2 != 'OK':
+                    search_errors.append(f"{folder}: search failed")
 
             except Exception as fe:
-                print(f"Папка: {fe}")
+                search_errors.append(f"{folder}: {fe}")
                 continue
 
-        if not ids:
+        # The same message is normally visible in both a label and All Mail.
+        # Keep the first reference and avoid parsing the same attachment twice.
+        unique_refs = []
+        seen_refs = set()
+        for ref in message_refs:
+            if ref not in seen_refs:
+                seen_refs.add(ref)
+                unique_refs.append(ref)
+
+        print(
+            f"Перевірено папок: {len(checked_folders)} "
+            f"(канонічна All Mail: {'так' if all_mail_folder else 'ні'}), "
+            f"листів до обробки: {len(unique_refs)}, період від {date_from}"
+        )
+        if search_errors:
+            print(f"Поштові попередження: {'; '.join(search_errors)}")
+
+        if not unique_refs:
             print("Листів не знайдено")
-            mail.logout()
+            try:
+                mail.logout()
+            except Exception:
+                pass
             return facts
 
-        for num in reversed(ids):
+        # Gmail exposes the same message in several folders. Read only the
+        # Message-ID header first, so a full Excel attachment is fetched once.
+        unique_fetch_refs = []
+        seen_message_ids = set()
+        for folder, num in reversed(unique_refs):
             try:
+                status, _ = mail.select(folder, readonly=True)
+                if status != 'OK':
+                    continue
+                _, header_data = mail.fetch(
+                    num,
+                    "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])",
+                )
+                header_bytes = b''
+                for item in header_data or []:
+                    if isinstance(item, tuple) and len(item) > 1:
+                        header_bytes += item[1]
+                message_id = email.message_from_bytes(header_bytes).get('Message-ID')
+                if message_id and message_id in seen_message_ids:
+                    continue
+                if message_id:
+                    seen_message_ids.add(message_id)
+                unique_fetch_refs.append((folder, num))
+            except Exception as fe:
+                print(f"Заголовок листа {folder}/{num}: {fe}")
+
+        print(f"Унікальних листів після дедуплікації: {len(unique_fetch_refs)}")
+
+        fetched_messages = 0
+        parsed_attachments = 0
+        parse_errors = 0
+
+        for folder, num in unique_fetch_refs:
+            try:
+                # IMAP message numbers are mailbox-local, so select the folder
+                # again before fetching a reference collected from that folder.
+                status, _ = mail.select(folder, readonly=True)
+                if status != 'OK':
+                    continue
+
                 _, msg_data = mail.fetch(num, "(RFC822)")
 
                 if not msg_data or not msg_data[0]:
                     continue
 
                 msg = email.message_from_bytes(msg_data[0][1])
+                fetched_messages += 1
 
                 for part in msg.walk():
                     filename = part.get_filename()
@@ -1132,7 +1211,8 @@ def read_facts_from_email(days=30):
                             continue
 
                         excel_df = pd.read_excel(io.BytesIO(raw_data), header=None)
-                        print(f"{filename}")
+                        parsed_attachments += 1
+                        print(f"Вкладення: {filename} ({folder})")
 
                         for i in range(2, len(excel_df)):
                             try:
@@ -1157,15 +1237,28 @@ def read_facts_from_email(days=30):
                                 })
 
                             except Exception:
+                                parse_errors += 1
                                 continue
 
                     except Exception as fe:
+                        parse_errors += 1
                         print(f"{filename}: {fe}")
 
-            except Exception:
+            except Exception as fe:
+                parse_errors += 1
+                print(f"Лист {folder}/{num}: {fe}")
                 continue
 
-        mail.logout()
+        print(
+            f"Пошту оброблено: листів {fetched_messages}, "
+            f"Excel-вкладень {parsed_attachments}, фактів {len(facts)}, "
+            f"помилок парсингу {parse_errors}"
+        )
+
+        try:
+            mail.logout()
+        except Exception:
+            pass
 
     except imaplib.IMAP4.error as e:
         raise EmailFactSourceError(

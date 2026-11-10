@@ -223,4 +223,5 @@ README посилається на `solar_ai_base.csv`, але такого trac
 - 2026-08-11: production-моделлю вважається шлях `collector.py` з `HistGradientBoostingRegressor`; `model_engine.py` не вважається production без додаткового підтвердження.
 - 2026-08-11: Google Sheets persistence зберігає identity чинного production worksheet. `_collector_staging` використовується для повного запису й перевірки, а atomic batch promotion змінює лише values; будь-яка staging, promotion або production-validation помилка зупиняє pipeline до Supabase sync.
 - 2026-08-12: `auto_sync.yml` серіалізує production collector runs через GitHub Actions `concurrency`, щоб паралельні запуски не використовували спільний `_collector_staging` одночасно.
+- 2026-11-09: email fact collection uses Gmail `All Mail` as the canonical de-duplicated view when available, falls back to configured folders otherwise, and scheduled polling runs hourly so delayed Excel reports can be incorporated without waiting for the next day.
 - 2026-08-27: додано контейнерний шлях деплою Streamlit UI. Перший production-hosting етап має переносити тільки web UI, залишаючи scheduled collector на GitHub Actions до окремого рішення.
