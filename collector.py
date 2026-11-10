@@ -1088,7 +1088,13 @@ def read_facts_from_email(days=30):
             (folder for folder in configured_folders if 'all mail' in folder.lower()),
             None,
         )
-        folders_to_check = [all_mail_folder] if all_mail_folder else configured_folders
+        folders_to_check = (
+            [all_mail_folder] + [
+                folder for folder in configured_folders if folder != all_mail_folder
+            ]
+            if all_mail_folder
+            else configured_folders
+        )
 
         # A report can be moved by Gmail filters between FusionSolar, INBOX and
         # All Mail. Gmail's All Mail is the canonical, de-duplicated view; use
@@ -1110,6 +1116,8 @@ def read_facts_from_email(days=30):
                     found = data[0].split()
                     message_refs.extend((folder, message_id) for message_id in found)
                     print(f"Знайдено {len(found)} листів у {folder}")
+                    if folder == all_mail_folder:
+                        break
                 elif status2 != 'OK':
                     search_errors.append(f"{folder}: search failed")
 
