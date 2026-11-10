@@ -1083,11 +1083,17 @@ def read_facts_from_email(days=30):
         checked_folders = []
         search_errors = []
         date_from = (datetime.now() - timedelta(days=days)).strftime("%d-%b-%Y")
+        configured_folders = get_email_folders()
+        all_mail_folder = next(
+            (folder for folder in configured_folders if 'all mail' in folder.lower()),
+            None,
+        )
+        folders_to_check = [all_mail_folder] if all_mail_folder else configured_folders
 
         # A report can be moved by Gmail filters between FusionSolar, INBOX and
-        # All Mail. Search every configured folder instead of stopping at the
-        # first folder that happens to contain any recent message.
-        for folder in get_email_folders():
+        # All Mail. Gmail's All Mail is the canonical, de-duplicated view; use
+        # the other folders only when All Mail is unavailable.
+        for folder in folders_to_check:
             try:
                 status, _ = mail.select(folder, readonly=True)
                 if status != 'OK' and not (folder.startswith('"') and folder.endswith('"')):
@@ -1121,7 +1127,8 @@ def read_facts_from_email(days=30):
                 unique_refs.append(ref)
 
         print(
-            f"Перевірено папок: {len(checked_folders)}, "
+            f"Перевірено папок: {len(checked_folders)} "
+            f"(канонічна All Mail: {'так' if all_mail_folder else 'ні'}), "
             f"листів до обробки: {len(unique_refs)}, період від {date_from}"
         )
         if search_errors:

@@ -48,6 +48,9 @@ class FakeMail:
             b'3': _xlsx_attachment(
                 'report08-11-2026.xlsx', '2026-11-08 10:00:00', 6000
             ),
+            b'4': _xlsx_attachment(
+                'report07-11-2026.xlsx', '2026-11-07 10:00:00', 5000
+            ),
         },
     }
 
