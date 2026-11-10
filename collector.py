@@ -1135,12 +1135,39 @@ def read_facts_from_email(days=30):
                 pass
             return facts
 
+        # Gmail exposes the same message in several folders. Read only the
+        # Message-ID header first, so a full Excel attachment is fetched once.
+        unique_fetch_refs = []
+        seen_message_ids = set()
+        for folder, num in reversed(unique_refs):
+            try:
+                status, _ = mail.select(folder, readonly=True)
+                if status != 'OK':
+                    continue
+                _, header_data = mail.fetch(
+                    num,
+                    "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])",
+                )
+                header_bytes = b''
+                for item in header_data or []:
+                    if isinstance(item, tuple) and len(item) > 1:
+                        header_bytes += item[1]
+                message_id = email.message_from_bytes(header_bytes).get('Message-ID')
+                if message_id and message_id in seen_message_ids:
+                    continue
+                if message_id:
+                    seen_message_ids.add(message_id)
+                unique_fetch_refs.append((folder, num))
+            except Exception as fe:
+                print(f"Заголовок листа {folder}/{num}: {fe}")
+
+        print(f"Унікальних листів після дедуплікації: {len(unique_fetch_refs)}")
+
         fetched_messages = 0
         parsed_attachments = 0
         parse_errors = 0
-        seen_message_ids = set()
 
-        for folder, num in reversed(unique_refs):
+        for folder, num in unique_fetch_refs:
             try:
                 # IMAP message numbers are mailbox-local, so select the folder
                 # again before fetching a reference collected from that folder.
@@ -1154,11 +1181,6 @@ def read_facts_from_email(days=30):
                     continue
 
                 msg = email.message_from_bytes(msg_data[0][1])
-                message_id = msg.get('Message-ID')
-                if message_id and message_id in seen_message_ids:
-                    continue
-                if message_id:
-                    seen_message_ids.add(message_id)
                 fetched_messages += 1
 
                 for part in msg.walk():
